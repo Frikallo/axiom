@@ -1,4 +1,4 @@
-# Axiom - High-Performance Tensor Library for Apple Silicon
+<img src="assets/axiom-bannar.png">
 A state-of-the-art C++ tensor library optimized for Apple Silicon, providing full NumPy syntax compatibility and einops-style tensor rearrangement for seamless on-device AI inference.
 
 ## Features
@@ -36,7 +36,7 @@ make test
 ```
 
 ## Installation
-```bash
+```cmake
 # Install system-wide
 sudo make install
 
@@ -123,31 +123,31 @@ axiom/
 ## Development Roadmap
 ### Phase 1: Core Foundation
 
-[ ] Basic tensor class with shape/stride handling
-[ ] Memory management and storage abstraction
-[ ] CMake build system setup
-[ ] Basic arithmetic operations (+, -, *, /)
+- [ ] Basic tensor class with shape/stride handling
+- [ ] Memory management and storage abstraction
+- [ ] CMake build system setup
+- [ ] Basic arithmetic operations (+, -, *, /)
 
 ### Phase 2: Operations & Backends
 
-[ ] Metal backend implementation
-[ ] Linear algebra operations (matmul, dot, etc.)
-[ ] Reduction operations (sum, mean, max, etc.)
-[ ] Broadcasting semantics
+- [ ] Metal backend implementation
+- [ ] Linear algebra operations (matmul, dot, etc.)
+- [ ] Reduction operations (sum, mean, max, etc.)
+- [ ] Broadcasting semantics
 
 ### Phase 3: Advanced Features
 
-[ ] Einops-style rearrangement parser
-[ ] NumPy compatibility layer
-[ ] Automatic differentiation (optional)
-[ ] ONNX integration utilities
+- [ ] Einops-style rearrangement parser
+- [ ] NumPy compatibility layer
+- [ ] Automatic differentiation (optional)
+- [ ] ONNX integration utilities
 
 ### Phase 4: Optimization
 
-[ ] Memory pool allocation
-[ ] Kernel fusion optimizations
-[ ] Multi-threading for CPU operations
-[ ] Benchmarking and profiling tools
+- [ ] Memory pool allocation
+- [ ] Kernel fusion optimizations
+- [ ] Multi-threading for CPU operations
+- [ ] Benchmarking and profiling tools
 
 ## Performance Goals
 
