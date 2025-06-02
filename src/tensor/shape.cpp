@@ -15,7 +15,7 @@ Strides ShapeUtils::calculate_strides(const Shape& shape, size_t itemsize, Memor
     
     Strides strides(shape.size());
     
-    if (order == MemoryOrder::C) {
+    if (order == MemoryOrder::RowMajor) {
         // Row-major (C-style): last dimension has stride of itemsize
         strides.back() = itemsize;
         for (int i = shape.size() - 2; i >= 0; --i) {
@@ -75,7 +75,7 @@ bool ShapeUtils::is_contiguous(const Shape& shape, const Strides& strides, size_
     if (shape.size() != strides.size()) return false;
     
     // Calculate expected C-order strides
-    auto expected_strides = calculate_strides(shape, itemsize, MemoryOrder::C);
+    auto expected_strides = calculate_strides(shape, itemsize, MemoryOrder::RowMajor);
     
     return std::equal(strides.begin(), strides.end(), expected_strides.begin());
 }

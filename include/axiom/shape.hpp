@@ -9,8 +9,8 @@ using Strides = std::vector<size_t>;
 
 // Memory layout order
 enum class MemoryOrder {
-    C,        // Row-major (C-style) - default
-    Fortran   // Column-major (Fortran-style)
+    RowMajor,        // Row-major (C-style) - default
+    ColMajor      // Column-major (Fortran-style)
 };
 
 // Shape utilities
@@ -20,7 +20,7 @@ public:
     static size_t size(const Shape& shape);
     
     // Calculate strides from shape and memory order
-    static Strides calculate_strides(const Shape& shape, size_t itemsize, MemoryOrder order = MemoryOrder::C);
+    static Strides calculate_strides(const Shape& shape, size_t itemsize, MemoryOrder order = MemoryOrder::RowMajor);
     
     // Check if two shapes are compatible for broadcasting
     static bool broadcastable(const Shape& shape1, const Shape& shape2);

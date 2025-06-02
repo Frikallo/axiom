@@ -1,3 +1,7 @@
+//=============================================================================
+// include/axiom/tensor.hpp - Complete header with memory order support
+//=============================================================================
+
 #pragma once
 
 #include "dtype.hpp"
@@ -32,12 +36,16 @@ private:
     DType dtype_;
     size_t offset_;
     TensorFlags flags_;
+    MemoryOrder memory_order_;  // Track the intended memory order
     
     // Helper for calculating memory requirements
     size_t calculate_storage_size() const;
     
     // Helper for validating indexing
     void validate_indices(const std::vector<size_t>& indices) const;
+    
+    // Helper to update contiguity flags
+    void update_contiguity_flags();
     
 public:
     // ============================================================================
@@ -47,13 +55,15 @@ public:
     // Default constructor - empty tensor
     Tensor();
     
-    // Create tensor with given shape and dtype
-    Tensor(const Shape& shape, DType dtype = DType::Float32, Device device = Device::CPU);
-    Tensor(std::initializer_list<size_t> shape, DType dtype = DType::Float32, Device device = Device::CPU);
+    // Create tensor with given shape, dtype, device, and memory order
+    Tensor(const Shape& shape, DType dtype = DType::Float32, 
+           Device device = Device::CPU, MemoryOrder order = MemoryOrder::RowMajor);
+    Tensor(std::initializer_list<size_t> shape, DType dtype = DType::Float32, 
+           Device device = Device::CPU, MemoryOrder order = MemoryOrder::RowMajor);
     
     // Create tensor from existing storage (for views)
     Tensor(std::shared_ptr<Storage> storage, const Shape& shape, const Strides& strides, 
-           DType dtype, size_t offset = 0);
+           DType dtype, size_t offset = 0, MemoryOrder order = MemoryOrder::RowMajor);
     
     // Copy constructor and assignment
     Tensor(const Tensor& other);
@@ -76,6 +86,7 @@ public:
     const Strides& strides() const { return strides_; }
     size_t itemsize() const { return dtype_size(dtype_); }
     size_t nbytes() const { return size() * itemsize(); }
+    MemoryOrder memory_order() const { return memory_order_; }
     
     // Data type
     DType dtype() const { return dtype_; }
@@ -85,11 +96,25 @@ public:
     Device device() const { return storage_->device(); }
     const TensorFlags& flags() const { return flags_; }
     bool is_contiguous() const { return flags_.c_contiguous; }
+    bool is_c_contiguous() const { return flags_.c_contiguous; }
+    bool is_f_contiguous() const { return flags_.f_contiguous; }
     
     // Storage and base info
     std::shared_ptr<Storage> storage() const { return storage_; }
     bool is_view() const { return storage_->is_view(); }
     Tensor base() const;
+    
+    // ============================================================================
+    // Memory order operations
+    // ============================================================================
+    
+    // Convert to C-contiguous (row-major)
+    Tensor ascontiguousarray() const;
+    Tensor as_c_contiguous() const { return ascontiguousarray(); }
+    
+    // Convert to Fortran-contiguous (column-major)  
+    Tensor asfortranarray() const;
+    Tensor as_f_contiguous() const { return asfortranarray(); }
     
     // ============================================================================
     // Data access
@@ -128,7 +153,8 @@ public:
             throw std::runtime_error("item() only available for CPU tensors");
         }
         size_t linear_idx = ShapeUtils::linear_index(indices, strides_);
-        return typed_data<T>()[linear_idx];
+        const T* data_ptr = reinterpret_cast<const T*>(static_cast<const uint8_t*>(storage_->data()) + offset_);
+        return data_ptr[linear_idx / sizeof(T)];
     }
     
     // Single element assignment
@@ -142,7 +168,8 @@ public:
             throw std::runtime_error("Tensor is not writeable");
         }
         size_t linear_idx = ShapeUtils::linear_index(indices, strides_);
-        typed_data<T>()[linear_idx] = value;
+        T* data_ptr = reinterpret_cast<T*>(static_cast<uint8_t*>(storage_->data()) + offset_);
+        data_ptr[linear_idx / sizeof(T)] = value;
     }
     
     // ============================================================================
@@ -150,6 +177,11 @@ public:
     // ============================================================================
     
     // Reshape tensor (returns view if possible)
+    // New versions with memory order support
+    Tensor reshape(const Shape& new_shape, MemoryOrder order) const;
+    Tensor reshape(std::initializer_list<size_t> new_shape, MemoryOrder order) const;
+    
+    // Backward compatible versions (default to C-order)
     Tensor reshape(const Shape& new_shape) const;
     Tensor reshape(std::initializer_list<size_t> new_shape) const;
     
@@ -168,14 +200,16 @@ public:
     // Memory operations
     // ============================================================================
     
-    // Copy data
-    Tensor copy() const;
+    // Copy data (with optional memory order specification)
+    Tensor copy(MemoryOrder order) const;
+    Tensor copy() const;  // Backward compatible version
     Tensor clone() const { return copy(); }
     
     // Move to different device
-    Tensor to(Device device) const;
-    Tensor cpu() const { return to(Device::CPU); }
-    Tensor gpu() const { return to(Device::GPU); }
+    Tensor to(Device device, MemoryOrder order) const;
+    Tensor to(Device device) const;  // Backward compatible version
+    Tensor cpu() const;
+    Tensor gpu() const;
     
     // Convert dtype
     Tensor astype(DType new_dtype) const;
@@ -195,6 +229,7 @@ public:
     bool same_shape(const Tensor& other) const;
     bool same_dtype(const Tensor& other) const;
     bool same_device(const Tensor& other) const;
+    bool same_memory_order(const Tensor& other) const;
     
     // Fill tensor with value (CPU only for now)
     template<typename T>
@@ -211,37 +246,58 @@ public:
 };
 
 // ============================================================================
-// Tensor creation functions (numpy-style factory functions)
+// Tensor creation functions (numpy-style factory functions) 
 // ============================================================================
 
-// Create tensor filled with zeros
-Tensor zeros(const Shape& shape, DType dtype = DType::Float32, Device device = Device::CPU);
-Tensor zeros(std::initializer_list<size_t> shape, DType dtype = DType::Float32, Device device = Device::CPU);
+// Tensor creation functions with memory order support (backward compatible)
+Tensor zeros(const Shape& shape, DType dtype = DType::Float32, 
+             Device device = Device::CPU, MemoryOrder order = MemoryOrder::RowMajor);
+Tensor zeros(std::initializer_list<size_t> shape, DType dtype = DType::Float32, 
+             Device device = Device::CPU, MemoryOrder order = MemoryOrder::RowMajor);
 
-// Create tensor filled with ones  
-Tensor ones(const Shape& shape, DType dtype = DType::Float32, Device device = Device::CPU);
-Tensor ones(std::initializer_list<size_t> shape, DType dtype = DType::Float32, Device device = Device::CPU);
+Tensor ones(const Shape& shape, DType dtype = DType::Float32, 
+            Device device = Device::CPU, MemoryOrder order = MemoryOrder::RowMajor);
+Tensor ones(std::initializer_list<size_t> shape, DType dtype = DType::Float32, 
+            Device device = Device::CPU, MemoryOrder order = MemoryOrder::RowMajor);
 
 // Create tensor filled with specific value
 template<typename T>
-Tensor full(const Shape& shape, const T& value, Device device = Device::CPU) {
-    auto tensor = Tensor(shape, dtype_of_v<T>, device);
+Tensor full(const Shape& shape, const T& value, Device device = Device::CPU, 
+            MemoryOrder order = MemoryOrder::RowMajor) {
+    auto tensor = Tensor(shape, dtype_of_v<T>, device, order);
     if (device == Device::CPU) {
         tensor.fill(value);
     }
     return tensor;
 }
 
-// Create empty tensor (uninitialized)
-Tensor empty(const Shape& shape, DType dtype = DType::Float32, Device device = Device::CPU);
-Tensor empty(std::initializer_list<size_t> shape, DType dtype = DType::Float32, Device device = Device::CPU);
+// Create empty tensor (uninitialized) with memory order support
+Tensor empty(const Shape& shape, DType dtype = DType::Float32, 
+             Device device = Device::CPU, MemoryOrder order = MemoryOrder::RowMajor);
+Tensor empty(std::initializer_list<size_t> shape, DType dtype = DType::Float32, 
+             Device device = Device::CPU, MemoryOrder order = MemoryOrder::RowMajor);
 
 // Create tensor from existing data (CPU only)
 template<typename T>
-Tensor from_data(const T* data, const Shape& shape, bool copy = true) {
-    auto tensor = Tensor(shape, dtype_of_v<T>, Device::CPU);
+Tensor from_data(const T* data, const Shape& shape, bool copy = true, 
+                 MemoryOrder order = MemoryOrder::RowMajor) {
+    auto tensor = Tensor(shape, dtype_of_v<T>, Device::CPU, order);
     if (copy) {
-        std::memcpy(tensor.typed_data<T>(), data, tensor.nbytes());
+        if (order == MemoryOrder::RowMajor) {
+            std::memcpy(tensor.typed_data<T>(), data, tensor.nbytes());
+        } else {
+            // For Fortran order, need to reorder the data
+            auto src_strides = ShapeUtils::calculate_strides(shape, sizeof(T), MemoryOrder::RowMajor);
+            auto dst_strides = tensor.strides();
+            
+            // Copy with stride reordering
+            for (size_t i = 0; i < tensor.size(); ++i) {
+                auto indices = ShapeUtils::unravel_index(i, shape);
+                size_t src_idx = ShapeUtils::linear_index(indices, src_strides) / sizeof(T);
+                size_t dst_idx = ShapeUtils::linear_index(indices, dst_strides) / sizeof(T);
+                tensor.typed_data<T>()[dst_idx] = data[src_idx];
+            }
+        }
     } else {
         // TODO: Implement non-owning tensor views
         throw std::runtime_error("Non-copying from_data not yet implemented");
@@ -249,8 +305,14 @@ Tensor from_data(const T* data, const Shape& shape, bool copy = true) {
     return tensor;
 }
 
-// Create identity matrix
-Tensor eye(size_t n, DType dtype = DType::Float32, Device device = Device::CPU);
-Tensor identity(size_t n, DType dtype = DType::Float32, Device device = Device::CPU);
+// Create identity matrix with memory order support
+Tensor eye(size_t n, DType dtype = DType::Float32, Device device = Device::CPU, 
+           MemoryOrder order = MemoryOrder::RowMajor);
+Tensor identity(size_t n, DType dtype = DType::Float32, Device device = Device::CPU, 
+                MemoryOrder order = MemoryOrder::RowMajor);
+
+// NumPy-compatible functions
+Tensor ascontiguousarray(const Tensor& tensor);
+Tensor asfortranarray(const Tensor& tensor);
 
 } // namespace axiom
