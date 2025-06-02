@@ -3,12 +3,14 @@
 //=============================================================================
 
 #include <axiom/tensor.hpp>
+#include <axiom/io.hpp>
 #include <iostream>
 #include <cassert>
 #include <vector>
 #include <stdexcept>
 #include <chrono>
 #include <iomanip>
+
 
 using namespace axiom;
 

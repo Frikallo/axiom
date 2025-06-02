@@ -53,6 +53,7 @@ set(AXIOM_SOURCES
     src/tensor/shape.cpp
     src/tensor/storage.cpp
     src/tensor/dtype.cpp
+    src/tensor/io.cpp
     
     # Backend registry
     src/backends/backend_registry.cpp

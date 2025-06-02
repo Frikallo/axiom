@@ -511,7 +511,7 @@ std::string Tensor::repr() const {
     oss << "], dtype=" << dtype_name() << ", device=";
     oss << (device() == Device::CPU ? "CPU" : "GPU");
     if (shape_.size() > 0) {  // Only show order for non-empty tensors
-        oss << ", order=" << (memory_order_ == MemoryOrder::RowMajor ? "C" : "F");
+        oss << ", order=" << (memory_order_ == MemoryOrder::RowMajor ? "RowMajor" : "ColMajor");
     }
     oss << ")";
     return oss.str();
