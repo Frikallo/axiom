@@ -109,6 +109,8 @@ int main() {
     try {
         auto cpu_tensor = ones({2, 3}, DType::Float32, Device::CPU);
         auto gpu_tensor = cpu_tensor.gpu();
+        gpu_tensor.view({6});
+        std::cout << "  Created GPU tensor: " << gpu_tensor.repr() << std::endl;
         
         std::cout << "  CPU tensor device: " << (cpu_tensor.device() == Device::CPU ? "CPU" : "GPU") << std::endl;
         std::cout << "  GPU tensor device: " << (gpu_tensor.device() == Device::CPU ? "CPU" : "GPU") << std::endl;

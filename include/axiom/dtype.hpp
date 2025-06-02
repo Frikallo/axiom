@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <string>
-#include <type_traits>
 
 namespace axiom {
 

@@ -1,8 +1,6 @@
 #include "axiom/tensor.hpp"
-#include "backends/cpu/cpu_storage.hpp"
 #include <stdexcept>
 #include <sstream>
-#include <iomanip>
 
 namespace axiom {
 

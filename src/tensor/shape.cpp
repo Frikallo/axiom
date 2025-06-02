@@ -1,6 +1,7 @@
 #include "axiom/shape.hpp"
 #include <stdexcept>
 #include <algorithm>
+#include <numeric>
 
 namespace axiom {
 

@@ -1,9 +1,6 @@
 #pragma once
 
 #include <vector>
-#include <initializer_list>
-#include <numeric>
-#include <algorithm>
 
 namespace axiom {
 
