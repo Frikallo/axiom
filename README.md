@@ -70,56 +70,6 @@ int main() {
 }
 ```
 
-## Project Structure
-```
-axiom/
-├── CMakeLists.txt              # Main CMake configuration
-├── README.md                   # This file
-├── LICENSE                     # MIT License
-├── include/                    # Public headers
-│   └── axiom/
-│       ├── tensor.hpp          # Core tensor class
-│       ├── ops.hpp            # Tensor operations
-│       ├── einops.hpp         # Einops-style rearrangements
-│       ├── metal_backend.hpp  # Metal backend interface
-│       └── numpy_compat.hpp   # NumPy compatibility layer
-├── src/                       # Implementation files
-│   ├── tensor/
-│   │   ├── tensor.cpp         # Core tensor implementation
-│   │   ├── shape.cpp          # Shape and stride handling
-│   │   └── storage.cpp        # Memory management
-│   ├── ops/
-│   │   ├── arithmetic.cpp     # Basic arithmetic operations
-│   │   ├── linalg.cpp         # Linear algebra operations
-│   │   ├── reduction.cpp      # Reduction operations
-│   │   └── indexing.cpp       # Indexing and slicing
-│   ├── einops/
-│   │   ├── parser.cpp         # Einstein notation parser
-│   │   └── rearrange.cpp      # Rearrangement implementation
-│   └── backends/
-│       ├── metal/
-│       │   ├── metal_backend.cpp
-│       │   ├── kernels.metal   # Metal compute shaders
-│       │   └── metal_utils.cpp
-│       └── cpu/
-│           ├── cpu_backend.cpp
-│           └── vectorized_ops.cpp
-├── tests/                     # Unit tests
-│   ├── test_tensor.cpp
-│   ├── test_ops.cpp
-│   ├── test_einops.cpp
-│   └── test_numpy_compat.cpp
-├── examples/                  # Example usage
-│   ├── basic_usage.cpp
-│   ├── onnx_inference.cpp
-│   └── performance_benchmark.cpp
-├── benchmarks/                # Performance benchmarks
-│   ├── benchmark_ops.cpp
-│   └── compare_numpy.py
-└── cmake/                     # CMake modules
-    ├── FindMetal.cmake
-    └── AxiomConfig.cmake.in
-```
 ## Development Roadmap
 ### Phase 1: Core Foundation
 
