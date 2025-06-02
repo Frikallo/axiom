@@ -123,9 +123,9 @@ axiom/
 ## Development Roadmap
 ### Phase 1: Core Foundation
 
-- [ ] Basic tensor class with shape/stride handling
-- [ ] Memory management and storage abstraction
-- [ ] CMake build system setup
+- [x] Basic tensor class with shape/stride handling
+- [x] Memory management and storage abstraction
+- [x] CMake build system setup
 - [ ] Basic arithmetic operations (+, -, *, /)
 
 ### Phase 2: Operations & Backends

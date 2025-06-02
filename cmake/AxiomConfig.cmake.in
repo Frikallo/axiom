@@ -1,0 +1,15 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Find required dependencies
+if(APPLE)
+    find_dependency(Metal REQUIRED)
+    find_dependency(Foundation REQUIRED)
+endif()
+
+# Include the targets file
+include("${CMAKE_CURRENT_LIST_DIR}/AxiomTargets.cmake")
+
+# Check that all required components are available
+check_required_components(Axiom)
