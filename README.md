@@ -80,14 +80,14 @@ int main() {
 
 ### Phase 2: Operations & Backends
 
-- [ ] Metal backend implementation
+- [X] Metal backend implementation
 - [ ] Linear algebra operations (matmul, dot, etc.)
 - [ ] Reduction operations (sum, mean, max, etc.)
-- [ ] Broadcasting semantics
+- [X] Broadcasting semantics
 
 ### Phase 3: Advanced Features
 
-- [ ] Einops-style rearrangement parser
+- [X] Einops-style rearrangement parser
 - [ ] NumPy compatibility layer
 - [ ] Automatic differentiation (optional)
 - [ ] ONNX integration utilities
