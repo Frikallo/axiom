@@ -23,7 +23,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     if(CMAKE_BUILD_TYPE STREQUAL "Release")
         add_compile_options(-O3 -DNDEBUG)
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-            # Apple Silicon optimizations
             add_compile_options(-mcpu=apple-m1)
         endif()
     endif()
@@ -35,7 +34,6 @@ if(APPLE)
     find_library(FOUNDATION_FRAMEWORK Foundation)
     
     if(METAL_FRAMEWORK AND FOUNDATION_FRAMEWORK)
-        # Enable Objective-C++ for Metal support
         enable_language(OBJCXX)
         set(CMAKE_OBJCXX_STANDARD 20)
         set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
@@ -49,7 +47,6 @@ endif()
 # External dependencies
 include(FetchContent)
 
-# Half-precision floating point library (header-only)
 FetchContent_Declare(
     half
     GIT_REPOSITORY https://github.com/suruoxi/half.git
@@ -80,15 +77,14 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_storage.mm
     )
     
-    # Set Objective-C++ properties for Metal files
     set_source_files_properties(
         src/backends/metal/metal_storage.mm
         PROPERTIES
-            COMPILE_FLAGS "-fobjc-arc"  # Enable ARC for Metal files
+            COMPILE_FLAGS "-fobjc-arc"
     )
 endif()
 
-add_library(axiom ${AXIOM_SOURCES})
+add_library(axiom SHARED ${AXIOM_SOURCES})
 
 # Set target properties
 set_target_properties(axiom PROPERTIES
@@ -102,7 +98,7 @@ target_include_directories(axiom
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
-        $<BUILD_INTERFACE:${half_SOURCE_DIR}/include>  # Add half library include path for PUBLIC access
+        $<BUILD_INTERFACE:${half_SOURCE_DIR}/include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends
