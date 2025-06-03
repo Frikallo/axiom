@@ -487,9 +487,56 @@ Tensor Tensor::astype(DType new_dtype) const {
     return *this;  // No conversion needed
   }
 
-  // TODO: Implement proper dtype conversion
-  // For now, just create a new tensor with new dtype
-  throw std::runtime_error("Type conversion not yet implemented");
+  // Create new tensor with target dtype, same shape and device
+  auto new_tensor = Tensor(shape_, new_dtype, device(), memory_order_);
+
+  // Ensure we're working with CPU data for conversion
+  if (device() == Device::CPU && new_tensor.device() == Device::CPU) {
+    // Direct CPU to CPU conversion
+    if (is_contiguous() && new_tensor.is_contiguous()) {
+      // Fast path for contiguous tensors
+      type_conversion::convert_dtype(
+          new_tensor.data(), data(), size(), new_dtype, dtype_);
+    } else {
+      // Slow path for non-contiguous tensors using strides
+      type_conversion::convert_dtype_strided(
+          new_tensor.data(), data(), shape_, new_tensor.strides(), strides_,
+          new_dtype, dtype_, 0, offset_);
+    }
+  } else {
+    // Handle GPU conversions by going through CPU
+    auto cpu_source = (device() == Device::CPU) ? *this : this->cpu();
+    auto cpu_target = Tensor(shape_, new_dtype, Device::CPU, memory_order_);
+    
+    // Convert on CPU
+    if (cpu_source.is_contiguous() && cpu_target.is_contiguous()) {
+      type_conversion::convert_dtype(
+          cpu_target.data(), cpu_source.data(), size(), new_dtype, dtype_);
+    } else {
+      type_conversion::convert_dtype_strided(
+          cpu_target.data(), cpu_source.data(), shape_, 
+          cpu_target.strides(), cpu_source.strides(),
+          new_dtype, dtype_, 0, cpu_source.offset_);
+    }
+    
+    // Transfer to target device if needed
+    if (new_tensor.device() != Device::CPU) {
+      new_tensor.storage_->copy_from(*cpu_target.storage_);
+    } else {
+      new_tensor = cpu_target;
+    }
+  }
+
+  return new_tensor;
+}
+
+Tensor Tensor::astype_safe(DType new_dtype) const {
+  if (type_conversion::conversion_may_lose_precision(dtype_, new_dtype)) {
+    throw std::runtime_error("Type conversion from " + dtype_name() + 
+                            " to " + axiom::dtype_name(new_dtype) + 
+                            " may lose precision. Use astype() to force conversion.");
+  }
+  return astype(new_dtype);
 }
 
 // ============================================================================
@@ -723,6 +770,8 @@ Tensor ascontiguousarray(const Tensor& tensor) {
   return tensor.ascontiguousarray();
 }
 
-Tensor asfortranarray(const Tensor& tensor) { return tensor.asfortranarray(); }
+Tensor asfortranarray(const Tensor& tensor) { 
+  return tensor.asfortranarray(); 
+}
 
 }  // namespace axiom

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "axiom/type_conversion.hpp"
 #include "dtype.hpp"
 #include "shape.hpp"
 #include "storage.hpp"
@@ -221,6 +222,15 @@ class Tensor {
 
   // Convert dtype
   Tensor astype(DType new_dtype) const;
+  Tensor astype_safe(DType new_dtype) const;
+
+  Tensor to_float() const { return astype(DType::Float32); }
+  Tensor to_double() const { return astype(DType::Float64); }
+  Tensor to_int() const { return astype(DType::Int32); }
+  Tensor to_int64() const { return astype(DType::Int64); }
+  Tensor to_bool() const { return astype(DType::Bool); }
+  Tensor to_complex() const { return astype(DType::Complex64); }
+  Tensor to_complex128() const { return astype(DType::Complex128); }
 
   // ============================================================================
   // Utility methods
@@ -348,6 +358,48 @@ template Tensor from_data<complex64_t>(const complex64_t*, const Shape&, bool,
                                        MemoryOrder);
 template Tensor from_data<complex128_t>(const complex128_t*, const Shape&, bool,
                                         MemoryOrder);
+
+template<typename T>
+Tensor asarray(const Tensor& tensor) {
+  return tensor.astype(dtype_of_v<T>);
+}
+
+template<typename T>
+Tensor asarray(const Tensor& tensor, Device device) {
+  return tensor.astype(dtype_of_v<T>).to(device);
+}
+
+// Type promotion for binary operations (NumPy-style)
+inline DType result_type(const Tensor& a, const Tensor& b) {
+  return type_conversion::promote_dtypes(a.dtype(), b.dtype());
+}
+
+// Create tensor from C++ array with automatic type conversion
+template<typename T, size_t N>
+Tensor from_array(const T (&data)[N], const Shape& shape, 
+                  DType target_dtype = dtype_of_v<T>,
+                  Device device = Device::CPU,
+                  MemoryOrder order = MemoryOrder::RowMajor) {
+  
+  if (ShapeUtils::size(shape) != N) {
+    throw std::runtime_error("Array size doesn't match tensor shape");
+  }
+  
+  // First create tensor with source type
+  auto source_tensor = from_data(data, shape, true, order);
+  
+  // Convert to target type if needed
+  if (target_dtype != dtype_of_v<T>) {
+    source_tensor = source_tensor.astype(target_dtype);
+  }
+  
+  // Move to target device if needed
+  if (device != Device::CPU) {
+    source_tensor = source_tensor.to(device);
+  }
+  
+  return source_tensor;
+}
 
 // Create identity matrix with memory order support
 Tensor eye(size_t n, DType dtype = DType::Float32, Device device = Device::CPU,
