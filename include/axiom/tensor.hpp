@@ -1,14 +1,15 @@
 #pragma once
 
 #include <initializer_list>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "axiom/type_conversion.hpp"
 #include "dtype.hpp"
 #include "shape.hpp"
 #include "storage.hpp"
+#include "type_conversion.hpp"
 
 namespace axiom {
 
@@ -144,6 +145,8 @@ class Tensor {
                  MemoryOrder order = MemoryOrder::RowMajor) const;
   Tensor reshape(std::initializer_list<size_t> new_shape,
                  MemoryOrder order = MemoryOrder::RowMajor) const;
+  Tensor rearrange(const std::string& pattern,
+                   const std::map<std::string, size_t>& axis_sizes = {}) const;
   Tensor transpose() const;
   Tensor transpose(const std::vector<int>& axes) const;
   Tensor squeeze(int axis = -1) const;
@@ -201,6 +204,9 @@ class Tensor {
   static Tensor identity(size_t n, DType dtype = DType::Float32,
                          Device device = Device::CPU,
                          MemoryOrder order = MemoryOrder::RowMajor);
+  static Tensor randn(const Shape& shape, DType dtype = DType::Float32,
+                      Device device = Device::CPU,
+                      MemoryOrder order = MemoryOrder::RowMajor);
 
   template <typename T>
   static Tensor full(const Shape& shape, const T& value,

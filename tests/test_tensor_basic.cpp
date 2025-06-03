@@ -153,7 +153,8 @@ void test_factory_functions_cpu() {
   }
 
   // Test zeros with Fortran order
-  auto z_f = Tensor::zeros({2, 3}, DType::Float32, Device::CPU, MemoryOrder::ColMajor);
+  auto z_f =
+      Tensor::zeros({2, 3}, DType::Float32, Device::CPU, MemoryOrder::ColMajor);
   assert(z_f.is_f_contiguous());
   assert(z_f.memory_order() == MemoryOrder::ColMajor);
 
@@ -223,7 +224,8 @@ void test_factory_functions_gpu() {
   assert(e.device() == Device::GPU);
 
   // Test with different memory orders
-  auto z_f = Tensor::zeros({2, 3}, DType::Float32, Device::GPU, MemoryOrder::ColMajor);
+  auto z_f =
+      Tensor::zeros({2, 3}, DType::Float32, Device::GPU, MemoryOrder::ColMajor);
   assert(z_f.device() == Device::GPU);
   assert(z_f.memory_order() == MemoryOrder::ColMajor);
 }
@@ -540,7 +542,8 @@ void test_memory_order_gpu() {
   assert(c_to_f_gpu.memory_order() == MemoryOrder::ColMajor);
 
   // Test device transfer with memory order
-  auto cpu_c = Tensor::ones({2, 3}, DType::Float32, Device::CPU, MemoryOrder::RowMajor);
+  auto cpu_c =
+      Tensor::ones({2, 3}, DType::Float32, Device::CPU, MemoryOrder::RowMajor);
   auto gpu_f = cpu_c.to(Device::GPU, MemoryOrder::ColMajor);
   assert(gpu_f.device() == Device::GPU);
   assert(gpu_f.memory_order() == MemoryOrder::ColMajor);
@@ -762,10 +765,10 @@ void test_memory_order_performance() {
   const size_t size = 200;
 
   // Create matrices in both orders
-  auto c_matrix =
-      Tensor::zeros({size, size}, DType::Float32, Device::CPU, MemoryOrder::RowMajor);
-  auto f_matrix =
-      Tensor::zeros({size, size}, DType::Float32, Device::CPU, MemoryOrder::ColMajor);
+  auto c_matrix = Tensor::zeros({size, size}, DType::Float32, Device::CPU,
+                                MemoryOrder::RowMajor);
+  auto f_matrix = Tensor::zeros({size, size}, DType::Float32, Device::CPU,
+                                MemoryOrder::ColMajor);
 
   // Test that memory orders are correct
   assert(c_matrix.is_c_contiguous());

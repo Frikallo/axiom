@@ -63,6 +63,7 @@ set(AXIOM_SOURCES
     src/tensor/dtype.cpp
     src/tensor/io.cpp
     src/tensor/type_conversion.cpp
+    src/tensor/einops.cpp
     
     # Backend registry
     src/backends/backend_registry.cpp

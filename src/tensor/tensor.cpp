@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <random>
 #include <sstream>
 #include <stdexcept>
+
+#include "axiom/einops.hpp"
 
 namespace axiom {
 
@@ -271,6 +274,12 @@ Tensor Tensor::reshape(const Shape& new_shape, MemoryOrder order) const {
 Tensor Tensor::reshape(std::initializer_list<size_t> new_shape,
                        MemoryOrder order) const {
   return reshape(Shape(new_shape), order);
+}
+
+Tensor Tensor::rearrange(
+    const std::string& pattern,
+    const std::map<std::string, size_t>& axis_sizes) const {
+  return einops::rearrange(*this, pattern, axis_sizes);
 }
 
 Tensor Tensor::transpose() const {
@@ -632,6 +641,48 @@ Tensor Tensor::eye(size_t n, DType dtype, Device device, MemoryOrder order) {
 Tensor Tensor::identity(size_t n, DType dtype, Device device,
                         MemoryOrder order) {
   return eye(n, dtype, device, order);
+}
+
+Tensor Tensor::randn(const Shape& shape, DType dtype, Device device,
+                     MemoryOrder order) {
+  auto tensor = Tensor(shape, dtype, device, order);
+
+  // For CPU tensors, fill with random normal values
+  if (device == Device::CPU) {
+    // Simple random number generation for demonstration
+    // In a real implementation, you'd use a proper random number generator
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::normal_distribution<float> dis(0.0f, 1.0f);
+
+    switch (dtype) {
+      case DType::Float32: {
+        float* data = tensor.typed_data<float>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+          data[i] = dis(gen);
+        }
+        break;
+      }
+      case DType::Float64: {
+        double* data = tensor.typed_data<double>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+          data[i] = static_cast<double>(dis(gen));
+        }
+        break;
+      }
+      case DType::Float16: {
+        float16_t* data = tensor.typed_data<float16_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+          data[i] = float16_t(dis(gen));
+        }
+        break;
+      }
+      default:
+        throw std::runtime_error("randn only supports floating point types");
+    }
+  }
+
+  return tensor;
 }
 
 }  // namespace axiom
