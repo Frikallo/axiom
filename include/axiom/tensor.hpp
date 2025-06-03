@@ -11,6 +11,13 @@
 #include "storage.hpp"
 #include "type_conversion.hpp"
 
+// Forward declarations for I/O functionality
+namespace axiom {
+namespace io {
+struct SerializationOptions;
+}
+}
+
 namespace axiom {
 
 struct TensorFlags {
@@ -178,6 +185,29 @@ class Tensor {
   bool same_dtype(const Tensor& other) const;
   bool same_device(const Tensor& other) const;
   bool same_memory_order(const Tensor& other) const;
+
+  // File I/O methods
+  void save(const std::string& filename) const;
+  void save(const std::string& filename, const io::SerializationOptions& options) const;
+  void save_to_stream(std::ostream& stream) const;
+  void save_to_stream(std::ostream& stream, const io::SerializationOptions& options) const;
+  
+  // Static loading methods
+  static Tensor load(const std::string& filename, Device device = Device::CPU);
+  static Tensor load_from_stream(std::istream& stream, Device device = Device::CPU);
+  
+  // Archive methods (for multiple tensors)
+  static void save_tensors(const std::map<std::string, Tensor>& tensors,
+                          const std::string& filename);
+  static void save_tensors(const std::map<std::string, Tensor>& tensors,
+                          const std::string& filename,
+                          const io::SerializationOptions& options);
+  static std::map<std::string, Tensor> load_tensors(const std::string& filename,
+                                                    Device device = Device::CPU);
+  static std::vector<std::string> list_tensors_in_archive(const std::string& filename);
+  static Tensor load_tensor_from_archive(const std::string& filename,
+                                         const std::string& tensor_name,
+                                         Device device = Device::CPU);
 
   // Static factory methods
   static Tensor zeros(const Shape& shape, DType dtype = DType::Float32,

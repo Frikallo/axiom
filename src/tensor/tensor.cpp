@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "axiom/einops.hpp"
+#include "axiom/io.hpp"
 
 namespace axiom {
 
@@ -683,6 +684,60 @@ Tensor Tensor::randn(const Shape& shape, DType dtype, Device device,
   }
 
   return tensor;
+}
+
+// ============================================================================
+// File I/O method implementations
+// ============================================================================
+
+void Tensor::save(const std::string& filename) const {
+  io::save(*this, filename);
+}
+
+void Tensor::save(const std::string& filename, const io::SerializationOptions& options) const {
+  io::save(*this, filename, options);
+}
+
+void Tensor::save_to_stream(std::ostream& stream) const {
+  io::save_stream(*this, stream);
+}
+
+void Tensor::save_to_stream(std::ostream& stream, const io::SerializationOptions& options) const {
+  io::save_stream(*this, stream, options);
+}
+
+Tensor Tensor::load(const std::string& filename, Device device) {
+  return io::load(filename, device);
+}
+
+Tensor Tensor::load_from_stream(std::istream& stream, Device device) {
+  return io::load_stream(stream, device);
+}
+
+void Tensor::save_tensors(const std::map<std::string, Tensor>& tensors,
+                         const std::string& filename) {
+  io::save_archive(tensors, filename);
+}
+
+void Tensor::save_tensors(const std::map<std::string, Tensor>& tensors,
+                         const std::string& filename,
+                         const io::SerializationOptions& options) {
+  io::save_archive(tensors, filename, options);
+}
+
+std::map<std::string, Tensor> Tensor::load_tensors(const std::string& filename,
+                                                   Device device) {
+  return io::load_archive(filename, device);
+}
+
+std::vector<std::string> Tensor::list_tensors_in_archive(const std::string& filename) {
+  return io::list_archive(filename);
+}
+
+Tensor Tensor::load_tensor_from_archive(const std::string& filename,
+                                        const std::string& tensor_name,
+                                        Device device) {
+  return io::load_from_archive(filename, tensor_name, device);
 }
 
 }  // namespace axiom
