@@ -2,8 +2,17 @@
 
 #include <cstdint>
 #include <string>
+#include <complex>
+
+// Include half-precision library
+#include "half.hpp"
 
 namespace axiom {
+
+// Type aliases for convenience and consistency
+using float16_t = half_float::half;
+using complex64_t = std::complex<float>;
+using complex128_t = std::complex<double>;
 
 // Data type enumeration matching NumPy's dtype system
 enum class DType : uint8_t {
@@ -27,7 +36,7 @@ enum class DType : uint8_t {
   Float32,
   Float64,
 
-  // Complex (for future support)
+  // Complex
   Complex64,
   Complex128
 };
@@ -113,6 +122,10 @@ struct dtype_of<uint64_t> {
   static constexpr DType value = DType::UInt64;
 };
 template <>
+struct dtype_of<float16_t> {
+  static constexpr DType value = DType::Float16;
+};
+template <>
 struct dtype_of<float> {
   static constexpr DType value = DType::Float32;
 };
@@ -120,8 +133,124 @@ template <>
 struct dtype_of<double> {
   static constexpr DType value = DType::Float64;
 };
+template <>
+struct dtype_of<complex64_t> {
+  static constexpr DType value = DType::Complex64;
+};
+template <>
+struct dtype_of<complex128_t> {
+  static constexpr DType value = DType::Complex128;
+};
 
 template <typename T>
 constexpr DType dtype_of_v = dtype_of<T>::value;
+
+// ============================================================================
+// Type category queries
+// ============================================================================
+
+constexpr bool is_integer_dtype(DType dtype) {
+  switch (dtype) {
+    case DType::Bool:
+    case DType::Int8:
+    case DType::Int16:
+    case DType::Int32:
+    case DType::Int64:
+    case DType::UInt8:
+    case DType::UInt16:
+    case DType::UInt32:
+    case DType::UInt64:
+      return true;
+    default:
+      return false;
+  }
+}
+
+constexpr bool is_floating_dtype(DType dtype) {
+  switch (dtype) {
+    case DType::Float16:
+    case DType::Float32:
+    case DType::Float64:
+      return true;
+    default:
+      return false;
+  }
+}
+
+constexpr bool is_complex_dtype(DType dtype) {
+  switch (dtype) {
+    case DType::Complex64:
+    case DType::Complex128:
+      return true;
+    default:
+      return false;
+  }
+}
+
+constexpr bool is_signed_integer_dtype(DType dtype) {
+  switch (dtype) {
+    case DType::Int8:
+    case DType::Int16:
+    case DType::Int32:
+    case DType::Int64:
+      return true;
+    default:
+      return false;
+  }
+}
+
+constexpr bool is_unsigned_integer_dtype(DType dtype) {
+  switch (dtype) {
+    case DType::UInt8:
+    case DType::UInt16:
+    case DType::UInt32:
+    case DType::UInt64:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// ============================================================================
+// Default values for each dtype
+// ============================================================================
+
+// Get zero value for a dtype (useful for initialization)
+template <DType dtype>
+constexpr auto dtype_zero() {
+  if constexpr (dtype == DType::Bool) return false;
+  else if constexpr (dtype == DType::Int8) return int8_t(0);
+  else if constexpr (dtype == DType::Int16) return int16_t(0);
+  else if constexpr (dtype == DType::Int32) return int32_t(0);
+  else if constexpr (dtype == DType::Int64) return int64_t(0);
+  else if constexpr (dtype == DType::UInt8) return uint8_t(0);
+  else if constexpr (dtype == DType::UInt16) return uint16_t(0);
+  else if constexpr (dtype == DType::UInt32) return uint32_t(0);
+  else if constexpr (dtype == DType::UInt64) return uint64_t(0);
+  else if constexpr (dtype == DType::Float16) return float16_t(0.0f);
+  else if constexpr (dtype == DType::Float32) return 0.0f;
+  else if constexpr (dtype == DType::Float64) return 0.0;
+  else if constexpr (dtype == DType::Complex64) return complex64_t(0.0f, 0.0f);
+  else if constexpr (dtype == DType::Complex128) return complex128_t(0.0, 0.0);
+}
+
+// Get one value for a dtype
+template <DType dtype>
+constexpr auto dtype_one() {
+  if constexpr (dtype == DType::Bool) return true;
+  else if constexpr (dtype == DType::Int8) return int8_t(1);
+  else if constexpr (dtype == DType::Int16) return int16_t(1);
+  else if constexpr (dtype == DType::Int32) return int32_t(1);
+  else if constexpr (dtype == DType::Int64) return int64_t(1);
+  else if constexpr (dtype == DType::UInt8) return uint8_t(1);
+  else if constexpr (dtype == DType::UInt16) return uint16_t(1);
+  else if constexpr (dtype == DType::UInt32) return uint32_t(1);
+  else if constexpr (dtype == DType::UInt64) return uint64_t(1);
+  else if constexpr (dtype == DType::Float16) return float16_t(1.0f);
+  else if constexpr (dtype == DType::Float32) return 1.0f;
+  else if constexpr (dtype == DType::Float64) return 1.0;
+  else if constexpr (dtype == DType::Complex64) return complex64_t(1.0f, 0.0f);
+  else if constexpr (dtype == DType::Complex128) return complex128_t(1.0, 0.0);
+}
 
 }  // namespace axiom

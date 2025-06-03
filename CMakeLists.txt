@@ -46,6 +46,17 @@ if(APPLE)
     endif()
 endif()
 
+# External dependencies
+include(FetchContent)
+
+# Half-precision floating point library (header-only)
+FetchContent_Declare(
+    half
+    GIT_REPOSITORY https://github.com/suruoxi/half.git
+)
+
+FetchContent_MakeAvailable(half)
+
 # Create the main library
 set(AXIOM_SOURCES
     # Tensor core
@@ -54,6 +65,7 @@ set(AXIOM_SOURCES
     src/tensor/storage.cpp
     src/tensor/dtype.cpp
     src/tensor/io.cpp
+    src/tensor/type_conversion.cpp
     
     # Backend registry
     src/backends/backend_registry.cpp
@@ -93,6 +105,7 @@ target_include_directories(axiom
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends
+        ${half_SOURCE_DIR}/include  # Add half library include path
 )
 
 # Platform-specific linking
@@ -192,6 +205,7 @@ message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  Build tests: ${AXIOM_BUILD_TESTS}")
 message(STATUS "  Build examples: ${AXIOM_BUILD_EXAMPLES}")
 message(STATUS "  Build benchmarks: ${AXIOM_BUILD_BENCHMARKS}")
+message(STATUS "  Half library: ${half_SOURCE_DIR}")
 if(APPLE)
     if(AXIOM_HAS_METAL)
         message(STATUS "  Metal support: YES")

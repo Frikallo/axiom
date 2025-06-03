@@ -554,13 +554,16 @@ Tensor zeros(std::initializer_list<size_t> shape, DType dtype, Device device,
 Tensor ones(const Shape& shape, DType dtype, Device device, MemoryOrder order) {
   auto tensor = Tensor(shape, dtype, device, order);
   if (device == Device::CPU) {
-    // Fill with ones - implementation depends on dtype
+    // Fill with ones - implementation for all dtypes
     switch (dtype) {
-      case DType::Float32:
-        tensor.fill<float>(1.0f);
+      case DType::Bool:
+        tensor.fill<bool>(true);
         break;
-      case DType::Float64:
-        tensor.fill<double>(1.0);
+      case DType::Int8:
+        tensor.fill<int8_t>(1);
+        break;
+      case DType::Int16:
+        tensor.fill<int16_t>(1);
         break;
       case DType::Int32:
         tensor.fill<int32_t>(1);
@@ -568,8 +571,33 @@ Tensor ones(const Shape& shape, DType dtype, Device device, MemoryOrder order) {
       case DType::Int64:
         tensor.fill<int64_t>(1);
         break;
-      default:
-        throw std::runtime_error("Unsupported dtype for ones");
+      case DType::UInt8:
+        tensor.fill<uint8_t>(1);
+        break;
+      case DType::UInt16:
+        tensor.fill<uint16_t>(1);
+        break;
+      case DType::UInt32:
+        tensor.fill<uint32_t>(1);
+        break;
+      case DType::UInt64:
+        tensor.fill<uint64_t>(1);
+        break;
+      case DType::Float16:
+        tensor.fill<float16_t>(float16_t(1.0f));
+        break;
+      case DType::Float32:
+        tensor.fill<float>(1.0f);
+        break;
+      case DType::Float64:
+        tensor.fill<double>(1.0);
+        break;
+      case DType::Complex64:
+        tensor.fill<complex64_t>(complex64_t(1.0f, 0.0f));
+        break;
+      case DType::Complex128:
+        tensor.fill<complex128_t>(complex128_t(1.0, 0.0));
+        break;
     }
   }
   return tensor;
@@ -594,8 +622,68 @@ Tensor eye(size_t n, DType dtype, Device device, MemoryOrder order) {
   auto tensor = zeros({n, n}, dtype, device, order);
 
   if (device == Device::CPU) {
-    // Set diagonal to 1
+    // Set diagonal to 1 for all supported types
     switch (dtype) {
+      case DType::Bool: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<bool>({i, i}, true);
+        }
+        break;
+      }
+      case DType::Int8: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<int8_t>({i, i}, 1);
+        }
+        break;
+      }
+      case DType::Int16: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<int16_t>({i, i}, 1);
+        }
+        break;
+      }
+      case DType::Int32: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<int32_t>({i, i}, 1);
+        }
+        break;
+      }
+      case DType::Int64: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<int64_t>({i, i}, 1);
+        }
+        break;
+      }
+      case DType::UInt8: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<uint8_t>({i, i}, 1);
+        }
+        break;
+      }
+      case DType::UInt16: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<uint16_t>({i, i}, 1);
+        }
+        break;
+      }
+      case DType::UInt32: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<uint32_t>({i, i}, 1);
+        }
+        break;
+      }
+      case DType::UInt64: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<uint64_t>({i, i}, 1);
+        }
+        break;
+      }
+      case DType::Float16: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<float16_t>({i, i}, float16_t(1.0f));
+        }
+        break;
+      }
       case DType::Float32: {
         for (size_t i = 0; i < n; ++i) {
           tensor.set_item<float>({i, i}, 1.0f);
@@ -608,14 +696,18 @@ Tensor eye(size_t n, DType dtype, Device device, MemoryOrder order) {
         }
         break;
       }
-      case DType::Int32: {
+      case DType::Complex64: {
         for (size_t i = 0; i < n; ++i) {
-          tensor.set_item<int32_t>({i, i}, 1);
+          tensor.set_item<complex64_t>({i, i}, complex64_t(1.0f, 0.0f));
         }
         break;
       }
-      default:
-        throw std::runtime_error("Unsupported dtype for eye");
+      case DType::Complex128: {
+        for (size_t i = 0; i < n; ++i) {
+          tensor.set_item<complex128_t>({i, i}, complex128_t(1.0, 0.0));
+        }
+        break;
+      }
     }
   }
 
