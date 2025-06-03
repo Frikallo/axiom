@@ -8,7 +8,6 @@
 namespace axiom {
 namespace backends {
 
-// Backend capability information
 struct BackendInfo {
   std::string name;
   Device device_type;
@@ -16,7 +15,6 @@ struct BackendInfo {
   std::string description;
 };
 
-// Backend registry for listing available backends
 class BackendRegistry {
  public:
   // Get list of all available backends

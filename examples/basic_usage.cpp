@@ -21,19 +21,19 @@ int main() {
   // Create tensors with different shapes and data types
   std::cout << "1. Creating tensors:" << std::endl;
 
-  auto x = zeros({3, 4}, DType::Float32, Device::CPU);
+  auto x = Tensor::zeros({3, 4}, DType::Float32, Device::CPU);
   std::cout << "  x (zeros): " << x.repr() << std::endl;
 
-  auto y = ones({4, 2}, DType::Float32, Device::CPU);
+  auto y = Tensor::ones({4, 2}, DType::Float32, Device::CPU);
   std::cout << "  y (ones): " << y.repr() << std::endl;
 
-  auto identity_mat = eye(3, DType::Float32, Device::CPU);
+  auto identity_mat = Tensor::eye(3, DType::Float32, Device::CPU);
   std::cout << "  I (identity): " << identity_mat.repr() << std::endl;
 
   // Fill tensor with custom values
   std::cout << "\n2. Setting values:" << std::endl;
 
-  auto data_tensor = empty({2, 3}, DType::Float32, Device::CPU);
+  auto data_tensor = Tensor::empty({2, 3}, DType::Float32, Device::CPU);
   data_tensor.fill<float>(42.0f);
   std::cout << "  Filled with 42.0: " << data_tensor.repr() << std::endl;
 
@@ -49,7 +49,7 @@ int main() {
   // Shape manipulation
   std::cout << "\n3. Shape manipulation:" << std::endl;
 
-  auto original = zeros({2, 3, 4}, DType::Float32, Device::CPU);
+  auto original = Tensor::zeros({2, 3, 4}, DType::Float32, Device::CPU);
   std::cout << "  Original: " << original.repr() << std::endl;
 
   auto reshaped = original.reshape({6, 4});
@@ -67,7 +67,7 @@ int main() {
   // Memory operations
   std::cout << "\n4. Memory operations:" << std::endl;
 
-  auto source = ones({2, 2}, DType::Float32, Device::CPU);
+  auto source = Tensor::ones({2, 2}, DType::Float32, Device::CPU);
   source.set_item<float>({0, 0}, 99.0f);
 
   auto copied = source.copy();
@@ -83,7 +83,7 @@ int main() {
   // Views and memory sharing
   std::cout << "\n5. Views (memory sharing):" << std::endl;
 
-  auto base_tensor = zeros({3, 4}, DType::Float32, Device::CPU);
+  auto base_tensor = Tensor::zeros({3, 4}, DType::Float32, Device::CPU);
   base_tensor.fill<float>(1.0f);
 
   auto view_tensor = base_tensor.reshape({12});
@@ -100,8 +100,8 @@ int main() {
   // Data type information
   std::cout << "\n6. Data type information:" << std::endl;
 
-  auto int_tensor = zeros({2, 2}, DType::Int32, Device::CPU);
-  auto float_tensor = zeros({2, 2}, DType::Float64, Device::CPU);
+  auto int_tensor = Tensor::zeros({2, 2}, DType::Int32, Device::CPU);
+  auto float_tensor = Tensor::zeros({2, 2}, DType::Float64, Device::CPU);
 
   std::cout << "  Int32 tensor itemsize: " << int_tensor.itemsize() << " bytes"
             << std::endl;
@@ -115,7 +115,7 @@ int main() {
   std::cout << "\n7. GPU operations (Metal):" << std::endl;
 
   try {
-    auto cpu_tensor = ones({2, 3}, DType::Float32, Device::CPU);
+    auto cpu_tensor = Tensor::ones({2, 3}, DType::Float32, Device::CPU);
     auto gpu_tensor = cpu_tensor.gpu();
     gpu_tensor.view({6});
     std::cout << "  Created GPU tensor: " << gpu_tensor.repr() << std::endl;

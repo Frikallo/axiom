@@ -10,7 +10,6 @@ namespace axiom {
 namespace backends {
 namespace metal {
 
-// Metal GPU storage implementation
 class MetalStorage : public Storage {
 private:
     id<MTLBuffer> buffer_;
@@ -21,10 +20,8 @@ private:
     static id<MTLDevice> get_default_device();
     
 public:
-    // Create new Metal storage
     explicit MetalStorage(size_t size_bytes);
     
-    // Create view of existing storage
     MetalStorage(std::shared_ptr<Storage> base, size_t offset, size_t size_bytes);
     
     void* data() override { return nullptr; } // GPU memory not directly accessible

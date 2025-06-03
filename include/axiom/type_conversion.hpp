@@ -1,7 +1,3 @@
-//=============================================================================
-// include/axiom/type_conversion.hpp - Type conversion utilities (FIXED)
-//=============================================================================
-
 #pragma once
 
 #include <complex>
@@ -12,15 +8,11 @@
 
 #include "axiom/dtype.hpp"
 #include "axiom/shape.hpp"
-
-// Use half-precision floating point library
-// This is a header-only library for IEEE 754 half-precision support
 #include "half.hpp"
 
 namespace axiom {
 namespace type_conversion {
 
-// Type aliases for convenience
 using float16_t = half_float::half;
 using complex64_t = std::complex<float>;
 using complex128_t = std::complex<double>;

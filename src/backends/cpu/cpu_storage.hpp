@@ -8,7 +8,6 @@ namespace axiom {
 namespace backends {
 namespace cpu {
 
-// CPU storage implementation
 class CPUStorage : public Storage {
  private:
   std::shared_ptr<uint8_t[]> data_;
@@ -17,10 +16,8 @@ class CPUStorage : public Storage {
   std::shared_ptr<Storage> base_storage_;
 
  public:
-  // Create new CPU storage
   explicit CPUStorage(size_t size_bytes);
 
-  // Create view of existing storage
   CPUStorage(std::shared_ptr<Storage> base, size_t offset, size_t size_bytes);
 
   void* data() override;
@@ -33,7 +30,6 @@ class CPUStorage : public Storage {
   bool is_view() const override;
   std::shared_ptr<Storage> base() const override;
 
-  // CPU-specific methods
   template <typename T>
   T* typed_data() {
     return reinterpret_cast<T*>(data());
@@ -45,7 +41,6 @@ class CPUStorage : public Storage {
   }
 };
 
-// CPU backend factory functions
 std::unique_ptr<Storage> make_cpu_storage(size_t size_bytes);
 std::unique_ptr<Storage> make_cpu_storage_view(std::shared_ptr<Storage> base,
                                                size_t offset,

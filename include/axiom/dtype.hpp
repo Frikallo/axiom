@@ -2,46 +2,36 @@
 
 #include <complex>
 #include <cstdint>
-#include <string>
-
-// Include half-precision library
 #include <half.hpp>
+#include <string>
 
 namespace axiom {
 
-// Type aliases for convenience and consistency
 using float16_t = half_float::half;
 using complex64_t = std::complex<float>;
 using complex128_t = std::complex<double>;
 
-// Data type enumeration matching NumPy's dtype system
 enum class DType : uint8_t {
-  // Boolean
   Bool,
 
-  // Signed integers
   Int8,
   Int16,
   Int32,
   Int64,
 
-  // Unsigned integers
   UInt8,
   UInt16,
   UInt32,
   UInt64,
 
-  // Floating point
   Float16,
   Float32,
   Float64,
 
-  // Complex
   Complex64,
   Complex128
 };
 
-// Get size in bytes for each dtype
 constexpr size_t dtype_size(DType dtype) {
   switch (dtype) {
     case DType::Bool:
@@ -76,10 +66,8 @@ constexpr size_t dtype_size(DType dtype) {
   return 0;
 }
 
-// Get string representation
 std::string dtype_name(DType dtype);
 
-// Type traits for automatic dtype deduction
 template <typename T>
 struct dtype_of {
   static constexpr DType value = DType::Float32;  // Default fallback
@@ -215,7 +203,6 @@ constexpr bool is_unsigned_integer_dtype(DType dtype) {
 // Default values for each dtype
 // ============================================================================
 
-// Get zero value for a dtype (useful for initialization)
 template <DType dtype>
 constexpr auto dtype_zero() {
   if constexpr (dtype == DType::Bool)
@@ -248,7 +235,6 @@ constexpr auto dtype_zero() {
     return complex128_t(0.0, 0.0);
 }
 
-// Get one value for a dtype
 template <DType dtype>
 constexpr auto dtype_one() {
   if constexpr (dtype == DType::Bool)

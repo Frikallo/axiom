@@ -1,6 +1,5 @@
 #include "backend_registry.hpp"
 
-// Forward declare Metal function to avoid including Metal headers in C++
 #ifdef __APPLE__
 namespace axiom {
 namespace backends {

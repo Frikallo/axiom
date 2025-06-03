@@ -11,7 +11,7 @@ namespace io {
 
 // Version information for file format compatibility
 constexpr uint32_t AXIOM_FILE_VERSION = 1;
-constexpr uint32_t AXIOM_MAGIC_NUMBER = 0x41584D00;  // "AXM\0"
+constexpr uint32_t AXIOM_MAGIC_NUMBER = 0x41584D00;  // "AXMA"
 
 // File format header structure
 struct AxiomFileHeader {
@@ -29,8 +29,6 @@ struct AxiomFileHeader {
 
 // Serialization options
 struct SerializationOptions {
-  bool compress = false;         // Enable compression (future feature)
-  bool include_metadata = true;  // Include extra metadata
   MemoryOrder force_order =
       MemoryOrder::RowMajor;   // Force specific memory order
   bool preserve_order = true;  // Preserve original memory order
@@ -164,7 +162,6 @@ std::string version_string(uint32_t version);
 // Convenience functions (NumPy-style API)
 // ============================================================================
 
-// NumPy-style save/load functions
 inline void save_tensor(const Tensor& tensor, const std::string& filename) {
   save(tensor, filename);
 }
@@ -174,7 +171,6 @@ inline Tensor load_tensor(const std::string& filename,
   return load(filename, device);
 }
 
-// Batch operations
 inline void save_tensors(const std::map<std::string, Tensor>& tensors,
                          const std::string& filename) {
   save_archive(tensors, filename);

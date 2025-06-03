@@ -4,7 +4,6 @@
 
 #include "backends/cpu/cpu_storage.hpp"
 
-// Forward declare Metal functions to avoid including Metal headers in C++
 #ifdef __APPLE__
 namespace axiom {
 namespace backends {
