@@ -323,101 +323,31 @@ Tensor from_data(const T* data, const Shape& shape, bool copy = true,
 }
 
 template Tensor from_data<bool>(const bool*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<int8_t>(const int8_t*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<int16_t>(const int16_t*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<int32_t>(const int32_t*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<int64_t>(const int64_t*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<uint8_t>(const uint8_t*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<uint16_t>(const uint16_t*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<uint32_t>(const uint32_t*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<uint64_t>(const uint64_t*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<float16_t>(const float16_t*, const Shape&, bool, MemoryOrder);
+template Tensor from_data<int8_t>(const int8_t*, const Shape&, bool,
+                                  MemoryOrder);
+template Tensor from_data<int16_t>(const int16_t*, const Shape&, bool,
+                                   MemoryOrder);
+template Tensor from_data<int32_t>(const int32_t*, const Shape&, bool,
+                                   MemoryOrder);
+template Tensor from_data<int64_t>(const int64_t*, const Shape&, bool,
+                                   MemoryOrder);
+template Tensor from_data<uint8_t>(const uint8_t*, const Shape&, bool,
+                                   MemoryOrder);
+template Tensor from_data<uint16_t>(const uint16_t*, const Shape&, bool,
+                                    MemoryOrder);
+template Tensor from_data<uint32_t>(const uint32_t*, const Shape&, bool,
+                                    MemoryOrder);
+template Tensor from_data<uint64_t>(const uint64_t*, const Shape&, bool,
+                                    MemoryOrder);
+template Tensor from_data<float16_t>(const float16_t*, const Shape&, bool,
+                                     MemoryOrder);
 template Tensor from_data<float>(const float*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<double>(const double*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<complex64_t>(const complex64_t*, const Shape&, bool, MemoryOrder);
-template Tensor from_data<complex128_t>(const complex128_t*, const Shape&, bool, MemoryOrder);
-
-// Create tensor with random values (placeholder for now)
-Tensor randn(const Shape& shape, DType dtype = DType::Float32, 
-             Device device = Device::CPU, MemoryOrder order = MemoryOrder::RowMajor) {
-  // For now, just create zeros - random number generation would be a separate feature
-  return zeros(shape, dtype, device, order);
-}
-
-// Create tensor with range of values (like np.arange)
-Tensor arange(double start, double stop, double step = 1.0, 
-              DType dtype = DType::Float32, Device device = Device::CPU) {
-  size_t count = static_cast<size_t>(std::ceil((stop - start) / step));
-  auto tensor = Tensor({count}, dtype, device);
-  
-  if (device == Device::CPU) {
-    switch (dtype) {
-      case DType::Int32: {
-        auto* data = tensor.typed_data<int32_t>();
-        for (size_t i = 0; i < count; ++i) {
-          data[i] = static_cast<int32_t>(start + i * step);
-        }
-        break;
-      }
-      case DType::Int64: {
-        auto* data = tensor.typed_data<int64_t>();
-        for (size_t i = 0; i < count; ++i) {
-          data[i] = static_cast<int64_t>(start + i * step);
-        }
-        break;
-      }
-      case DType::Float32: {
-        auto* data = tensor.typed_data<float>();
-        for (size_t i = 0; i < count; ++i) {
-          data[i] = static_cast<float>(start + i * step);
-        }
-        break;
-      }
-      case DType::Float64: {
-        auto* data = tensor.typed_data<double>();
-        for (size_t i = 0; i < count; ++i) {
-          data[i] = start + i * step;
-        }
-        break;
-      }
-      default:
-        throw std::runtime_error("arange not supported for this dtype");
-    }
-  }
-  
-  return tensor;
-}
-
-// Create linearly spaced tensor (like np.linspace)
-Tensor linspace(double start, double stop, size_t num = 50, bool endpoint = true,
-                DType dtype = DType::Float32, Device device = Device::CPU) {
-  auto tensor = Tensor({num}, dtype, device);
-  
-  if (device == Device::CPU && num > 0) {
-    double step = endpoint ? (stop - start) / (num - 1) : (stop - start) / num;
-    
-    switch (dtype) {
-      case DType::Float32: {
-        auto* data = tensor.typed_data<float>();
-        for (size_t i = 0; i < num; ++i) {
-          data[i] = static_cast<float>(start + i * step);
-        }
-        break;
-      }
-      case DType::Float64: {
-        auto* data = tensor.typed_data<double>();
-        for (size_t i = 0; i < num; ++i) {
-          data[i] = start + i * step;
-        }
-        break;
-      }
-      default:
-        throw std::runtime_error("linspace only supports floating point dtypes");
-    }
-  }
-  
-  return tensor;
-}
+template Tensor from_data<double>(const double*, const Shape&, bool,
+                                  MemoryOrder);
+template Tensor from_data<complex64_t>(const complex64_t*, const Shape&, bool,
+                                       MemoryOrder);
+template Tensor from_data<complex128_t>(const complex128_t*, const Shape&, bool,
+                                        MemoryOrder);
 
 // Create identity matrix with memory order support
 Tensor eye(size_t n, DType dtype = DType::Float32, Device device = Device::CPU,

@@ -1,11 +1,11 @@
 #pragma once
 
+#include <complex>
 #include <cstdint>
 #include <string>
-#include <complex>
 
 // Include half-precision library
-#include "half.hpp"
+#include <half.hpp>
 
 namespace axiom {
 
@@ -218,39 +218,67 @@ constexpr bool is_unsigned_integer_dtype(DType dtype) {
 // Get zero value for a dtype (useful for initialization)
 template <DType dtype>
 constexpr auto dtype_zero() {
-  if constexpr (dtype == DType::Bool) return false;
-  else if constexpr (dtype == DType::Int8) return int8_t(0);
-  else if constexpr (dtype == DType::Int16) return int16_t(0);
-  else if constexpr (dtype == DType::Int32) return int32_t(0);
-  else if constexpr (dtype == DType::Int64) return int64_t(0);
-  else if constexpr (dtype == DType::UInt8) return uint8_t(0);
-  else if constexpr (dtype == DType::UInt16) return uint16_t(0);
-  else if constexpr (dtype == DType::UInt32) return uint32_t(0);
-  else if constexpr (dtype == DType::UInt64) return uint64_t(0);
-  else if constexpr (dtype == DType::Float16) return float16_t(0.0f);
-  else if constexpr (dtype == DType::Float32) return 0.0f;
-  else if constexpr (dtype == DType::Float64) return 0.0;
-  else if constexpr (dtype == DType::Complex64) return complex64_t(0.0f, 0.0f);
-  else if constexpr (dtype == DType::Complex128) return complex128_t(0.0, 0.0);
+  if constexpr (dtype == DType::Bool)
+    return false;
+  else if constexpr (dtype == DType::Int8)
+    return int8_t(0);
+  else if constexpr (dtype == DType::Int16)
+    return int16_t(0);
+  else if constexpr (dtype == DType::Int32)
+    return int32_t(0);
+  else if constexpr (dtype == DType::Int64)
+    return int64_t(0);
+  else if constexpr (dtype == DType::UInt8)
+    return uint8_t(0);
+  else if constexpr (dtype == DType::UInt16)
+    return uint16_t(0);
+  else if constexpr (dtype == DType::UInt32)
+    return uint32_t(0);
+  else if constexpr (dtype == DType::UInt64)
+    return uint64_t(0);
+  else if constexpr (dtype == DType::Float16)
+    return float16_t(0.0f);
+  else if constexpr (dtype == DType::Float32)
+    return 0.0f;
+  else if constexpr (dtype == DType::Float64)
+    return 0.0;
+  else if constexpr (dtype == DType::Complex64)
+    return complex64_t(0.0f, 0.0f);
+  else if constexpr (dtype == DType::Complex128)
+    return complex128_t(0.0, 0.0);
 }
 
 // Get one value for a dtype
 template <DType dtype>
 constexpr auto dtype_one() {
-  if constexpr (dtype == DType::Bool) return true;
-  else if constexpr (dtype == DType::Int8) return int8_t(1);
-  else if constexpr (dtype == DType::Int16) return int16_t(1);
-  else if constexpr (dtype == DType::Int32) return int32_t(1);
-  else if constexpr (dtype == DType::Int64) return int64_t(1);
-  else if constexpr (dtype == DType::UInt8) return uint8_t(1);
-  else if constexpr (dtype == DType::UInt16) return uint16_t(1);
-  else if constexpr (dtype == DType::UInt32) return uint32_t(1);
-  else if constexpr (dtype == DType::UInt64) return uint64_t(1);
-  else if constexpr (dtype == DType::Float16) return float16_t(1.0f);
-  else if constexpr (dtype == DType::Float32) return 1.0f;
-  else if constexpr (dtype == DType::Float64) return 1.0;
-  else if constexpr (dtype == DType::Complex64) return complex64_t(1.0f, 0.0f);
-  else if constexpr (dtype == DType::Complex128) return complex128_t(1.0, 0.0);
+  if constexpr (dtype == DType::Bool)
+    return true;
+  else if constexpr (dtype == DType::Int8)
+    return int8_t(1);
+  else if constexpr (dtype == DType::Int16)
+    return int16_t(1);
+  else if constexpr (dtype == DType::Int32)
+    return int32_t(1);
+  else if constexpr (dtype == DType::Int64)
+    return int64_t(1);
+  else if constexpr (dtype == DType::UInt8)
+    return uint8_t(1);
+  else if constexpr (dtype == DType::UInt16)
+    return uint16_t(1);
+  else if constexpr (dtype == DType::UInt32)
+    return uint32_t(1);
+  else if constexpr (dtype == DType::UInt64)
+    return uint64_t(1);
+  else if constexpr (dtype == DType::Float16)
+    return float16_t(1.0f);
+  else if constexpr (dtype == DType::Float32)
+    return 1.0f;
+  else if constexpr (dtype == DType::Float64)
+    return 1.0;
+  else if constexpr (dtype == DType::Complex64)
+    return complex64_t(1.0f, 0.0f);
+  else if constexpr (dtype == DType::Complex128)
+    return complex128_t(1.0, 0.0);
 }
 
 }  // namespace axiom

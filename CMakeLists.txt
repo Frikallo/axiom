@@ -102,10 +102,10 @@ target_include_directories(axiom
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
+        $<BUILD_INTERFACE:${half_SOURCE_DIR}/include>  # Add half library include path for PUBLIC access
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends
-        ${half_SOURCE_DIR}/include  # Add half library include path
 )
 
 # Platform-specific linking
