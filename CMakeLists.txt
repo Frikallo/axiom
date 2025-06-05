@@ -64,12 +64,14 @@ set(AXIOM_SOURCES
     src/tensor/io.cpp
     src/tensor/type_conversion.cpp
     src/tensor/einops.cpp
+    src/tensor/operations.cpp
     
     # Backend registry
     src/backends/backend_registry.cpp
     
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
+    src/backends/cpu/cpu_operations.cpp
 )
 
 # Add Metal backend if available
