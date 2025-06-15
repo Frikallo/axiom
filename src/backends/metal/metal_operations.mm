@@ -112,11 +112,11 @@ public:
     }
 
     // Helper to calculate strides for broadcasting
-    std::vector<size_t> calculate_broadcast_strides(const Shape& original_shape, const Shape& result_shape) const {
+    std::vector<size_t> calculate_broadcast_strides(const Shape& original_shape, const Shape& result_shape, size_t itemsize) const {
         std::vector<size_t> broadcast_strides(result_shape.size(), 0);
         
         int rank_diff = result_shape.size() - original_shape.size();
-        auto original_strides = ShapeUtils::get_contiguous_strides(original_shape);
+        auto original_strides = ShapeUtils::get_contiguous_strides(original_shape, itemsize);
         
         for (int i = result_shape.size() - 1; i >= 0; --i) {
             if (i >= rank_diff && original_shape[i - rank_diff] == result_shape[i]) {
@@ -168,9 +168,9 @@ public:
             throw std::runtime_error("Tensor rank exceeds Metal kernel's max dimensions.");
         }
         
-        auto lhs_strides_vec = calculate_broadcast_strides(lhs.shape(), result_shape);
-        auto rhs_strides_vec = calculate_broadcast_strides(rhs.shape(), result_shape);
-        auto res_strides_vec = ShapeUtils::get_contiguous_strides(result_shape);
+        auto lhs_strides_vec = calculate_broadcast_strides(lhs.shape(), result_shape, lhs.itemsize());
+        auto rhs_strides_vec = calculate_broadcast_strides(rhs.shape(), result_shape, rhs.itemsize());
+        auto res_strides_vec = ShapeUtils::get_contiguous_strides(result_shape, result.itemsize());
         
         // Zero-initialize arrays
         std::fill_n(params.lhs_shape, kMaxDims, 0);

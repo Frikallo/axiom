@@ -26,15 +26,9 @@ class Storage {
   virtual void copy_from(const Storage& other) = 0;
 
   virtual std::unique_ptr<Storage> clone() const = 0;
-
-  virtual bool is_view() const = 0;
-
-  virtual std::shared_ptr<Storage> base() const = 0;
 };
 
 std::unique_ptr<Storage> make_storage(size_t size_bytes,
                                       Device device = Device::CPU);
-std::unique_ptr<Storage> make_storage_view(std::shared_ptr<Storage> base,
-                                           size_t offset, size_t size_bytes);
 
 }  // namespace axiom

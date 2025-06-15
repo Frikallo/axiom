@@ -35,8 +35,8 @@ Strides ShapeUtils::calculate_strides(const Shape& shape, size_t itemsize,
   return strides;
 }
 
-Strides ShapeUtils::get_contiguous_strides(const Shape& shape) {
-    return calculate_strides(shape, 1, MemoryOrder::RowMajor);
+Strides ShapeUtils::get_contiguous_strides(const Shape& shape, size_t itemsize, MemoryOrder order) {
+    return calculate_strides(shape, itemsize, order);
 }
 
 bool ShapeUtils::broadcastable(const Shape& shape1, const Shape& shape2) {
@@ -75,18 +75,6 @@ Shape ShapeUtils::broadcast_shape(const Shape& shape1, const Shape& shape2) {
   }
 
   return result;
-}
-
-bool ShapeUtils::is_contiguous(const Shape& shape, const Strides& strides,
-                               size_t itemsize) {
-  if (shape.empty()) return true;
-  if (shape.size() != strides.size()) return false;
-
-  // Calculate expected C-order strides
-  auto expected_strides =
-      calculate_strides(shape, itemsize, MemoryOrder::RowMajor);
-
-  return std::equal(strides.begin(), strides.end(), expected_strides.begin());
 }
 
 bool ShapeUtils::shapes_equal(const Shape& shape1, const Shape& shape2) {

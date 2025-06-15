@@ -5,11 +5,26 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
+#include <iostream>
 
 #include "axiom/einops.hpp"
 #include "axiom/io.hpp"
 
 namespace axiom {
+
+template<typename T>
+std::string vec_to_string(const std::vector<T>& vec) {
+    std::stringstream ss;
+    ss << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+        ss << vec[i];
+        if (i < vec.size() - 1) {
+            ss << ", ";
+        }
+    }
+    ss << "]";
+    return ss.str();
+}
 
 size_t Tensor::calculate_storage_size() const { return size() * itemsize(); }
 
@@ -102,7 +117,7 @@ Tensor::Tensor(std::shared_ptr<Storage> storage, const Shape& shape,
   }
 
   update_contiguity_flags();
-  flags_.owndata = !storage_->is_view();
+  flags_.owndata = (offset_ == 0);
 }
 
 Tensor::Tensor(const Tensor& other)
@@ -150,35 +165,88 @@ Tensor& Tensor::operator=(Tensor&& other) noexcept {
 }
 
 void* Tensor::data() {
-  if (!storage_ || storage_->device() != Device::CPU) {
-    throw std::runtime_error(
-        "Direct data access only available for CPU tensors");
+  if (!storage_) {
+    return nullptr;
   }
   return static_cast<uint8_t*>(storage_->data()) + offset_;
 }
 
 const void* Tensor::data() const {
-  if (!storage_ || storage_->device() != Device::CPU) {
-    throw std::runtime_error(
-        "Direct data access only available for CPU tensors");
+  if (!storage_) {
+    return nullptr;
   }
   return static_cast<const uint8_t*>(storage_->data()) + offset_;
 }
 
-Tensor Tensor::base() const {
-  if (!is_view()) {
-    return *this;
-  }
+Tensor Tensor::slice(const std::vector<SliceArg>& slice_args) const {
+    if (slice_args.size() > ndim()) {
+        throw std::runtime_error("Too many indices for tensor");
+    }
 
-  auto base_storage = storage_->base();
-  if (!base_storage) {
-    return *this;
-  }
+    Shape new_shape;
+    Strides new_strides;
+    std::vector<size_t> start_indices;
 
-  Shape base_shape = {storage_->size_bytes() / itemsize()};
-  Strides base_strides = {itemsize()};
+    int current_dim = 0;
+    for (const auto& arg : slice_args) {
+        int64_t dim_size = shape_[current_dim];
+        
+        // Normalize start
+        int64_t start = arg.start;
+        if (start < 0) start += dim_size;
+        start = std::max((int64_t)0, std::min(start, dim_size));
 
-  return Tensor(base_storage, base_shape, base_strides, dtype_, 0);
+        // Normalize stop
+        int64_t stop = arg.stop;
+        if (stop == -1 || stop > dim_size) stop = dim_size;
+        if (stop < 0) stop += dim_size;
+        stop = std::max((int64_t)0, std::min(stop, dim_size));
+
+        // Normalize step
+        int64_t step = arg.step;
+        if (step == 0) throw std::runtime_error("Slice step cannot be zero");
+
+        start_indices.push_back(start);
+
+        if (start >= stop) {
+             new_shape.push_back(0);
+             new_strides.push_back(0);
+        } else {
+            new_shape.push_back((stop - start + std::abs(step) - 1) / std::abs(step));
+            new_strides.push_back(strides_[current_dim] * step);
+        }
+        current_dim++;
+    }
+
+    start_indices.resize(ndim(), 0);
+    size_t new_offset = offset_ + ShapeUtils::linear_index(start_indices, strides_);
+    
+    // Copy remaining dims
+    for (size_t i = current_dim; i < ndim(); ++i) {
+        new_shape.push_back(shape_[i]);
+        new_strides.push_back(strides_[i]);
+    }
+
+    return Tensor(storage_, new_shape, new_strides, dtype_, new_offset, memory_order_);
+}
+
+void recursive_copy(
+    uint8_t* dst, const uint8_t* src,
+    const Shape& shape, const Strides& dst_strides, const Strides& src_strides,
+    size_t itemsize, int dim) {
+
+    if (dim == static_cast<int>(shape.size()) - 1) {
+        for (size_t i = 0; i < shape[dim]; ++i) {
+            std::memcpy(dst + i * dst_strides[dim], src + i * src_strides[dim], itemsize);
+        }
+    } else {
+        for (size_t i = 0; i < shape[dim]; ++i) {
+            recursive_copy(
+                dst + i * dst_strides[dim], src + i * src_strides[dim],
+                shape, dst_strides, src_strides,
+                itemsize, dim + 1);
+        }
+    }
 }
 
 Tensor Tensor::ascontiguousarray() const {
@@ -189,17 +257,15 @@ Tensor Tensor::ascontiguousarray() const {
   auto new_tensor = Tensor(shape_, dtype_, device(), MemoryOrder::RowMajor);
 
   if (device() == Device::CPU) {
-    for (size_t i = 0; i < size(); ++i) {
-      auto indices = ShapeUtils::unravel_index(i, shape_);
-      size_t src_offset = ShapeUtils::linear_index(indices, strides_);
-      size_t dst_offset =
-          ShapeUtils::linear_index(indices, new_tensor.strides_);
-
-      std::memcpy(
-          static_cast<uint8_t*>(new_tensor.storage_->data()) + dst_offset,
-          static_cast<const uint8_t*>(storage_->data()) + offset_ + src_offset,
-          itemsize());
-    }
+      recursive_copy(
+          static_cast<uint8_t*>(new_tensor.data()),
+          static_cast<const uint8_t*>(this->data()),
+          shape_,
+          new_tensor.strides(),
+          this->strides(),
+          itemsize(),
+          0
+      );
   } else {
     new_tensor.storage_->copy_from(*storage_);
   }
@@ -215,17 +281,15 @@ Tensor Tensor::asfortranarray() const {
   auto new_tensor = Tensor(shape_, dtype_, device(), MemoryOrder::ColMajor);
 
   if (device() == Device::CPU) {
-    for (size_t i = 0; i < size(); ++i) {
-      auto indices = ShapeUtils::unravel_index(i, shape_);
-      size_t src_offset = ShapeUtils::linear_index(indices, strides_);
-      size_t dst_offset =
-          ShapeUtils::linear_index(indices, new_tensor.strides_);
-
-      std::memcpy(
-          static_cast<uint8_t*>(new_tensor.storage_->data()) + dst_offset,
-          static_cast<const uint8_t*>(storage_->data()) + offset_ + src_offset,
-          itemsize());
-    }
+       recursive_copy(
+          static_cast<uint8_t*>(new_tensor.data()),
+          static_cast<const uint8_t*>(this->data()),
+          shape_,
+          new_tensor.strides(),
+          this->strides(),
+          itemsize(),
+          0
+      );
   } else {
     new_tensor.storage_->copy_from(*storage_);
   }
@@ -254,15 +318,14 @@ Tensor Tensor::reshape(const Shape& new_shape, MemoryOrder order) const {
     if (device() == Device::CPU) {
       for (size_t i = 0; i < size(); ++i) {
         auto indices = ShapeUtils::unravel_index(i, shape_);
-        size_t src_offset = ShapeUtils::linear_index(indices, strides_);
+        size_t src_byte_offset = ShapeUtils::linear_index(indices, strides_);
         auto new_indices = ShapeUtils::unravel_index(i, validated_shape);
-        size_t dst_offset =
+        size_t dst_byte_offset =
             ShapeUtils::linear_index(new_indices, new_tensor.strides_);
 
         std::memcpy(
-            static_cast<uint8_t*>(new_tensor.storage_->data()) + dst_offset,
-            static_cast<const uint8_t*>(storage_->data()) + offset_ +
-                src_offset,
+            static_cast<uint8_t*>(new_tensor.storage_->data()) + dst_byte_offset,
+            static_cast<const uint8_t*>(storage_->data()) + offset_ + src_byte_offset,
             itemsize());
       }
     } else {
@@ -371,13 +434,13 @@ Tensor Tensor::copy(MemoryOrder order) const {
   if (device() == Device::CPU && order != memory_order_) {
     for (size_t i = 0; i < size(); ++i) {
       auto indices = ShapeUtils::unravel_index(i, shape_);
-      size_t src_offset = ShapeUtils::linear_index(indices, strides_);
-      size_t dst_offset =
+      size_t src_byte_offset = ShapeUtils::linear_index(indices, strides_);
+      size_t dst_byte_offset =
           ShapeUtils::linear_index(indices, new_tensor.strides_);
 
       std::memcpy(
-          static_cast<uint8_t*>(new_tensor.storage_->data()) + dst_offset,
-          static_cast<const uint8_t*>(storage_->data()) + offset_ + src_offset,
+          static_cast<uint8_t*>(new_tensor.storage_->data()) + dst_byte_offset,
+          static_cast<const uint8_t*>(storage_->data()) + offset_ + src_byte_offset,
           itemsize());
     }
   } else {
@@ -398,13 +461,13 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
       target_device == Device::CPU) {
     for (size_t i = 0; i < size(); ++i) {
       auto indices = ShapeUtils::unravel_index(i, shape_);
-      size_t src_offset = ShapeUtils::linear_index(indices, strides_);
-      size_t dst_offset =
+      size_t src_byte_offset = ShapeUtils::linear_index(indices, strides_);
+      size_t dst_byte_offset =
           ShapeUtils::linear_index(indices, new_tensor.strides_);
 
       std::memcpy(
-          static_cast<uint8_t*>(new_tensor.storage_->data()) + dst_offset,
-          static_cast<const uint8_t*>(storage_->data()) + offset_ + src_offset,
+          static_cast<uint8_t*>(new_tensor.storage_->data()) + dst_byte_offset,
+          static_cast<const uint8_t*>(storage_->data()) + offset_ + src_byte_offset,
           itemsize());
     }
   } else {

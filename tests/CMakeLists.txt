@@ -51,3 +51,28 @@ set_tests_properties(tensor_operations
     PROPERTIES
         TIMEOUT 30
 )
+
+# Slicing and view tests
+add_executable(test_tensor_views
+    test_tensor_views.cpp
+)
+
+target_link_libraries(test_tensor_views
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_views
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_views
+    COMMAND test_tensor_views
+)
+
+set_tests_properties(tensor_views
+    PROPERTIES
+        TIMEOUT 30
+)

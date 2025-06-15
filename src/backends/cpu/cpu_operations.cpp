@@ -130,7 +130,7 @@ void CPUBinaryOperation<Func>::execute_binary_broadcast(const Tensor& lhs, const
     bool* result_data = result.template typed_data<bool>();
     
     execute_broadcast_loop<float, bool>(lhs_data, rhs_data, result_data,
-                                       lhs.shape(), rhs.shape(), result_shape);
+                                       lhs.shape(), rhs.shape(), result_shape, result.itemsize());
   } else {
     Tensor lhs_converted = lhs.astype(result.dtype());
     Tensor rhs_converted = rhs.astype(result.dtype());
@@ -140,14 +140,14 @@ void CPUBinaryOperation<Func>::execute_binary_broadcast(const Tensor& lhs, const
     T* result_data = result.template typed_data<T>();
     
     execute_broadcast_loop<T, T>(lhs_data, rhs_data, result_data,
-                                lhs.shape(), rhs.shape(), result_shape);
+                                lhs.shape(), rhs.shape(), result_shape, result.itemsize());
   }
 }
 
 template<typename Func>
 template<typename InputT, typename OutputT>
 void CPUBinaryOperation<Func>::execute_broadcast_loop(const InputT* lhs_data, const InputT* rhs_data, OutputT* result_data,
-                                                     const Shape& lhs_shape, const Shape& rhs_shape, const Shape& result_shape) const {
+                                                     const Shape& lhs_shape, const Shape& rhs_shape, const Shape& result_shape, size_t itemsize) const {
     size_t total_elements = ShapeUtils::size(result_shape);
     size_t ndim = result_shape.size();
 
@@ -155,8 +155,8 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(const InputT* lhs_data, co
     Strides lhs_strides(ndim, 0);
     Strides rhs_strides(ndim, 0);
     
-    Strides lhs_contiguous = ShapeUtils::get_contiguous_strides(lhs_shape);
-    Strides rhs_contiguous = ShapeUtils::get_contiguous_strides(rhs_shape);
+    Strides lhs_contiguous = ShapeUtils::get_contiguous_strides(lhs_shape, itemsize);
+    Strides rhs_contiguous = ShapeUtils::get_contiguous_strides(rhs_shape, itemsize);
 
     int lhs_dim_offset = ndim - lhs_shape.size();
     int rhs_dim_offset = ndim - rhs_shape.size();

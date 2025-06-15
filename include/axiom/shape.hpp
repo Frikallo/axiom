@@ -16,7 +16,8 @@ class ShapeUtils {
  public:
   static size_t size(const Shape& shape);
 
-  static Strides get_contiguous_strides(const Shape& shape);
+  static Strides get_contiguous_strides(const Shape& shape, size_t itemsize,
+                                        MemoryOrder order = MemoryOrder::RowMajor);
 
   static Strides calculate_strides(const Shape& shape, size_t itemsize,
                                    MemoryOrder order = MemoryOrder::RowMajor);
@@ -24,9 +25,6 @@ class ShapeUtils {
   static bool broadcastable(const Shape& shape1, const Shape& shape2);
 
   static Shape broadcast_shape(const Shape& shape1, const Shape& shape2);
-
-  static bool is_contiguous(const Shape& shape, const Strides& strides,
-                            size_t itemsize);
 
   static bool shapes_equal(const Shape& shape1, const Shape& shape2);
 

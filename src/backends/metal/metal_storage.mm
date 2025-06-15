@@ -32,27 +32,6 @@ MetalStorage::MetalStorage(void* device, size_t size_bytes)
     buffer_ = (__bridge_retained void*)mtl_buffer;
 }
 
-MetalStorage::MetalStorage(std::shared_ptr<Storage> base, size_t offset, size_t size_bytes)
-    : size_bytes_(size_bytes), offset_(offset), base_storage_(base) {
-    if (base->device() != Device::GPU) {
-        throw std::runtime_error("Cannot create a Metal view of non-GPU storage.");
-    }
-    auto metal_base = std::dynamic_pointer_cast<MetalStorage>(base->is_view() ? base->base() : base);
-
-    if (!metal_base) {
-        throw std::runtime_error("Invalid Metal storage cast");
-    }
-
-    device_ = metal_base->device_;
-    id<MTLBuffer> mtl_buffer = (__bridge id<MTLBuffer>)metal_base->buffer_;
-    buffer_ = (__bridge_retained void*)mtl_buffer;
-    offset_ += metal_base->offset_;
-
-    if(offset_ + size_bytes > metal_base->size_bytes()){
-        throw std::runtime_error("View exceeds base storage bounds");
-    }
-}
-
 MetalStorage::~MetalStorage() {
     if (buffer_) {
         // The buffer was retained in the constructor, so it needs to be released.
@@ -117,26 +96,12 @@ std::unique_ptr<Storage> MetalStorage::clone() const {
     return new_storage;
 }
 
-bool MetalStorage::is_view() const {
-    return base_storage_ != nullptr;
-}
-
-std::shared_ptr<Storage> MetalStorage::base() const {
-    return base_storage_;
-}
-
 std::unique_ptr<Storage> make_metal_storage(size_t size_bytes) {
     init_metal_device();
     if (!is_metal_available()) {
         throw std::runtime_error("Metal is not available on this device.");
     }
     return std::make_unique<MetalStorage>((__bridge void*)g_metal_device, size_bytes);
-}
-
-std::unique_ptr<Storage> make_metal_storage_view(std::shared_ptr<Storage> base,
-                                                 size_t offset,
-                                                 size_t size_bytes) {
-    return std::make_unique<MetalStorage>(base, offset, size_bytes);
 }
 
 } // namespace metal

@@ -18,30 +18,6 @@ CPUStorage::CPUStorage(size_t size_bytes)
       offset_(0),
       base_storage_(nullptr) {}
 
-CPUStorage::CPUStorage(std::shared_ptr<Storage> base, size_t offset,
-                       size_t size_bytes)
-    : data_(nullptr),
-      size_bytes_(size_bytes),
-      offset_(offset),
-      base_storage_(base) {
-  if (base->device() != Device::CPU) {
-    throw std::runtime_error("Cannot create CPU view of non-CPU storage");
-  }
-
-  // Get the underlying CPU storage
-  auto cpu_base = std::dynamic_pointer_cast<CPUStorage>(base);
-  if (!cpu_base) {
-    throw std::runtime_error("Invalid CPU storage cast");
-  }
-
-  if (offset + size_bytes > cpu_base->size_bytes()) {
-    throw std::runtime_error("View exceeds base storage bounds");
-  }
-
-  // Share the underlying data pointer
-  data_ = cpu_base->data_;
-}
-
 void* CPUStorage::data() {
   if (data_ == nullptr) {
     throw std::runtime_error("Storage has no data");
@@ -86,24 +62,12 @@ std::unique_ptr<Storage> CPUStorage::clone() const {
   return new_storage;
 }
 
-bool CPUStorage::is_view() const { return base_storage_ != nullptr; }
-
-std::shared_ptr<Storage> CPUStorage::base() const {
-  return base_storage_ ? base_storage_ : nullptr;
-}
-
 // ============================================================================
 // Factory functions
 // ============================================================================
 
 std::unique_ptr<Storage> make_cpu_storage(size_t size_bytes) {
   return std::make_unique<CPUStorage>(size_bytes);
-}
-
-std::unique_ptr<Storage> make_cpu_storage_view(std::shared_ptr<Storage> base,
-                                               size_t offset,
-                                               size_t size_bytes) {
-  return std::make_unique<CPUStorage>(base, offset, size_bytes);
 }
 
 }  // namespace cpu

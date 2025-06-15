@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <variant>
 
 #include "dtype.hpp"
 #include "shape.hpp"
@@ -76,13 +77,24 @@ class Tensor {
   bool is_c_contiguous() const { return flags_.c_contiguous; }
   bool is_f_contiguous() const { return flags_.f_contiguous; }
   std::shared_ptr<Storage> storage() const { return storage_; }
-  bool is_view() const { return storage_->is_view(); }
+  size_t offset() const { return offset_; }
   bool empty() const { return size() == 0; }
 
   // Data access
   void* data();
   const void* data() const;
-  Tensor base() const;
+  
+  struct SliceArg {
+      int64_t start;
+      int64_t stop;
+      int64_t step;
+      
+      SliceArg(int64_t stop = -1) : start(0), stop(stop), step(1) {}
+      SliceArg(int64_t start, int64_t stop, int64_t step = 1)
+        : start(start), stop(stop), step(step) {}
+  };
+  
+  Tensor slice(const std::vector<SliceArg>& slice_args) const;
 
   template <typename T>
   T* typed_data() {
@@ -108,10 +120,10 @@ class Tensor {
     if (device() != Device::CPU) {
       throw std::runtime_error("item() only available for CPU tensors");
     }
-    size_t linear_idx = ShapeUtils::linear_index(indices, strides_);
+    size_t byte_offset = ShapeUtils::linear_index(indices, strides_);
     const T* data_ptr = reinterpret_cast<const T*>(
-        static_cast<const uint8_t*>(storage_->data()) + offset_);
-    return data_ptr[linear_idx / sizeof(T)];
+        static_cast<const uint8_t*>(storage_->data()) + offset_ + byte_offset);
+    return *data_ptr;
   }
 
   template <typename T>
@@ -123,10 +135,10 @@ class Tensor {
     if (!flags_.writeable) {
       throw std::runtime_error("Tensor is not writeable");
     }
-    size_t linear_idx = ShapeUtils::linear_index(indices, strides_);
+    size_t byte_offset = ShapeUtils::linear_index(indices, strides_);
     T* data_ptr =
-        reinterpret_cast<T*>(static_cast<uint8_t*>(storage_->data()) + offset_);
-    data_ptr[linear_idx / sizeof(T)] = value;
+        reinterpret_cast<T*>(static_cast<uint8_t*>(storage_->data()) + offset_ + byte_offset);
+    *data_ptr = value;
   }
 
   template <typename T>
@@ -137,8 +149,25 @@ class Tensor {
     if (!flags_.writeable) {
       throw std::runtime_error("Tensor is not writeable");
     }
-    T* data_ptr = typed_data<T>();
-    std::fill(data_ptr, data_ptr + size(), value);
+
+    if (is_contiguous()) {
+        T* data_ptr = typed_data<T>();
+        std::fill(data_ptr, data_ptr + size(), value);
+    } else {
+        // Fallback for non-contiguous tensors
+        std::vector<size_t> indices(ndim(), 0);
+        for (size_t i = 0; i < size(); ++i) {
+            set_item(indices, value);
+            
+            // Increment indices
+            for (int j = ndim() - 1; j >= 0; --j) {
+                if (++indices[j] < shape_[j]) {
+                    break;
+                }
+                indices[j] = 0;
+            }
+        }
+    }
   }
 
   // Memory layout operations

@@ -18,8 +18,6 @@ class CPUStorage : public Storage {
  public:
   explicit CPUStorage(size_t size_bytes);
 
-  CPUStorage(std::shared_ptr<Storage> base, size_t offset, size_t size_bytes);
-
   void* data() override;
   const void* data() const override;
   size_t size_bytes() const override;
@@ -27,8 +25,6 @@ class CPUStorage : public Storage {
   void copy_to(Storage& other) const override;
   void copy_from(const Storage& other) override;
   std::unique_ptr<Storage> clone() const override;
-  bool is_view() const override;
-  std::shared_ptr<Storage> base() const override;
 
   template <typename T>
   T* typed_data() {
@@ -42,9 +38,6 @@ class CPUStorage : public Storage {
 };
 
 std::unique_ptr<Storage> make_cpu_storage(size_t size_bytes);
-std::unique_ptr<Storage> make_cpu_storage_view(std::shared_ptr<Storage> base,
-                                               size_t offset,
-                                               size_t size_bytes);
 
 }  // namespace cpu
 }  // namespace backends

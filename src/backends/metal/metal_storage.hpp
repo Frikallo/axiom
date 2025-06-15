@@ -18,7 +18,6 @@ private:
 
 public:
     explicit MetalStorage(void* device, size_t size_bytes);
-    MetalStorage(std::shared_ptr<Storage> base, size_t offset, size_t size_bytes);
     ~MetalStorage();
 
     void* data() override;
@@ -28,17 +27,12 @@ public:
     void copy_to(Storage& other) const override;
     void copy_from(const Storage& other) override;
     std::unique_ptr<Storage> clone() const override;
-    bool is_view() const override;
-    std::shared_ptr<Storage> base() const override;
 
     void* buffer() const { return buffer_; } // id<MTLBuffer>
     size_t offset() const { return offset_; }
 };
 
 std::unique_ptr<Storage> make_metal_storage(size_t size_bytes);
-std::unique_ptr<Storage> make_metal_storage_view(std::shared_ptr<Storage> base,
-                                                 size_t offset,
-                                                 size_t size_bytes);
 bool is_metal_available();
 
 }  // namespace metal
