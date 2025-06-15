@@ -54,7 +54,8 @@ class CPUBinaryOperation : public ops::Operation {
   
   template<typename InputT, typename OutputT>
   void execute_broadcast_loop(const InputT* lhs_data, const InputT* rhs_data, OutputT* result_data,
-                             const Shape& lhs_shape, const Shape& rhs_shape, const Shape& result_shape, size_t itemsize) const;
+                             const Shape& lhs_shape, const Shape& rhs_shape, const Shape& result_shape,
+                             const Strides& lhs_strides, const Strides& rhs_strides) const;
 };
 
 // ============================================================================

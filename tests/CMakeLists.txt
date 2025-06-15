@@ -76,3 +76,28 @@ set_tests_properties(tensor_views
     PROPERTIES
         TIMEOUT 30
 )
+
+# Indexing tests
+add_executable(test_tensor_indexing
+    test_tensor_indexing.cpp
+)
+
+target_link_libraries(test_tensor_indexing
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_indexing
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_indexing
+    COMMAND test_tensor_indexing
+)
+
+set_tests_properties(tensor_indexing
+    PROPERTIES
+        TIMEOUT 30
+)

@@ -178,7 +178,7 @@ const void* Tensor::data() const {
   return static_cast<const uint8_t*>(storage_->data()) + offset_;
 }
 
-Tensor Tensor::slice(const std::vector<SliceArg>& slice_args) const {
+Tensor Tensor::slice(const std::vector<Slice>& slice_args) const {
     if (slice_args.size() > ndim()) {
         throw std::runtime_error("Too many indices for tensor");
     }
@@ -192,27 +192,26 @@ Tensor Tensor::slice(const std::vector<SliceArg>& slice_args) const {
         int64_t dim_size = shape_[current_dim];
         
         // Normalize start
-        int64_t start = arg.start;
+        int64_t start = arg.start.value_or(0);
         if (start < 0) start += dim_size;
         start = std::max((int64_t)0, std::min(start, dim_size));
 
         // Normalize stop
-        int64_t stop = arg.stop;
-        if (stop == -1 || stop > dim_size) stop = dim_size;
-        if (stop < 0) stop += dim_size;
+        int64_t stop = arg.stop.value_or(dim_size);
+        if (arg.stop && stop < 0) stop += dim_size;
         stop = std::max((int64_t)0, std::min(stop, dim_size));
 
         // Normalize step
-        int64_t step = arg.step;
+        int64_t step = arg.step.value_or(1);
         if (step == 0) throw std::runtime_error("Slice step cannot be zero");
 
         start_indices.push_back(start);
 
-        if (start >= stop) {
+        if ((step > 0 && start >= stop) || (step < 0 && start <= stop)) {
              new_shape.push_back(0);
              new_strides.push_back(0);
         } else {
-            new_shape.push_back((stop - start + std::abs(step) - 1) / std::abs(step));
+            new_shape.push_back((stop - start + (step > 0 ? step : -step) - 1) / std::abs(step));
             new_strides.push_back(strides_[current_dim] * step);
         }
         current_dim++;
@@ -228,6 +227,49 @@ Tensor Tensor::slice(const std::vector<SliceArg>& slice_args) const {
     }
 
     return Tensor(storage_, new_shape, new_strides, dtype_, new_offset, memory_order_);
+}
+
+Tensor Tensor::operator[](std::initializer_list<Index> indices) const {
+    if (indices.size() > ndim()) {
+        throw std::runtime_error("Too many indices for tensor");
+    }
+
+    std::vector<Slice> slice_args;
+    std::vector<int> dims_to_squeeze;
+
+    int current_dim = 0;
+    for (const auto& index : indices) {
+        std::visit([&](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, int64_t>) {
+                // Convert integer index to a slice of size 1
+                if (arg >= 0) {
+                    slice_args.emplace_back(arg, arg + 1, 1);
+                } else {
+                    // For negative indices, let slice handle the end boundary
+                    slice_args.emplace_back(arg, std::nullopt, 1);
+                }
+                dims_to_squeeze.push_back(current_dim);
+            } else if constexpr (std::is_same_v<T, Slice>) {
+                slice_args.push_back(arg);
+            }
+        }, index);
+        current_dim++;
+    }
+
+    // Call the main slice method
+    Tensor sliced_view = this->slice(slice_args);
+
+    // Squeeze the dimensions that were indexed by an integer
+    // We must squeeze from the largest index to smallest to avoid shifting subsequent indices.
+    std::sort(dims_to_squeeze.rbegin(), dims_to_squeeze.rend());
+    for (int dim : dims_to_squeeze) {
+        if (sliced_view.shape()[dim] == 1) {
+            sliced_view = sliced_view.squeeze(dim);
+        }
+    }
+    
+    return sliced_view;
 }
 
 void recursive_copy(
@@ -383,24 +425,38 @@ Tensor Tensor::transpose(const std::vector<int>& axes) const {
 }
 
 Tensor Tensor::squeeze(int axis) const {
-  Shape new_shape = squeeze_shape(shape_, axis);
-
+  Shape new_shape;
   Strides new_strides;
+
   if (axis == -1) {
+    // Squeeze all dimensions of size 1
     for (size_t i = 0; i < shape_.size(); ++i) {
       if (shape_[i] != 1) {
+        new_shape.push_back(shape_[i]);
         new_strides.push_back(strides_[i]);
       }
     }
   } else {
-    if (axis < 0) axis += shape_.size();
+    int real_axis = axis < 0 ? axis + ndim() : axis;
+    if (real_axis < 0 || real_axis >= (int)ndim()) {
+        throw std::runtime_error("Squeeze axis out of bounds");
+    }
+    if (shape_[real_axis] != 1) {
+        return *this; // It's a no-op
+    }
     for (size_t i = 0; i < shape_.size(); ++i) {
-      if (static_cast<int>(i) != axis) {
+      if ((int)i != real_axis) {
+        new_shape.push_back(shape_[i]);
         new_strides.push_back(strides_[i]);
       }
     }
   }
 
+  // If the tensor becomes a scalar
+  if (new_shape.empty() && !shape_.empty()) {
+      return Tensor(storage_, {}, {}, dtype_, offset_);
+  }
+  
   return Tensor(storage_, new_shape, new_strides, dtype_, offset_);
 }
 
@@ -705,6 +761,50 @@ Tensor Tensor::eye(size_t n, DType dtype, Device device, MemoryOrder order) {
 Tensor Tensor::identity(size_t n, DType dtype, Device device,
                         MemoryOrder order) {
   return eye(n, dtype, device, order);
+}
+
+Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
+                      Device device) {
+    if (step == 0) {
+        throw std::runtime_error("Step cannot be zero.");
+    }
+    if ((step > 0 && start >= end) || (step < 0 && start <= end)) {
+        return Tensor::empty({0}, dtype, device);
+    }
+    size_t size = (end - start + step + (step > 0 ? -1 : 1)) / step;
+    Tensor t({size}, dtype, device);
+    
+    // This implementation is for CPU only for now.
+    if (device != Device::CPU) {
+        throw std::runtime_error("arange is currently only supported on CPU.");
+    }
+    
+    switch (dtype) {
+        case DType::Float32: {
+            auto* data = t.typed_data<float>();
+            for (size_t i = 0; i < size; ++i) data[i] = start + i * step;
+            break;
+        }
+        case DType::Int32: {
+            auto* data = t.typed_data<int32_t>();
+            for (size_t i = 0; i < size; ++i) data[i] = start + i * step;
+            break;
+        }
+        case DType::Int64: {
+            auto* data = t.typed_data<int64_t>();
+            for (size_t i = 0; i < size; ++i) data[i] = start + i * step;
+            break;
+        }
+        // Add other types as needed
+        default:
+            throw std::runtime_error("Unsupported dtype for arange");
+    }
+    
+    return t;
+}
+
+Tensor Tensor::arange(int64_t end, DType dtype, Device device) {
+    return arange(0, end, 1, dtype, device);
 }
 
 Tensor Tensor::randn(const Shape& shape, DType dtype, Device device,

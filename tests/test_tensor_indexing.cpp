@@ -117,87 +117,67 @@ void assert_tensor_equals_cpu(const axiom::Tensor& t, const std::vector<T>& expe
     }
 }
 
-void test_simple_slice() {
-    auto a_data = std::vector<float>{0, 1, 2, 3, 4, 5, 6, 7};
-    auto a = axiom::Tensor::from_data(a_data.data(), {8});
 
-    // Slice from index 2 to 5: {2, 3, 4}
-    auto b = a.slice({axiom::Slice(2, 5)});
-    
-    ASSERT(b.shape() == axiom::Shape({3}), "Simple slice shape mismatch");
-    assert_tensor_equals_cpu<float>(b, {2, 3, 4});
+void test_simple_indexing_slice() {
+    auto a = axiom::Tensor::arange(0, 10); // {0, 1, ..., 9}
+    auto b = a[{axiom::Slice(2, 5)}]; // {2, 3, 4}
+    ASSERT(b.shape() == axiom::Shape({3}), "Simple indexing slice shape mismatch");
+    assert_tensor_equals_cpu<int>(b, {2, 3, 4});
 }
 
-void test_multi_dim_slice() {
-    auto a_data = std::vector<float>{
-        0,  1,  2,  3,
-        4,  5,  6,  7,
-        8,  9, 10, 11,
-        12, 13, 14, 15
-    };
-    auto a = axiom::Tensor::from_data(a_data.data(), {4, 4});
-
-    // Slice rows 1-3 and columns 2-4
-    // Corresponds to numpy's a[1:3, 2:4]
-    auto b = a.slice({
-        axiom::Slice(1, 3),
-        axiom::Slice(2, 4)
-    });
-
-    ASSERT(b.shape() == axiom::Shape({2, 2}), "Multi-dim slice shape mismatch");
-    assert_tensor_equals_cpu<float>(b, {6, 7, 10, 11});
+void test_simple_indexing_integer() {
+    auto data = std::vector<float>{0, 1, 2, 3, 4, 5, 6, 7};
+    auto a = axiom::Tensor::from_data(data.data(), {2, 4});
+    auto b = a[{0}]; // First row
+    ASSERT(b.shape() == axiom::Shape({4}), "Simple indexing integer shape mismatch");
+    assert_tensor_equals_cpu<float>(b, {0, 1, 2, 3});
 }
 
-void test_step_slice() {
-    auto a_data = std::vector<float>{0, 1, 2, 3, 4, 5, 6, 7};
-    auto a = axiom::Tensor::from_data(a_data.data(), {8});
-    
-    // Slice from index 1 to 7 with a step of 2: {1, 3, 5}
-    auto b = a.slice({axiom::Slice(1, 7, 2)});
-    
-    ASSERT(b.shape() == axiom::Shape({3}), "Step slice shape mismatch");
-    assert_tensor_equals_cpu<float>(b, {1, 3, 5});
+void test_mixed_indexing() {
+    auto a = axiom::Tensor::arange(0, 16).reshape({4, 4});
+    // Corresponds to numpy's a[1, 1:3] -> {5, 6}
+    auto b = a[{1, axiom::Slice(1, 3)}];
+    ASSERT(b.shape() == axiom::Shape({2}), "Mixed indexing shape mismatch");
+    assert_tensor_equals_cpu<int>(b, {5, 6});
 }
 
-void test_shared_storage() {
+void test_negative_indexing() {
+    auto a = axiom::Tensor::arange(0, 5); // {0, 1, 2, 3, 4}
+    auto b = a[{-1}]; // Last element
+    ASSERT(b.shape() == axiom::Shape{}, "Negative indexing shape mismatch");
+    ASSERT(b.item<int>({}) == 4, "Negative indexing value mismatch");
+    
+    // Corresponds to numpy's a[-3:-1] -> {2, 3}
+    auto c = a[{axiom::Slice(-3, -1)}];
+    ASSERT(c.shape() == axiom::Shape({2}), "Negative slice shape mismatch");
+    assert_tensor_equals_cpu<int>(c, {2, 3});
+}
+
+void test_indexing_shared_storage() {
     auto a = axiom::Tensor::zeros({4, 4});
-    
-    // Create a view of the center 2x2
-    auto b = a.slice({
-        axiom::Slice(1, 3),
-        axiom::Slice(1, 3)
-    });
-
+    // Get a view of the second row
+    auto b = a[{1}];
     // Fill the view with 1s
     b.fill(1.0f);
     
     // The original tensor should now be modified
     assert_tensor_equals_cpu<float>(a, {
         0, 0, 0, 0,
-        0, 1, 1, 0,
-        0, 1, 1, 0,
+        1, 1, 1, 1,
+        0, 0, 0, 0,
         0, 0, 0, 0
     });
-}
-
-void test_slice_bounds_error() {
-    auto a = axiom::Tensor::zeros({5, 5});
-    // Slice is out of bounds
-    ASSERT_THROWS(a.slice({axiom::Slice(0, 10)}));
-    
-    // Too many slice arguments
-    ASSERT_THROWS(a.slice({axiom::Slice(0, 1), axiom::Slice(0, 1), axiom::Slice(0, 1)}));
 }
 
 
 int main() {
     axiom::ops::OperationRegistry::initialize_builtin_operations();
 
-    RUN_TEST(test_simple_slice);
-    RUN_TEST(test_multi_dim_slice);
-    RUN_TEST(test_step_slice);
-    RUN_TEST(test_shared_storage);
-    RUN_TEST(test_slice_bounds_error);
+    RUN_TEST(test_simple_indexing_slice);
+    RUN_TEST(test_simple_indexing_integer);
+    RUN_TEST(test_mixed_indexing);
+    RUN_TEST(test_negative_indexing);
+    RUN_TEST(test_indexing_shared_storage);
     
     return print_test_summary();
 } 

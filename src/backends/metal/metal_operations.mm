@@ -111,28 +111,6 @@ public:
         return pipeline_state;
     }
 
-    // Helper to calculate strides for broadcasting
-    std::vector<size_t> calculate_broadcast_strides(const Shape& original_shape, const Shape& result_shape, size_t itemsize) const {
-        std::vector<size_t> broadcast_strides(result_shape.size(), 0);
-        
-        int rank_diff = result_shape.size() - original_shape.size();
-        auto original_strides = ShapeUtils::get_contiguous_strides(original_shape, itemsize);
-        
-        for (int i = result_shape.size() - 1; i >= 0; --i) {
-            if (i >= rank_diff && original_shape[i - rank_diff] == result_shape[i]) {
-                broadcast_strides[i] = (i - rank_diff < original_shape.size()) ? original_strides[i - rank_diff] : 0;
-            } else if (i >= rank_diff && original_shape[i - rank_diff] == 1) {
-                broadcast_strides[i] = 0; // Broadcast this dimension
-            } else if (i < rank_diff) {
-                broadcast_strides[i] = 0; // Broadcast new leading dimensions
-            } else {
-                 // This case should be prevented by broadcast_shape check, but as a safeguard:
-                 throw std::logic_error("Incompatible shapes for broadcasting strides calculation.");
-            }
-        }
-        return broadcast_strides;
-    }
-
     Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
         // Type promotion should happen before this point.
         if (lhs.dtype() != rhs.dtype()) {
@@ -168,8 +146,7 @@ public:
             throw std::runtime_error("Tensor rank exceeds Metal kernel's max dimensions.");
         }
         
-        auto lhs_strides_vec = calculate_broadcast_strides(lhs.shape(), result_shape, lhs.itemsize());
-        auto rhs_strides_vec = calculate_broadcast_strides(rhs.shape(), result_shape, rhs.itemsize());
+        // The result tensor is always contiguous
         auto res_strides_vec = ShapeUtils::get_contiguous_strides(result_shape, result.itemsize());
         
         // Zero-initialize arrays
@@ -182,21 +159,35 @@ public:
         
         // Copy data into fixed-size C-style arrays for the kernel
         int rank_diff_lhs = result_shape.size() - lhs.shape().size();
-        for(size_t i = 0; i < lhs.shape().size(); ++i) params.lhs_shape[i + rank_diff_lhs] = lhs.shape()[i];
+        for(size_t i = 0; i < lhs.shape().size(); ++i) {
+            params.lhs_shape[i + rank_diff_lhs] = lhs.shape()[i];
+            // Convert byte stride to element stride for the kernel
+            if (lhs.shape()[i] != 1) {
+                 params.lhs_strides[i + rank_diff_lhs] = lhs.strides()[i] / lhs.itemsize();
+            } else {
+                 params.lhs_strides[i + rank_diff_lhs] = 0;
+            }
+        }
         
         int rank_diff_rhs = result_shape.size() - rhs.shape().size();
-        for(size_t i = 0; i < rhs.shape().size(); ++i) params.rhs_shape[i + rank_diff_rhs] = rhs.shape()[i];
+        for(size_t i = 0; i < rhs.shape().size(); ++i) {
+            params.rhs_shape[i + rank_diff_rhs] = rhs.shape()[i];
+            // Convert byte stride to element stride for the kernel
+            if (rhs.shape()[i] != 1) {
+                params.rhs_strides[i + rank_diff_rhs] = rhs.strides()[i] / rhs.itemsize();
+            } else {
+                params.rhs_strides[i + rank_diff_rhs] = 0;
+            }
+        }
 
-        for(size_t i = 0; i < result_shape.size(); ++i) params.result_shape[i] = result_shape[i];
-        
-        std::copy(lhs_strides_vec.begin(), lhs_strides_vec.end(), params.lhs_strides);
-        std::copy(rhs_strides_vec.begin(), rhs_strides_vec.end(), params.rhs_strides);
-        std::copy(res_strides_vec.begin(), res_strides_vec.end(), params.result_strides);
+        for(size_t i = 0; i < result_shape.size(); ++i) {
+            params.result_shape[i] = result_shape[i];
+            params.result_strides[i] = res_strides_vec[i] / result.itemsize();
+        }
 
-
-        [command_encoder setBuffer:(__bridge id<MTLBuffer>)lhs_storage->buffer() offset:lhs_storage->offset() atIndex:0];
-        [command_encoder setBuffer:(__bridge id<MTLBuffer>)rhs_storage->buffer() offset:rhs_storage->offset() atIndex:1];
-        [command_encoder setBuffer:(__bridge id<MTLBuffer>)res_storage->buffer() offset:res_storage->offset() atIndex:2];
+        [command_encoder setBuffer:(__bridge id<MTLBuffer>)lhs_storage->buffer() offset:lhs.offset() atIndex:0];
+        [command_encoder setBuffer:(__bridge id<MTLBuffer>)rhs_storage->buffer() offset:rhs.offset() atIndex:1];
+        [command_encoder setBuffer:(__bridge id<MTLBuffer>)res_storage->buffer() offset:result.offset() atIndex:2];
         [command_encoder setBytes:&params length:sizeof(params) atIndex:3];
 
         NSUInteger width = result.size();

@@ -130,7 +130,8 @@ void CPUBinaryOperation<Func>::execute_binary_broadcast(const Tensor& lhs, const
     bool* result_data = result.template typed_data<bool>();
     
     execute_broadcast_loop<float, bool>(lhs_data, rhs_data, result_data,
-                                       lhs.shape(), rhs.shape(), result_shape, result.itemsize());
+                                       lhs.shape(), rhs.shape(), result_shape,
+                                       lhs_float.strides(), rhs_float.strides());
   } else {
     Tensor lhs_converted = lhs.astype(result.dtype());
     Tensor rhs_converted = rhs.astype(result.dtype());
@@ -140,50 +141,52 @@ void CPUBinaryOperation<Func>::execute_binary_broadcast(const Tensor& lhs, const
     T* result_data = result.template typed_data<T>();
     
     execute_broadcast_loop<T, T>(lhs_data, rhs_data, result_data,
-                                lhs.shape(), rhs.shape(), result_shape, result.itemsize());
+                                lhs.shape(), rhs.shape(), result_shape,
+                                lhs_converted.strides(), rhs_converted.strides());
   }
 }
 
 template<typename Func>
 template<typename InputT, typename OutputT>
 void CPUBinaryOperation<Func>::execute_broadcast_loop(const InputT* lhs_data, const InputT* rhs_data, OutputT* result_data,
-                                                     const Shape& lhs_shape, const Shape& rhs_shape, const Shape& result_shape, size_t itemsize) const {
+                                                     const Shape& lhs_shape, const Shape& rhs_shape, const Shape& result_shape,
+                                                     const Strides& lhs_strides_in, const Strides& rhs_strides_in) const {
     size_t total_elements = ShapeUtils::size(result_shape);
     size_t ndim = result_shape.size();
 
     // Prepare broadcasted strides
-    Strides lhs_strides(ndim, 0);
-    Strides rhs_strides(ndim, 0);
+    Strides lhs_bcast_strides(ndim, 0);
+    Strides rhs_bcast_strides(ndim, 0);
     
-    Strides lhs_contiguous = ShapeUtils::get_contiguous_strides(lhs_shape, itemsize);
-    Strides rhs_contiguous = ShapeUtils::get_contiguous_strides(rhs_shape, itemsize);
-
     int lhs_dim_offset = ndim - lhs_shape.size();
-    int rhs_dim_offset = ndim - rhs_shape.size();
-
     for (size_t i = 0; i < lhs_shape.size(); ++i) {
         if (lhs_shape[i] != 1) {
-            lhs_strides[i + lhs_dim_offset] = lhs_contiguous[i];
+            lhs_bcast_strides[i + lhs_dim_offset] = lhs_strides_in[i];
         }
     }
+
+    int rhs_dim_offset = ndim - rhs_shape.size();
     for (size_t i = 0; i < rhs_shape.size(); ++i) {
         if (rhs_shape[i] != 1) {
-            rhs_strides[i + rhs_dim_offset] = rhs_contiguous[i];
+            rhs_bcast_strides[i + rhs_dim_offset] = rhs_strides_in[i];
         }
     }
 
     std::vector<size_t> result_coords(ndim, 0);
 
     for (size_t i = 0; i < total_elements; ++i) {
-        size_t lhs_idx = 0;
-        size_t rhs_idx = 0;
+        size_t lhs_byte_offset = 0;
+        size_t rhs_byte_offset = 0;
 
         for (size_t j = 0; j < ndim; ++j) {
-            lhs_idx += result_coords[j] * lhs_strides[j];
-            rhs_idx += result_coords[j] * rhs_strides[j];
+            lhs_byte_offset += result_coords[j] * lhs_bcast_strides[j];
+            rhs_byte_offset += result_coords[j] * rhs_bcast_strides[j];
         }
         
-        result_data[i] = func_(lhs_data[lhs_idx], rhs_data[rhs_idx]);
+        const auto& lhs_val = *reinterpret_cast<const InputT*>(reinterpret_cast<const uint8_t*>(lhs_data) + lhs_byte_offset);
+        const auto& rhs_val = *reinterpret_cast<const InputT*>(reinterpret_cast<const uint8_t*>(rhs_data) + rhs_byte_offset);
+        
+        result_data[i] = func_(lhs_val, rhs_val);
 
         // Increment coordinates
         for (int j = ndim - 1; j >= 0; --j) {

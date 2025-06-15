@@ -11,6 +11,7 @@
 #include "shape.hpp"
 #include "storage.hpp"
 #include "type_conversion.hpp"
+#include "indexing.hpp"
 
 // Forward declarations for I/O functionality
 namespace axiom {
@@ -84,17 +85,9 @@ class Tensor {
   void* data();
   const void* data() const;
   
-  struct SliceArg {
-      int64_t start;
-      int64_t stop;
-      int64_t step;
-      
-      SliceArg(int64_t stop = -1) : start(0), stop(stop), step(1) {}
-      SliceArg(int64_t start, int64_t stop, int64_t step = 1)
-        : start(start), stop(stop), step(step) {}
-  };
-  
-  Tensor slice(const std::vector<SliceArg>& slice_args) const;
+  Tensor slice(const std::vector<Slice>& slice_args) const;
+
+  Tensor operator[](std::initializer_list<Index> indices) const;
 
   template <typename T>
   T* typed_data() {
@@ -270,6 +263,10 @@ class Tensor {
   static Tensor randn(const Shape& shape, DType dtype = DType::Float32,
                       Device device = Device::CPU,
                       MemoryOrder order = MemoryOrder::RowMajor);
+  static Tensor arange(int64_t start, int64_t end, int64_t step = 1,
+                       DType dtype = DType::Int32, Device device = Device::CPU);
+  static Tensor arange(int64_t end, DType dtype = DType::Int32,
+                       Device device = Device::CPU);
 
   template <typename T>
   static Tensor full(const Shape& shape, const T& value,
