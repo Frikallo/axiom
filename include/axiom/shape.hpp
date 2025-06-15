@@ -16,6 +16,8 @@ class ShapeUtils {
  public:
   static size_t size(const Shape& shape);
 
+  static Strides get_contiguous_strides(const Shape& shape);
+
   static Strides calculate_strides(const Shape& shape, size_t itemsize,
                                    MemoryOrder order = MemoryOrder::RowMajor);
 

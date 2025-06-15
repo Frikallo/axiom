@@ -172,5 +172,11 @@ Tensor minimum(const Tensor& lhs, const Tensor& rhs);
 Tensor atan2(const Tensor& lhs, const Tensor& rhs);
 Tensor hypot(const Tensor& lhs, const Tensor& rhs);
 
+// In-place operations
+void add_inplace(Tensor& lhs, const Tensor& rhs);
+void subtract_inplace(Tensor& lhs, const Tensor& rhs);
+void multiply_inplace(Tensor& lhs, const Tensor& rhs);
+void divide_inplace(Tensor& lhs, const Tensor& rhs);
+
 }  // namespace ops
 }  // namespace axiom 

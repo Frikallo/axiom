@@ -36,20 +36,35 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor& lhs, const Tensor&
   
   // Create result tensor
   Tensor result(broadcast_info.result_shape, result_dtype, Device::CPU);
-  
-  // For now, support Float32 primarily
-  if (result_dtype == DType::Float32) {
-    execute_binary_typed<float>(lhs, rhs, result);
-  } else if (result_dtype == DType::Bool) {
-    execute_binary_typed<bool>(lhs, rhs, result);
-  } else if (result_dtype == DType::Int32) {
-    execute_binary_typed<int32_t>(lhs, rhs, result);
-  } else if (result_dtype == DType::Float64) {
-    execute_binary_typed<double>(lhs, rhs, result);
-  } else {
-    throw std::runtime_error("Unsupported data type for CPU operations");
+
+#define DISPATCH_CPU_BINARY_OP(TYPE_ENUM, TYPE) \
+  case TYPE_ENUM: \
+    execute_binary_typed<TYPE>(lhs, rhs, result); \
+    break;
+
+  switch (result_dtype) {
+    DISPATCH_CPU_BINARY_OP(DType::Float32, float)
+    DISPATCH_CPU_BINARY_OP(DType::Float64, double)
+    DISPATCH_CPU_BINARY_OP(DType::Float16, float16_t)
+    DISPATCH_CPU_BINARY_OP(DType::Int8, int8_t)
+    DISPATCH_CPU_BINARY_OP(DType::Int16, int16_t)
+    DISPATCH_CPU_BINARY_OP(DType::Int32, int32_t)
+    DISPATCH_CPU_BINARY_OP(DType::Int64, int64_t)
+    DISPATCH_CPU_BINARY_OP(DType::UInt8, uint8_t)
+    DISPATCH_CPU_BINARY_OP(DType::UInt16, uint16_t)
+    DISPATCH_CPU_BINARY_OP(DType::UInt32, uint32_t)
+    DISPATCH_CPU_BINARY_OP(DType::UInt64, uint64_t)
+    case DType::Bool:
+      execute_binary_typed<bool>(lhs, rhs, result);
+      break;
+    case DType::Complex64: // Fallthrough
+    case DType::Complex128:
+      throw std::runtime_error("Complex types are not yet supported by CPU operations.");
+    default:
+      throw std::runtime_error("Unsupported data type for CPU operations");
   }
-  
+#undef DISPATCH_CPU_BINARY_OP
+
   return result;
 }
 
@@ -133,32 +148,123 @@ template<typename Func>
 template<typename InputT, typename OutputT>
 void CPUBinaryOperation<Func>::execute_broadcast_loop(const InputT* lhs_data, const InputT* rhs_data, OutputT* result_data,
                                                      const Shape& lhs_shape, const Shape& rhs_shape, const Shape& result_shape) const {
-  size_t total_elements = ShapeUtils::size(result_shape);
-  
-  for (size_t i = 0; i < total_elements; ++i) {
-    // Simple broadcasting implementation
-    size_t lhs_idx = 0;
-    size_t rhs_idx = 0;
+    size_t total_elements = ShapeUtils::size(result_shape);
+    size_t ndim = result_shape.size();
+
+    // Prepare broadcasted strides
+    Strides lhs_strides(ndim, 0);
+    Strides rhs_strides(ndim, 0);
     
-    // For now, handle simple cases where one tensor is scalar or same shape
-    if (ShapeUtils::size(lhs_shape) == 1) {
-      lhs_idx = 0;
-    } else if (lhs_shape == result_shape) {
-      lhs_idx = i;
-    } else {
-      lhs_idx = i % ShapeUtils::size(lhs_shape);
+    Strides lhs_contiguous = ShapeUtils::get_contiguous_strides(lhs_shape);
+    Strides rhs_contiguous = ShapeUtils::get_contiguous_strides(rhs_shape);
+
+    int lhs_dim_offset = ndim - lhs_shape.size();
+    int rhs_dim_offset = ndim - rhs_shape.size();
+
+    for (size_t i = 0; i < lhs_shape.size(); ++i) {
+        if (lhs_shape[i] != 1) {
+            lhs_strides[i + lhs_dim_offset] = lhs_contiguous[i];
+        }
     }
-    
-    if (ShapeUtils::size(rhs_shape) == 1) {
-      rhs_idx = 0;
-    } else if (rhs_shape == result_shape) {
-      rhs_idx = i;
-    } else {
-      rhs_idx = i % ShapeUtils::size(rhs_shape);
+    for (size_t i = 0; i < rhs_shape.size(); ++i) {
+        if (rhs_shape[i] != 1) {
+            rhs_strides[i + rhs_dim_offset] = rhs_contiguous[i];
+        }
     }
-    
-    result_data[i] = func_(lhs_data[lhs_idx], rhs_data[rhs_idx]);
-  }
+
+    std::vector<size_t> result_coords(ndim, 0);
+
+    for (size_t i = 0; i < total_elements; ++i) {
+        size_t lhs_idx = 0;
+        size_t rhs_idx = 0;
+
+        for (size_t j = 0; j < ndim; ++j) {
+            lhs_idx += result_coords[j] * lhs_strides[j];
+            rhs_idx += result_coords[j] * rhs_strides[j];
+        }
+        
+        result_data[i] = func_(lhs_data[lhs_idx], rhs_data[rhs_idx]);
+
+        // Increment coordinates
+        for (int j = ndim - 1; j >= 0; --j) {
+            if (++result_coords[j] < result_shape[j]) {
+                break;
+            }
+            result_coords[j] = 0;
+        }
+    }
+}
+
+template<typename Func>
+void CPUBinaryOperation<Func>::execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const {
+    // In-place operations require lhs to be writeable
+    if (!lhs.flags().writeable) {
+        throw std::runtime_error("Cannot perform in-place operation on a non-writeable tensor.");
+    }
+
+    // Check for type safety. In-place ops do not promote the lhs tensor.
+    DType promoted_dtype = ops::promote_types(lhs.dtype(), rhs.dtype());
+    if (promoted_dtype != lhs.dtype()) {
+        throw std::runtime_error("In-place operation would require unsafe type casting.");
+    }
+
+    // Check for broadcast safety. In-place ops cannot change the lhs shape.
+    if (!ops::are_broadcastable(lhs.shape(), rhs.shape()) || 
+        ops::compute_broadcast_info(lhs.shape(), rhs.shape()).result_shape != lhs.shape()) {
+        throw std::runtime_error("In-place operation with broadcasting cannot change tensor shape.");
+    }
+
+    // Dispatch to the typed implementation
+    #define DISPATCH_CPU_INPLACE_OP(TYPE_ENUM, TYPE) \
+        case TYPE_ENUM: \
+            execute_inplace_typed<TYPE>(lhs, rhs); \
+            break;
+
+    switch (lhs.dtype()) {
+        DISPATCH_CPU_INPLACE_OP(DType::Float32, float)
+        DISPATCH_CPU_INPLACE_OP(DType::Float64, double)
+        DISPATCH_CPU_INPLACE_OP(DType::Float16, float16_t)
+        DISPATCH_CPU_INPLACE_OP(DType::Int8, int8_t)
+        DISPATCH_CPU_INPLACE_OP(DType::Int16, int16_t)
+        DISPATCH_CPU_INPLACE_OP(DType::Int32, int32_t)
+        DISPATCH_CPU_INPLACE_OP(DType::Int64, int64_t)
+        DISPATCH_CPU_INPLACE_OP(DType::UInt8, uint8_t)
+        DISPATCH_CPU_INPLACE_OP(DType::UInt16, uint16_t)
+        DISPATCH_CPU_INPLACE_OP(DType::UInt32, uint32_t)
+        DISPATCH_CPU_INPLACE_OP(DType::UInt64, uint64_t)
+        DISPATCH_CPU_INPLACE_OP(DType::Bool, bool)
+        default:
+            throw std::runtime_error("Unsupported data type for CPU in-place operations");
+    }
+    #undef DISPATCH_CPU_INPLACE_OP
+}
+
+template<typename Func>
+template<typename T>
+void CPUBinaryOperation<Func>::execute_inplace_typed(Tensor& lhs, const Tensor& rhs) const {
+    if (lhs.shape() == rhs.shape()) {
+        T* lhs_data = lhs.template typed_data<T>();
+        const T* rhs_data = rhs.template typed_data<T>();
+        for (size_t i = 0; i < lhs.size(); ++i) {
+            lhs_data[i] = func_(lhs_data[i], rhs_data[i]);
+        }
+    } else {
+        execute_inplace_broadcast<T>(lhs, rhs);
+    }
+}
+
+template<typename Func>
+template<typename T>
+void CPUBinaryOperation<Func>::execute_inplace_broadcast(Tensor& lhs, const Tensor& rhs) const {
+    // This simplified version only handles broadcasting from a scalar
+    if (rhs.size() != 1) {
+        throw std::runtime_error("In-place broadcasting is only supported for scalar rhs.");
+    }
+    T* lhs_data = lhs.template typed_data<T>();
+    const T rhs_val = *rhs.template typed_data<T>();
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        lhs_data[i] = func_(lhs_data[i], rhs_val);
+    }
 }
 
 // ============================================================================

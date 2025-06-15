@@ -7,7 +7,7 @@
 namespace axiom {
 
 size_t ShapeUtils::size(const Shape& shape) {
-  if (shape.empty()) return 0;
+  if (shape.empty()) return 1;
   return std::accumulate(shape.begin(), shape.end(), size_t(1),
                          std::multiplies<size_t>());
 }
@@ -33,6 +33,10 @@ Strides ShapeUtils::calculate_strides(const Shape& shape, size_t itemsize,
   }
 
   return strides;
+}
+
+Strides ShapeUtils::get_contiguous_strides(const Shape& shape) {
+    return calculate_strides(shape, 1, MemoryOrder::RowMajor);
 }
 
 bool ShapeUtils::broadcastable(const Shape& shape1, const Shape& shape2) {

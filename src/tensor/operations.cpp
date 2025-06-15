@@ -14,6 +14,9 @@ namespace ops {
 // ============================================================================
 
 BroadcastInfo compute_broadcast_info(const Shape& lhs_shape, const Shape& rhs_shape) {
+    if (lhs_shape.empty() && rhs_shape.empty()) {
+        return {{}, {}, {}, false};
+    }
   BroadcastInfo info;
   info.needs_broadcast = false;
   
@@ -64,61 +67,48 @@ bool are_broadcastable(const Shape& lhs_shape, const Shape& rhs_shape) {
 // Type promotion utilities
 // ============================================================================
 
-DType promote_types(DType lhs_dtype, DType rhs_dtype) {
-  // If types are the same, return that type
-  if (lhs_dtype == rhs_dtype) {
-    return lhs_dtype;
-  }
-  
-  // Complex types take precedence
-  if (is_complex_dtype(lhs_dtype) || is_complex_dtype(rhs_dtype)) {
-    if (lhs_dtype == DType::Complex128 || rhs_dtype == DType::Complex128) {
-      return DType::Complex128;
-    }
-    return DType::Complex64;
-  }
-  
-  // Float types take precedence over integers
-  if (is_floating_dtype(lhs_dtype) || is_floating_dtype(rhs_dtype)) {
-    DType float_type = is_floating_dtype(lhs_dtype) ? lhs_dtype : rhs_dtype;
-    DType other_type = is_floating_dtype(lhs_dtype) ? rhs_dtype : lhs_dtype;
-    
-    // Promote to highest precision float
-    if (float_type == DType::Float64 || other_type == DType::Float64) {
-      return DType::Float64;
-    }
-    if (float_type == DType::Float32 || other_type == DType::Float32) {
-      return DType::Float32;
-    }
-    return DType::Float16;
-  }
-  
-  // Integer promotion rules
-  if (is_integer_dtype(lhs_dtype) && is_integer_dtype(rhs_dtype)) {
-    // Bool promotes to any integer type
-    if (lhs_dtype == DType::Bool) return rhs_dtype;
-    if (rhs_dtype == DType::Bool) return lhs_dtype;
-    
-    // Promote to largest integer type
-    auto get_int_priority = [](DType dtype) -> int {
-      switch (dtype) {
-        case DType::Int8: return 1;
-        case DType::UInt8: return 2;
-        case DType::Int16: return 3;
-        case DType::UInt16: return 4;
-        case DType::Int32: return 5;
-        case DType::UInt32: return 6;
-        case DType::Int64: return 7;
-        case DType::UInt64: return 8;
-        default: return 0;
-      }
+DType promote_types(DType lhs, DType rhs) {
+    if (lhs == rhs) return lhs;
+
+    // Highest rank wins
+    static const std::map<DType, int> rank = {
+        {DType::Bool, 0}, {DType::Int8, 1}, {DType::UInt8, 2},
+        {DType::Int16, 3}, {DType::UInt16, 4}, {DType::Int32, 5},
+        {DType::UInt32, 6}, {DType::Int64, 7}, {DType::UInt64, 8},
+        {DType::Float16, 9}, {DType::Float32, 10}, {DType::Float64, 11},
+        {DType::Complex64, 12}, {DType::Complex128, 13}
     };
     
-    return get_int_priority(lhs_dtype) >= get_int_priority(rhs_dtype) ? lhs_dtype : rhs_dtype;
-  }
-  
-  // Default case - promote to Float32
-  return DType::Float32;
+    DType t1 = rank.at(lhs) > rank.at(rhs) ? lhs : rhs;
+    DType t2 = rank.at(lhs) > rank.at(rhs) ? rhs : lhs;
+
+    if (is_complex_dtype(t1)) return t1;
+    if (is_floating_dtype(t1)) return t1;
+
+    // Both are integers
+    bool signed1 = is_signed_integer_dtype(t1);
+    bool signed2 = is_signed_integer_dtype(t2);
+
+    size_t size1 = dtype_size(t1);
+    size_t size2 = dtype_size(t2);
+
+    if (signed1 == signed2) return t1;
+
+    // t1 is higher rank. if signed, it can hold t2.
+    if (signed1 && size1 > size2) return t1;
+
+    // t1 is unsigned. if bigger, it can hold t2.
+    if (!signed1 && size1 > size2) return t1;
+    
+    // if sizes are equal, promote to next size signed
+    // if t2 is signed and bigger, t1 wins (e.g. uint8+int16 -> int16)
+    // if we are here, we need to promote.
+    switch(std::max(size1, size2)) {
+        case 1: return DType::Int16;
+        case 2: return DType::Int32;
+        case 4: return DType::Int64;
+        default: return DType::Float64;
+    }
 }
 
 DType result_type(const Tensor& lhs, const Tensor& rhs) {
@@ -326,6 +316,21 @@ Tensor atan2(const Tensor& lhs, const Tensor& rhs) {
 Tensor hypot(const Tensor& lhs, const Tensor& rhs) {
   return execute_binary_operation(OpType::Hypot, lhs, rhs);
 }
+
+void execute_binary_inplace(OpType op_type, Tensor& lhs, const Tensor& rhs) {
+    auto device = lhs.device(); // In-place ops run on the device of the lhs
+    auto op = OperationRegistry::get_operation(op_type, device);
+    if (!op) {
+        throw std::runtime_error("Operation not available for the given device.");
+    }
+    op->execute_binary_inplace(lhs, rhs);
+}
+
+// In-place operations
+void add_inplace(Tensor& lhs, const Tensor& rhs) { execute_binary_inplace(OpType::Add, lhs, rhs); }
+void subtract_inplace(Tensor& lhs, const Tensor& rhs) { execute_binary_inplace(OpType::Subtract, lhs, rhs); }
+void multiply_inplace(Tensor& lhs, const Tensor& rhs) { execute_binary_inplace(OpType::Multiply, lhs, rhs); }
+void divide_inplace(Tensor& lhs, const Tensor& rhs) { execute_binary_inplace(OpType::Divide, lhs, rhs); }
 
 }  // namespace ops
 }  // namespace axiom 

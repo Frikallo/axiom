@@ -146,29 +146,55 @@ inline Tensor operator/(T scalar, const Tensor& tensor) {
 }
 
 // ============================================================================
-// In-place operators (future extension)
+// In-place operators
 // ============================================================================
 
-// Note: These would require in-place operation support in the backend
-// For now, they create new tensors and copy the result back
-
 inline Tensor& operator+=(Tensor& lhs, const Tensor& rhs) {
-  lhs = lhs + rhs;
+  ops::add_inplace(lhs, rhs);
   return lhs;
 }
 
 inline Tensor& operator-=(Tensor& lhs, const Tensor& rhs) {
-  lhs = lhs - rhs;
+  ops::subtract_inplace(lhs, rhs);
   return lhs;
 }
 
 inline Tensor& operator*=(Tensor& lhs, const Tensor& rhs) {
-  lhs = lhs * rhs;
+  ops::multiply_inplace(lhs, rhs);
   return lhs;
 }
 
 inline Tensor& operator/=(Tensor& lhs, const Tensor& rhs) {
-  lhs = lhs / rhs;
+  ops::divide_inplace(lhs, rhs);
+  return lhs;
+}
+
+// Convenience overloads for scalars
+template<typename T>
+inline Tensor& operator+=(Tensor& lhs, T scalar) {
+  Tensor scalar_tensor = Tensor::full({}, scalar, lhs.device());
+  ops::add_inplace(lhs, scalar_tensor);
+  return lhs;
+}
+
+template<typename T>
+inline Tensor& operator-=(Tensor& lhs, T scalar) {
+  Tensor scalar_tensor = Tensor::full({}, scalar, lhs.device());
+  ops::subtract_inplace(lhs, scalar_tensor);
+  return lhs;
+}
+
+template<typename T>
+inline Tensor& operator*=(Tensor& lhs, T scalar) {
+  Tensor scalar_tensor = Tensor::full({}, scalar, lhs.device());
+  ops::multiply_inplace(lhs, scalar_tensor);
+  return lhs;
+}
+
+template<typename T>
+inline Tensor& operator/=(Tensor& lhs, T scalar) {
+  Tensor scalar_tensor = Tensor::full({}, scalar, lhs.device());
+  ops::divide_inplace(lhs, scalar_tensor);
   return lhs;
 }
 

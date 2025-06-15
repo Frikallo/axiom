@@ -33,6 +33,8 @@ class CPUBinaryOperation : public ops::Operation {
 
   Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override;
 
+  void execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const override;
+
  private:
   template<typename T>
   void execute_binary_typed(const Tensor& lhs, const Tensor& rhs, Tensor& result) const;
@@ -43,6 +45,12 @@ class CPUBinaryOperation : public ops::Operation {
   
   template<typename T>
   void execute_binary_same_shape(const Tensor& lhs, const Tensor& rhs, Tensor& result) const;
+  
+  template<typename T>
+  void execute_inplace_typed(Tensor& lhs, const Tensor& rhs) const;
+
+  template<typename T>
+  void execute_inplace_broadcast(Tensor& lhs, const Tensor& rhs) const;
   
   template<typename InputT, typename OutputT>
   void execute_broadcast_loop(const InputT* lhs_data, const InputT* rhs_data, OutputT* result_data,
@@ -76,11 +84,11 @@ struct DivideFunc {
 
 struct PowerFunc {
   template<typename T>
-  T operator()(const T& a, const T& b) const { 
+  T operator()(const T& a, const T& b) const {
     if constexpr (std::is_integral_v<T>) {
       return static_cast<T>(std::pow(static_cast<double>(a), static_cast<double>(b)));
     } else {
-      return std::pow(a, b);
+      return static_cast<T>(std::pow(a, b));
     }
   }
 };
@@ -91,7 +99,7 @@ struct ModuloFunc {
     if constexpr (std::is_integral_v<T>) {
       return a % b;
     } else {
-      return std::fmod(a, b);
+      return static_cast<T>(std::fmod(a, b));
     }
   }
 };
@@ -203,22 +211,22 @@ struct MinimumFunc {
 
 struct Atan2Func {
   template<typename T>
-  T operator()(const T& a, const T& b) const { 
+  T operator()(const T& a, const T& b) const {
     if constexpr (std::is_integral_v<T>) {
       return static_cast<T>(std::atan2(static_cast<double>(a), static_cast<double>(b)));
     } else {
-      return std::atan2(a, b);
+      return static_cast<T>(std::atan2(a, b));
     }
   }
 };
 
 struct HypotFunc {
   template<typename T>
-  T operator()(const T& a, const T& b) const { 
+  T operator()(const T& a, const T& b) const {
     if constexpr (std::is_integral_v<T>) {
       return static_cast<T>(std::hypot(static_cast<double>(a), static_cast<double>(b)));
     } else {
-      return std::hypot(a, b);
+      return static_cast<T>(std::hypot(a, b));
     }
   }
 };
