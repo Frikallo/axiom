@@ -1,7 +1,8 @@
 #pragma once
 
+#include "axiom/operations.hpp"
+
 namespace axiom {
-class Tensor;
 namespace backends {
 namespace metal {
 

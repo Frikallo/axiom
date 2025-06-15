@@ -59,6 +59,79 @@ class CPUBinaryOperation : public ops::Operation {
 };
 
 // ============================================================================
+// CPU Unary Operation Base Class
+// ============================================================================
+
+template<typename Func>
+class CPUUnaryOperation : public ops::Operation {
+ private:
+  ops::OpType op_type_;
+  std::string name_;
+  Func func_;
+
+ public:
+  CPUUnaryOperation(ops::OpType op_type, const std::string& name, Func func)
+      : op_type_(op_type), name_(name), func_(func) {}
+
+  ops::OpType type() const override { return op_type_; }
+  std::string name() const override { return name_; }
+  Device device() const override { return Device::CPU; }
+
+  Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    (void)lhs; (void)rhs;
+    throw std::runtime_error("Not a binary operation");
+  }
+
+  Tensor execute_unary(const Tensor& input) const override;
+
+ private:
+  template<typename T>
+  void execute_unary_typed(const Tensor& input, Tensor& result) const;
+};
+
+// ============================================================================
+// CPU Reduction Operation Base Class
+// ============================================================================
+
+template<typename Func>
+class CPUReductionOperation : public ops::Operation {
+ private:
+  ops::OpType op_type_;
+  std::string name_;
+  Func func_;
+
+ public:
+  CPUReductionOperation(ops::OpType op_type, const std::string& name, Func func)
+      : op_type_(op_type), name_(name), func_(func) {}
+
+  ops::OpType type() const override { return op_type_; }
+  std::string name() const override { return name_; }
+  Device device() const override { return Device::CPU; }
+
+  Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    (void)lhs; (void)rhs;
+    throw std::runtime_error("Not a binary operation");
+  }
+
+  Tensor execute_unary(const Tensor& input) const override {
+    // This will be called by the high-level reduction function
+    // We will need a new execute_reduction method
+    (void)input;
+    throw std::runtime_error("Use execute_reduction for reduction operations");
+  }
+
+  Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override;
+
+ private:
+  template<typename T>
+  Tensor execute_reduction_typed(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const;
+
+  template<typename T>
+  static void reduction_recursive_helper(const Tensor& input, Tensor& result, const std::vector<int>& axes,
+                                          std::vector<size_t>& current_coords, int current_dim, const Func& func, bool keep_dims);
+};
+
+// ============================================================================
 // Operation Function Objects
 // ============================================================================
 
@@ -230,6 +303,119 @@ struct HypotFunc {
       return static_cast<T>(std::hypot(a, b));
     }
   }
+};
+
+// Unary operations
+struct NegateFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_same_v<T, bool>) {
+        return !a;
+    } else {
+        return -a;
+    }
+  }
+};
+
+struct AbsFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_unsigned_v<T> && std::is_integral_v<T>) {
+      return a;
+    } else if constexpr (std::is_same_v<T, half_float::half>) {
+      return static_cast<T>(std::abs(static_cast<float>(a)));
+    } else {
+      return std::abs(a);
+    }
+  }
+};
+
+struct SqrtFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_floating_point_v<T>) {
+        return std::sqrt(a);
+    } else {
+        return static_cast<T>(std::sqrt(static_cast<double>(a)));
+    }
+  }
+};
+
+struct ExpFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_floating_point_v<T>) {
+        return std::exp(a);
+    } else {
+        return static_cast<T>(std::exp(static_cast<double>(a)));
+    }
+  }
+};
+
+struct LogFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_floating_point_v<T>) {
+        return std::log(a);
+    } else {
+        return static_cast<T>(std::log(static_cast<double>(a)));
+    }
+  }
+};
+
+struct SinFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_floating_point_v<T>) {
+        return std::sin(a);
+    } else {
+        return static_cast<T>(std::sin(static_cast<double>(a)));
+    }
+  }
+};
+
+struct CosFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_floating_point_v<T>) {
+        return std::cos(a);
+    } else {
+        return static_cast<T>(std::cos(static_cast<double>(a)));
+    }
+  }
+};
+
+struct TanFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_floating_point_v<T>) {
+        return std::tan(a);
+    } else {
+        return static_cast<T>(std::tan(static_cast<double>(a)));
+    }
+  }
+};
+
+// Reduction operations
+struct SumFunc {
+  template<typename T>
+  T operator()(const T& a, const T& b) const { return a + b; }
+  template<typename T>
+  static T identity() { return static_cast<T>(0); }
+};
+
+struct MaxFunc {
+  template<typename T>
+  T operator()(const T& a, const T& b) const { return std::max(a, b); }
+  template<typename T>
+  static T identity() { return std::numeric_limits<T>::lowest(); }
+};
+
+struct MinFunc {
+  template<typename T>
+  T operator()(const T& a, const T& b) const { return std::min(a, b); }
+  template<typename T>
+  static T identity() { return std::numeric_limits<T>::max(); }
 };
 
 // ============================================================================

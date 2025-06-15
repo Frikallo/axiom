@@ -172,10 +172,45 @@ Tensor Operation::execute_unary(const Tensor& input) const {
   throw std::runtime_error("Unary operations not implemented yet");
 }
 
+Tensor Operation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
+    (void)input; (void)axis; (void)keep_dims;
+    throw std::runtime_error("Reduction operations not implemented yet");
+}
+
 void Operation::execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const {
   (void)lhs; // Suppress unused parameter warning
   (void)rhs; // Suppress unused parameter warning
   throw std::runtime_error("In-place operations not implemented yet");
+}
+
+// ============================================================================
+// Helper function for executing unary operations
+// ============================================================================
+
+static Tensor execute_unary_operation(OpType op_type, const Tensor& input) {
+  Device target_device = input.device();
+  
+  const Operation* op = OperationRegistry::get_operation(op_type, target_device);
+  
+  if (!op) {
+    throw std::runtime_error("Operation not available for the tensor's device");
+  }
+  
+  return op->execute_unary(input);
+}
+
+// ============================================================================
+// Helper function for executing reduction operations
+// ============================================================================
+static Tensor execute_reduction_operation(OpType op_type, const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
+    Device target_device = input.device();
+    
+    const auto* op = OperationRegistry::get_operation(op_type, target_device);
+    if (!op) {
+        throw std::runtime_error("Reduction operation not available for the tensor's device");
+    }
+
+    return op->execute_reduction(input, axis, keep_dims);
 }
 
 // ============================================================================
@@ -315,6 +350,61 @@ Tensor atan2(const Tensor& lhs, const Tensor& rhs) {
 
 Tensor hypot(const Tensor& lhs, const Tensor& rhs) {
   return execute_binary_operation(OpType::Hypot, lhs, rhs);
+}
+
+// Unary operations
+Tensor negate(const Tensor& input) {
+  return execute_unary_operation(OpType::Negate, input);
+}
+
+Tensor abs(const Tensor& input) {
+  return execute_unary_operation(OpType::Abs, input);
+}
+
+Tensor sqrt(const Tensor& input) {
+  return execute_unary_operation(OpType::Sqrt, input);
+}
+
+Tensor exp(const Tensor& input) {
+  return execute_unary_operation(OpType::Exp, input);
+}
+
+Tensor log(const Tensor& input) {
+  return execute_unary_operation(OpType::Log, input);
+}
+
+Tensor sin(const Tensor& input) {
+  return execute_unary_operation(OpType::Sin, input);
+}
+
+Tensor cos(const Tensor& input) {
+  return execute_unary_operation(OpType::Cos, input);
+}
+
+Tensor tan(const Tensor& input) {
+  return execute_unary_operation(OpType::Tan, input);
+}
+
+// Reduction operations
+Tensor sum(const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
+    return execute_reduction_operation(OpType::Sum, input, axis, keep_dims);
+}
+
+Tensor mean(const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
+    return execute_reduction_operation(OpType::Mean, input, axis, keep_dims);
+}
+
+Tensor max(const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
+    return execute_reduction_operation(OpType::Max, input, axis, keep_dims);
+}
+
+Tensor min(const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
+    return execute_reduction_operation(OpType::Min, input, axis, keep_dims);
+}
+
+// Operator overloads
+Tensor operator-(const Tensor& input) {
+    return negate(input);
 }
 
 void execute_binary_inplace(OpType op_type, Tensor& lhs, const Tensor& rhs) {

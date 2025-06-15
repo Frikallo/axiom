@@ -80,12 +80,14 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_storage.mm
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
+        src/backends/metal/kernels.metal
     )
     
     set_source_files_properties(
         src/backends/metal/metal_storage.mm
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
+        src/backends/metal/kernels.metal
         PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"
     )

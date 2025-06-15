@@ -8,10 +8,18 @@ bool is_metal_available();
 
 namespace axiom::system {
 bool is_metal_available() {
-#ifdef AXIOM_METAL_SUPPORT
-    return axiom::backends::metal::is_metal_available();
+#ifdef __APPLE__
+    return backends::metal::is_metal_available();
 #else
     return false;
 #endif
+}
+
+std::string device_to_string(Device device) {
+    switch (device) {
+        case Device::CPU: return "CPU";
+        case Device::GPU: return "GPU";
+        default: return "Unknown";
+    }
 }
 } // namespace axiom::system 

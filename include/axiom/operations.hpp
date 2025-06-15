@@ -84,7 +84,13 @@ enum class OpType {
   Log,
   Sin,
   Cos,
-  Tan
+  Tan,
+
+  // Reduction operations
+  Sum,
+  Mean,
+  Max,
+  Min
 };
 
 class Operation {
@@ -104,8 +110,11 @@ class Operation {
   // For binary operations
   virtual Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const = 0;
   
-  // For unary operations (future extension)
+  // For unary operations
   virtual Tensor execute_unary(const Tensor& input) const;
+
+  // For reduction operations
+  virtual Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const;
   
   // For in-place operations (future extension)
   virtual void execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const;
@@ -172,11 +181,32 @@ Tensor minimum(const Tensor& lhs, const Tensor& rhs);
 Tensor atan2(const Tensor& lhs, const Tensor& rhs);
 Tensor hypot(const Tensor& lhs, const Tensor& rhs);
 
+// Unary operations
+Tensor negate(const Tensor& input);
+Tensor abs(const Tensor& input);
+Tensor sqrt(const Tensor& input);
+Tensor exp(const Tensor& input);
+Tensor log(const Tensor& input);
+Tensor sin(const Tensor& input);
+Tensor cos(const Tensor& input);
+Tensor tan(const Tensor& input);
+
+// Reduction operations
+Tensor sum(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
+Tensor mean(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
+Tensor max(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
+Tensor min(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
+
+// Operator overloads
+Tensor operator-(const Tensor& input);
+
 // In-place operations
 void add_inplace(Tensor& lhs, const Tensor& rhs);
 void subtract_inplace(Tensor& lhs, const Tensor& rhs);
 void multiply_inplace(Tensor& lhs, const Tensor& rhs);
 void divide_inplace(Tensor& lhs, const Tensor& rhs);
+
+void execute_binary_inplace(OpType op_type, Tensor& lhs, const Tensor& rhs);
 
 }  // namespace ops
 }  // namespace axiom 

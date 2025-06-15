@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include "tensor.hpp"
+
 namespace axiom {
 namespace system {
 
@@ -10,6 +13,8 @@ namespace system {
  * This will always be false on non-Apple platforms.
  */
 bool is_metal_available();
+
+std::string device_to_string(Device device);
 
 } // namespace system
 } // namespace axiom 

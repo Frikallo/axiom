@@ -271,7 +271,185 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(Tensor& lhs, const Tens
 }
 
 // ============================================================================
-// Registration function
+// CPU Unary Operation Implementation
+// ============================================================================
+
+template<typename Func>
+Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor& input) const {
+  if (input.device() != Device::CPU) {
+    throw std::runtime_error("CPU operations require CPU tensors");
+  }
+
+  // Unary ops usually return the same dtype as input, except for some functions
+  // which might promote it (e.g., if we had a function that always returns float)
+  DType result_dtype = input.dtype();
+  Tensor result(input.shape(), result_dtype, Device::CPU);
+
+#define DISPATCH_CPU_UNARY_OP(TYPE_ENUM, TYPE) \
+  case TYPE_ENUM: \
+    execute_unary_typed<TYPE>(input, result); \
+    break;
+
+  switch (result_dtype) {
+    DISPATCH_CPU_UNARY_OP(DType::Float32, float)
+    DISPATCH_CPU_UNARY_OP(DType::Float64, double)
+    DISPATCH_CPU_UNARY_OP(DType::Float16, float16_t)
+    DISPATCH_CPU_UNARY_OP(DType::Int8, int8_t)
+    DISPATCH_CPU_UNARY_OP(DType::Int16, int16_t)
+    DISPATCH_CPU_UNARY_OP(DType::Int32, int32_t)
+    DISPATCH_CPU_UNARY_OP(DType::Int64, int64_t)
+    DISPATCH_CPU_UNARY_OP(DType::UInt8, uint8_t)
+    DISPATCH_CPU_UNARY_OP(DType::UInt16, uint16_t)
+    DISPATCH_CPU_UNARY_OP(DType::UInt32, uint32_t)
+    DISPATCH_CPU_UNARY_OP(DType::UInt64, uint64_t)
+    DISPATCH_CPU_UNARY_OP(DType::Bool, bool)
+    case DType::Complex64: // Fallthrough
+    case DType::Complex128:
+      throw std::runtime_error("Complex types are not yet supported by CPU operations.");
+    default:
+      throw std::runtime_error("Unsupported data type for CPU operations");
+  }
+#undef DISPATCH_CPU_UNARY_OP
+
+  return result;
+}
+
+template<typename Func>
+template<typename T>
+void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor& input, Tensor& result) const {
+  size_t total_elements = input.size();
+  const T* input_data = input.template typed_data<T>();
+  T* result_data = result.template typed_data<T>();
+
+  for (size_t i = 0; i < total_elements; ++i) {
+    result_data[i] = func_(input_data[i]);
+  }
+}
+
+// ============================================================================
+// CPU Reduction Operation Implementation
+// ============================================================================
+namespace { // Anonymous namespace for helpers
+
+Shape calculate_reduction_shape(const Shape& input_shape, const std::vector<int>& axes, bool keep_dims) {
+    if (axes.empty()) {
+        return keep_dims ? Shape(input_shape.size(), 1) : Shape{1};
+    }
+
+    Shape output_shape;
+    std::vector<bool> is_reduced_axis(input_shape.size(), false);
+    for (int axis : axes) {
+        is_reduced_axis[axis] = true;
+    }
+
+    for (size_t i = 0; i < input_shape.size(); ++i) {
+        if (is_reduced_axis[i]) {
+            if (keep_dims) {
+                output_shape.push_back(1);
+            }
+        } else {
+            output_shape.push_back(input_shape[i]);
+        }
+    }
+    return output_shape;
+}
+} // namespace
+
+template<typename Func>
+Tensor CPUReductionOperation<Func>::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
+    if (input.device() != Device::CPU) {
+        throw std::runtime_error("CPU operations require CPU tensors");
+    }
+
+    // For now, we only support float32 for reductions
+    DType result_dtype = DType::Float32;
+    if (input.dtype() != DType::Float32) {
+       // In future, we can support more types
+    }
+
+    return execute_reduction_typed<float>(input, axis, keep_dims);
+}
+
+template<typename Func>
+template<typename T>
+void CPUReductionOperation<Func>::reduction_recursive_helper(const Tensor& input, Tensor& result, const std::vector<int>& axes,
+                                                              std::vector<size_t>& current_coords, int current_dim, const Func& func, bool keep_dims) {
+    if (current_dim == static_cast<int>(input.ndim())) {
+        std::vector<size_t> result_coords;
+        if (keep_dims) {
+            result_coords = current_coords;
+            for (int axis : axes) {
+                result_coords[axis] = 0;
+            }
+        } else {
+            for (size_t i = 0; i < input.ndim(); ++i) {
+                bool is_reduced = false;
+                for (int axis : axes) {
+                    if (i == static_cast<size_t>(axis)) {
+                        is_reduced = true;
+                        break;
+                    }
+                }
+                if (!is_reduced) {
+                    result_coords.push_back(current_coords[i]);
+                }
+            }
+        }
+        
+        if (result_coords.empty()) {
+            result_coords.push_back(0);
+        }
+
+        size_t result_offset = ShapeUtils::linear_index(result_coords, result.strides()) / result.itemsize();
+        T& result_val = result.template typed_data<T>()[result_offset];
+        
+        size_t input_offset = ShapeUtils::linear_index(current_coords, input.strides()) / input.itemsize();
+        const T& input_val = input.template typed_data<T>()[input_offset];
+
+        result_val = func(result_val, input_val);
+        return;
+    }
+
+    for (size_t i = 0; i < input.shape()[current_dim]; ++i) {
+        current_coords[current_dim] = i;
+        reduction_recursive_helper<T>(input, result, axes, current_coords, current_dim + 1, func, keep_dims);
+    }
+}
+
+template<typename Func>
+template<typename T>
+Tensor CPUReductionOperation<Func>::execute_reduction_typed(const Tensor& input, const std::vector<int>& axes, bool keep_dims) const {
+    auto input_float = input.astype(DType::Float32);
+    Shape result_shape = calculate_reduction_shape(input.shape(), axes, keep_dims);
+    Tensor result = Tensor::full(result_shape, Func::template identity<T>());
+    result.fill(Func::template identity<T>());
+
+    std::vector<int> norm_axes = axes;
+    if (norm_axes.empty()) {
+        for(size_t i = 0; i < input.ndim(); ++i) norm_axes.push_back(i);
+    }
+    
+    std::vector<size_t> current_coords(input.ndim(), 0);
+    reduction_recursive_helper<T>(input_float, result, norm_axes, current_coords, 0, func_, keep_dims);
+
+
+    if (op_type_ == ops::OpType::Mean) {
+        size_t reduction_size = 1;
+        for(int axis : norm_axes) {
+            reduction_size *= input.shape()[axis];
+        }
+
+        T* result_data = result.template typed_data<T>();
+        for(size_t i = 0; i < result.size(); ++i) {
+            result_data[i] /= static_cast<T>(reduction_size);
+        }
+    }
+
+    return result;
+}
+
+// ============================================================================
+// Factory functions
 // ============================================================================
 
 void register_cpu_operations() {
@@ -356,6 +534,26 @@ void register_cpu_operations() {
   OperationRegistry::register_operation(
     OpType::Hypot, Device::CPU, 
     std::make_unique<CPUBinaryOperation<HypotFunc>>(OpType::Hypot, "hypot", HypotFunc{}));
+
+  // Register unary operations
+  OperationRegistry::register_operation(OpType::Negate, Device::CPU, std::make_unique<CPUUnaryOperation<NegateFunc>>(OpType::Negate, "negate", NegateFunc{}));
+  OperationRegistry::register_operation(OpType::Abs, Device::CPU, std::make_unique<CPUUnaryOperation<AbsFunc>>(OpType::Abs, "abs", AbsFunc{}));
+  OperationRegistry::register_operation(OpType::Sqrt, Device::CPU, std::make_unique<CPUUnaryOperation<SqrtFunc>>(OpType::Sqrt, "sqrt", SqrtFunc{}));
+  OperationRegistry::register_operation(OpType::Exp, Device::CPU, std::make_unique<CPUUnaryOperation<ExpFunc>>(OpType::Exp, "exp", ExpFunc{}));
+  OperationRegistry::register_operation(OpType::Log, Device::CPU, std::make_unique<CPUUnaryOperation<LogFunc>>(OpType::Log, "log", LogFunc{}));
+  OperationRegistry::register_operation(OpType::Sin, Device::CPU, std::make_unique<CPUUnaryOperation<SinFunc>>(OpType::Sin, "sin", SinFunc{}));
+  OperationRegistry::register_operation(OpType::Cos, Device::CPU, std::make_unique<CPUUnaryOperation<CosFunc>>(OpType::Cos, "cos", CosFunc{}));
+  OperationRegistry::register_operation(OpType::Tan, Device::CPU, std::make_unique<CPUUnaryOperation<TanFunc>>(OpType::Tan, "tan", TanFunc{}));
+
+  // Register reduction operations
+  OperationRegistry::register_operation(OpType::Sum, Device::CPU, std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Sum, "sum", SumFunc{}));
+  OperationRegistry::register_operation(OpType::Mean, Device::CPU, std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Mean, "mean", SumFunc{}));
+  OperationRegistry::register_operation(OpType::Max, Device::CPU, std::make_unique<CPUReductionOperation<MaxFunc>>(OpType::Max, "max", MaxFunc{}));
+  OperationRegistry::register_operation(OpType::Min, Device::CPU, std::make_unique<CPUReductionOperation<MinFunc>>(OpType::Min, "min", MinFunc{}));
+}
+
+void add(Tensor& a, const Tensor& b) {
+  // Example of a potential external function if needed
 }
 
 }  // namespace cpu
