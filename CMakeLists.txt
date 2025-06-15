@@ -66,9 +66,6 @@ set(AXIOM_SOURCES
     src/tensor/einops.cpp
     src/tensor/operations.cpp
     
-    # Backend registry
-    src/backends/backend_registry.cpp
-    
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
     src/backends/cpu/cpu_operations.cpp
@@ -78,10 +75,12 @@ set(AXIOM_SOURCES
 if(APPLE AND AXIOM_HAS_METAL)
     list(APPEND AXIOM_SOURCES
         src/backends/metal/metal_storage.mm
+        src/backends/metal/metal_operations.mm
     )
     
     set_source_files_properties(
         src/backends/metal/metal_storage.mm
+        src/backends/metal/metal_operations.mm
         PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"
     )

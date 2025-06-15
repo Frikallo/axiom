@@ -2,6 +2,7 @@
 #include "axiom/tensor.hpp"
 #include "axiom/shape.hpp"
 #include <stdexcept>
+#include "axiom/operations.hpp"
 
 namespace axiom {
 namespace backends {

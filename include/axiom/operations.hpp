@@ -10,11 +10,9 @@
 #include "dtype.hpp"
 #include "shape.hpp"
 #include "storage.hpp"
+#include "tensor.hpp"
 
 namespace axiom {
-
-// Forward declaration
-class Tensor;
 
 namespace ops {
 
@@ -96,6 +94,12 @@ class Operation {
   virtual OpType type() const = 0;
   virtual std::string name() const = 0;
   virtual Device device() const = 0;
+  
+  // A way to check for feature support like broadcasting
+  virtual bool supports_binary(const Tensor& lhs, const Tensor& rhs) const {
+      // By default, assume basic support (same shapes, no broadcasting)
+      return lhs.shape() == rhs.shape();
+  }
   
   // For binary operations
   virtual Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const = 0;

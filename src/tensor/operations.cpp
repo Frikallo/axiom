@@ -1,6 +1,7 @@
 #include "axiom/operations.hpp"
 #include "axiom/tensor.hpp"
-#include "../backends/cpu/cpu_operations.hpp"
+#include "backends/cpu/cpu_operations.hpp"
+#include "backends/metal/metal_operations.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -166,6 +167,10 @@ bool OperationRegistry::is_operation_available(OpType op_type, Device device) {
 void OperationRegistry::initialize_builtin_operations() {
   // Register CPU operations
   backends::cpu::register_cpu_operations();
+
+#ifdef __APPLE__
+    backends::metal::register_metal_operations();
+#endif
 }
 
 // ============================================================================
@@ -194,23 +199,19 @@ static Tensor execute_binary_operation(OpType op_type, const Tensor& lhs, const 
   }
   
   // Determine the target device (prefer GPU if available)
-  Device target_device = Device::CPU;
-  if (lhs.device() == Device::GPU || rhs.device() == Device::GPU) {
-    target_device = Device::GPU;
-  }
+  Device target_device = (lhs.device() == Device::GPU || rhs.device() == Device::GPU) ? Device::GPU : Device::CPU;
   
   // Get the operation implementation
   const Operation* op = OperationRegistry::get_operation(op_type, target_device);
+
+  // Fallback to CPU if GPU op is not available or doesn't support the inputs
+  if (target_device == Device::GPU && (!op || !op->supports_binary(lhs, rhs))) {
+    target_device = Device::CPU;
+    op = OperationRegistry::get_operation(op_type, target_device);
+  }
+  
   if (!op) {
-    // Fallback to CPU if GPU operation not available
-    if (target_device == Device::GPU) {
-      target_device = Device::CPU;
-      op = OperationRegistry::get_operation(op_type, target_device);
-    }
-    
-    if (!op) {
-      throw std::runtime_error("Operation not available for any device");
-    }
+    throw std::runtime_error("Operation not available for any device");
   }
   
   // Move tensors to target device if needed

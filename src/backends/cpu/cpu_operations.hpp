@@ -1,9 +1,7 @@
 #pragma once
 
 #include "axiom/operations.hpp"
-#include <functional>
 #include <type_traits>
-#include <complex>
 #include <cmath>
 
 namespace axiom {
@@ -28,6 +26,10 @@ class CPUBinaryOperation : public ops::Operation {
   ops::OpType type() const override { return op_type_; }
   std::string name() const override { return name_; }
   Device device() const override { return Device::CPU; }
+  
+  bool supports_binary(const Tensor& lhs, const Tensor& rhs) const override {
+      return ops::are_broadcastable(lhs.shape(), rhs.shape());
+  }
 
   Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override;
 
@@ -226,6 +228,10 @@ struct HypotFunc {
 // ============================================================================
 
 void register_cpu_operations();
+
+void add(Tensor& a, const Tensor& b);
+
+void register_cpu_backend();
 
 }  // namespace cpu
 }  // namespace backends
