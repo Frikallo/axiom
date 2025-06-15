@@ -6,9 +6,7 @@
 #include <cassert>
 #include <cmath>
 
-#include "axiom/tensor.hpp"
-#include "axiom/operations.hpp"
-#include "backends/metal/metal_storage.hpp"
+#include <axiom/axiom.hpp>
 
 // Test runner state
 static int tests_run = 0;
@@ -52,7 +50,7 @@ void test_cpu_add_success() {
 
 void test_metal_add_success() {
 #ifdef __APPLE__
-    if (!axiom::backends::metal::is_metal_available()) return;
+    if (!axiom::system::is_metal_available()) return;
     auto a = axiom::Tensor::full({2, 2}, 2.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
     auto c = axiom::ops::add(a, b);
@@ -74,7 +72,7 @@ void test_cpu_sub_success() {
 
 void test_metal_sub_success() {
 #ifdef __APPLE__
-    if (!axiom::backends::metal::is_metal_available()) return;
+    if (!axiom::system::is_metal_available()) return;
     auto a = axiom::Tensor::full({2, 2}, 10.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
     auto c = axiom::ops::subtract(a, b);
@@ -117,7 +115,7 @@ void test_cpu_type_promotion_success() {
 
 void test_unsupported_gpu_op_fallback() {
 #ifdef __APPLE__
-    if (!axiom::backends::metal::is_metal_available()) return;
+    if (!axiom::system::is_metal_available()) return;
     // Multiply is not implemented on Metal, should fall back to CPU.
     auto a = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 4.0f).to(axiom::Device::GPU);
@@ -133,7 +131,7 @@ void test_unsupported_gpu_op_fallback() {
 
 void test_mixed_device_op_success() {
 #ifdef __APPLE__
-    if (!axiom::backends::metal::is_metal_available()) return;
+    if (!axiom::system::is_metal_available()) return;
     // Operation between CPU and GPU tensor should work, preferring GPU.
     auto a = axiom::Tensor::full({2, 2}, 3.0f, axiom::Device::CPU);
     auto b = axiom::Tensor::full({2, 2}, 4.0f).to(axiom::Device::GPU);
@@ -162,7 +160,7 @@ void test_shape_mismatch_error() {
 
 void test_metal_type_mismatch_error() {
 #ifdef __APPLE__
-    if (!axiom::backends::metal::is_metal_available()) return;
+    if (!axiom::system::is_metal_available()) return;
     auto a = axiom::Tensor::full({2, 2}, static_cast<int32_t>(1)).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, static_cast<int32_t>(2)).to(axiom::Device::GPU);
     assert(a.dtype() == axiom::DType::Int32);
@@ -181,7 +179,7 @@ void test_metal_type_mismatch_error() {
 
 void test_metal_broadcast_error() {
 #ifdef __APPLE__
-    if (!axiom::backends::metal::is_metal_available()) return;
+    if (!axiom::system::is_metal_available()) return;
     auto a = axiom::Tensor::full({2, 2}, 10.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({1}, 5.0f).to(axiom::Device::GPU); // Scalar
     

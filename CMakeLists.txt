@@ -30,6 +30,8 @@ endif()
 
 # Platform-specific configurations
 if(APPLE)
+    option(AXIOM_EMBED_METAL_LIBRARY "Embed Metal library into the main library" ON)
+
     find_library(METAL_FRAMEWORK Metal)
     find_library(FOUNDATION_FRAMEWORK Foundation)
     
@@ -65,6 +67,7 @@ set(AXIOM_SOURCES
     src/tensor/type_conversion.cpp
     src/tensor/einops.cpp
     src/tensor/operations.cpp
+    src/tensor/system.cpp
     
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
@@ -91,28 +94,56 @@ endif()
 add_library(axiom SHARED ${AXIOM_SOURCES})
 
 if(APPLE AND AXIOM_HAS_METAL)
-    # Compile Metal kernels
-    set(METAL_KERNELS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/metal/kernels.metal)
-    set(METAL_LIBRARY_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/default.metallib)
+    if(AXIOM_EMBED_METAL_LIBRARY)
+        enable_language(ASM)
+        target_compile_definitions(axiom PUBLIC AXIOM_METAL_EMBED_LIBRARY)
 
-    add_custom_command(
-        OUTPUT ${METAL_LIBRARY_OUTPUT}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}
-        COMMAND xcrun -sdk macosx metal -c ${METAL_KERNELS_FILE} -o ${CMAKE_CURRENT_BINARY_DIR}/kernels.air
-        COMMAND xcrun -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/kernels.air -o ${METAL_LIBRARY_OUTPUT}
-        DEPENDS ${METAL_KERNELS_FILE}
-        COMMENT "Compiling Metal kernels"
-    )
+        set(METAL_KERNELS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/metal/kernels.metal)
+        set(METAL_LIBRARY_TEMP ${CMAKE_CURRENT_BINARY_DIR}/default.metallib.tmp)
+        set(METAL_EMBED_ASM ${CMAKE_CURRENT_BINARY_DIR}/axiom-metal-embed.s)
 
-    add_custom_target(
-        axiom_metal_kernels ALL
-        DEPENDS ${METAL_LIBRARY_OUTPUT}
-    )
+        # 1. Compile .metal source to a temporary .metallib file
+        add_custom_command(
+            OUTPUT ${METAL_LIBRARY_TEMP}
+            COMMAND xcrun -sdk macosx metal -c ${METAL_KERNELS_FILE} -o ${CMAKE_CURRENT_BINARY_DIR}/kernels.air
+            COMMAND xcrun -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/kernels.air -o ${METAL_LIBRARY_TEMP}
+            DEPENDS ${METAL_KERNELS_FILE}
+            COMMENT "Compiling Metal kernels to temporary library"
+        )
 
-    # Add the kernels library to the main target's sources.
-    # This ensures it's built, but it's not "linked" in a traditional sense.
-    # We will copy it to the output directory.
-    add_dependencies(axiom axiom_metal_kernels)
+        # 2. Embed the temporary .metallib file into an assembly file
+        add_custom_command(
+            OUTPUT ${METAL_EMBED_ASM}
+            COMMAND echo ".section __TEXT,__const" > ${METAL_EMBED_ASM}
+            COMMAND echo ".globl _axiom_metal_kernels_start" >> ${METAL_EMBED_ASM}
+            COMMAND echo "_axiom_metal_kernels_start:" >> ${METAL_EMBED_ASM}
+            COMMAND echo ".incbin \\\"${METAL_LIBRARY_TEMP}\\\"" >> ${METAL_EMBED_ASM}
+            COMMAND echo ".globl _axiom_metal_kernels_end" >> ${METAL_EMBED_ASM}
+            COMMAND echo "_axiom_metal_kernels_end:" >> ${METAL_EMBED_ASM}
+            DEPENDS ${METAL_LIBRARY_TEMP}
+            COMMENT "Embedding Metal library into assembly"
+        )
+        target_sources(axiom PRIVATE ${METAL_EMBED_ASM})
+    else()
+        # Compile Metal kernels to a separate file (for development)
+        set(METAL_KERNELS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/metal/kernels.metal)
+        set(METAL_LIBRARY_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/default.metallib)
+
+        add_custom_command(
+            OUTPUT ${METAL_LIBRARY_OUTPUT}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}
+            COMMAND xcrun -sdk macosx metal -c ${METAL_KERNELS_FILE} -o ${CMAKE_CURRENT_BINARY_DIR}/kernels.air
+            COMMAND xcrun -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/kernels.air -o ${METAL_LIBRARY_OUTPUT}
+            DEPENDS ${METAL_KERNELS_FILE}
+            COMMENT "Compiling Metal kernels"
+        )
+
+        add_custom_target(
+            axiom_metal_kernels ALL
+            DEPENDS ${METAL_LIBRARY_OUTPUT}
+        )
+        add_dependencies(axiom axiom_metal_kernels)
+    endif()
 endif()
 
 # Set target properties
@@ -189,7 +220,7 @@ install(
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-if(APPLE AND AXIOM_HAS_METAL)
+if(APPLE AND AXIOM_HAS_METAL AND NOT AXIOM_EMBED_METAL_LIBRARY)
     install(
         FILES ${METAL_LIBRARY_OUTPUT}
         DESTINATION ${CMAKE_INSTALL_BINDIR}

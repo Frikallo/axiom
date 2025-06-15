@@ -2,8 +2,7 @@
 // tests/test_comprehensive.cpp - Complete test suite for Axiom tensors
 //=============================================================================
 
-#include <axiom/io.hpp>
-#include <axiom/tensor.hpp>
+#include <axiom/axiom.hpp>
 #include <cassert>
 #include <chrono>
 #include <iomanip>

@@ -3,6 +3,13 @@
 #import <Metal/Metal.h>
 #import "metal_storage.hpp"
 
+#ifdef AXIOM_METAL_EMBED_LIBRARY
+extern "C" {
+    extern const char axiom_metal_kernels_start;
+    extern const char axiom_metal_kernels_end;
+}
+#endif
+
 namespace axiom {
 namespace backends {
 namespace metal {
@@ -50,6 +57,15 @@ void init_default_library() {
         id<MTLDevice> device = (__bridge id<MTLDevice>)MetalContext::instance().device();
         NSError* error = nil;
 
+#ifdef AXIOM_METAL_EMBED_LIBRARY
+        dispatch_data_t lib_data = dispatch_data_create(
+                &axiom_metal_kernels_start,
+                &axiom_metal_kernels_end - &axiom_metal_kernels_start,
+                dispatch_get_main_queue(),
+                DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+
+        g_default_library = [device newLibraryWithData:lib_data error:&error];
+#else
         // Logic from ggml to find the metallib file
         NSString *mainBundlePath = [[NSBundle mainBundle] bundlePath];
         NSString *path = [mainBundlePath stringByAppendingPathComponent:@"default.metallib"];
@@ -60,7 +76,7 @@ void init_default_library() {
             // Fallback for when not running in a bundle (e.g. command line tools)
             g_default_library = [device newDefaultLibrary];
         }
-
+#endif
         if (!g_default_library) {
             NSLog(@"Failed to load Metal library: %@", error);
             throw std::runtime_error("Failed to load default Metal library.");

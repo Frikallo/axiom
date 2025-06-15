@@ -1,8 +1,6 @@
 #include <iostream>
 #include <iomanip>
-#include "axiom/tensor.hpp"
-#include "axiom/operations.hpp"
-#include "axiom/tensor_operators.hpp"
+#include "axiom/axiom.hpp"
 
 using namespace axiom;
 
