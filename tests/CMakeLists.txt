@@ -32,6 +32,17 @@ add_executable(test_tensor_operations
     test_tensor_operations.cpp
 )
 
+# If Metal is enabled, ensure the library is available for tests
+if(APPLE AND AXIOM_HAS_METAL)
+    add_custom_command(
+        TARGET test_tensor_operations PRE_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_BINARY_DIR}/default.metallib
+                ${CMAKE_CURRENT_BINARY_DIR}/default.metallib
+        COMMENT "Copying Metal library for tests"
+    )
+endif()
+
 target_link_libraries(test_tensor_operations
     PRIVATE
         axiom

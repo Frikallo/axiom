@@ -76,17 +76,44 @@ if(APPLE AND AXIOM_HAS_METAL)
     list(APPEND AXIOM_SOURCES
         src/backends/metal/metal_storage.mm
         src/backends/metal/metal_operations.mm
+        src/backends/metal/metal_common.mm
     )
     
     set_source_files_properties(
         src/backends/metal/metal_storage.mm
         src/backends/metal/metal_operations.mm
+        src/backends/metal/metal_common.mm
         PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"
     )
 endif()
 
 add_library(axiom SHARED ${AXIOM_SOURCES})
+
+if(APPLE AND AXIOM_HAS_METAL)
+    # Compile Metal kernels
+    set(METAL_KERNELS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/metal/kernels.metal)
+    set(METAL_LIBRARY_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/default.metallib)
+
+    add_custom_command(
+        OUTPUT ${METAL_LIBRARY_OUTPUT}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}
+        COMMAND xcrun -sdk macosx metal -c ${METAL_KERNELS_FILE} -o ${CMAKE_CURRENT_BINARY_DIR}/kernels.air
+        COMMAND xcrun -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/kernels.air -o ${METAL_LIBRARY_OUTPUT}
+        DEPENDS ${METAL_KERNELS_FILE}
+        COMMENT "Compiling Metal kernels"
+    )
+
+    add_custom_target(
+        axiom_metal_kernels ALL
+        DEPENDS ${METAL_LIBRARY_OUTPUT}
+    )
+
+    # Add the kernels library to the main target's sources.
+    # This ensures it's built, but it's not "linked" in a traditional sense.
+    # We will copy it to the output directory.
+    add_dependencies(axiom axiom_metal_kernels)
+endif()
 
 # Set target properties
 set_target_properties(axiom PROPERTIES
@@ -160,8 +187,14 @@ install(
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
+
+if(APPLE AND AXIOM_HAS_METAL)
+    install(
+        FILES ${METAL_LIBRARY_OUTPUT}
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
 
 # Install CMake config files
 install(

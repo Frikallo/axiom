@@ -45,6 +45,7 @@ void test_cpu_add_success() {
     auto a = axiom::Tensor::full({2, 2}, 2.0f);
     auto b = axiom::Tensor::full({2, 2}, 3.0f);
     auto c = axiom::ops::add(a, b);
+    assert(c.device() == axiom::Device::CPU);
     const float* c_data = c.typed_data<float>();
     for (size_t i = 0; i < 4; ++i) assert_close(c_data[i], 5.0f);
 }
@@ -55,6 +56,7 @@ void test_metal_add_success() {
     auto a = axiom::Tensor::full({2, 2}, 2.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
     auto c = axiom::ops::add(a, b);
+    assert(c.device() == axiom::Device::GPU);
     auto c_cpu = c.cpu();
     const float* c_data = c_cpu.typed_data<float>();
     for (size_t i = 0; i < 4; ++i) assert_close(c_data[i], 5.0f);
@@ -65,6 +67,7 @@ void test_cpu_sub_success() {
     auto a = axiom::Tensor::full({2, 2}, 10.0f);
     auto b = axiom::Tensor::full({2, 2}, 3.0f);
     auto c = axiom::ops::subtract(a, b);
+    assert(c.device() == axiom::Device::CPU);
     const float* c_data = c.typed_data<float>();
     for (size_t i = 0; i < 4; ++i) assert_close(c_data[i], 7.0f);
 }
@@ -75,6 +78,7 @@ void test_metal_sub_success() {
     auto a = axiom::Tensor::full({2, 2}, 10.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
     auto c = axiom::ops::subtract(a, b);
+    assert(c.device() == axiom::Device::GPU);
     auto c_cpu = c.cpu();
     const float* c_data = c_cpu.typed_data<float>();
     for (size_t i = 0; i < 4; ++i) assert_close(c_data[i], 7.0f);
