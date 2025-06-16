@@ -3,6 +3,8 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <iomanip>
+#include <sstream>
 
 namespace axiom {
 namespace io {
@@ -93,6 +95,100 @@ Tensor ensure_cpu_tensor(const Tensor& tensor) {
   } else {
     return tensor.cpu();
   }
+}
+
+// Helper to convert a single element to string based on dtype
+template<typename T>
+std::string element_to_string(const void* data, size_t index) {
+    std::stringstream ss;
+    if constexpr (std::is_floating_point_v<T>) {
+        ss << std::fixed << std::setprecision(4) << static_cast<const T*>(data)[index];
+    } else {
+        ss << static_cast<const T*>(data)[index];
+    }
+    return ss.str();
+}
+
+std::string dispatch_element_to_string(const Tensor& t, size_t index) {
+    const void* data = t.data();
+    switch (t.dtype()) {
+        case DType::Float32:  return element_to_string<float>(data, index);
+        case DType::Float64:  return element_to_string<double>(data, index);
+        case DType::Float16:  return element_to_string<half_float::half>(data, index);
+        case DType::Int8:     return std::to_string(static_cast<const int8_t*>(data)[index]);
+        case DType::Int16:    return element_to_string<int16_t>(data, index);
+        case DType::Int32:    return element_to_string<int32_t>(data, index);
+        case DType::Int64:    return element_to_string<int64_t>(data, index);
+        case DType::UInt8:    return std::to_string(static_cast<const uint8_t*>(data)[index]);
+        case DType::UInt16:   return element_to_string<uint16_t>(data, index);
+        case DType::UInt32:   return element_to_string<uint32_t>(data, index);
+        case DType::UInt64:   return element_to_string<uint64_t>(data, index);
+        case DType::Bool:     return static_cast<const bool*>(data)[index] ? "true" : "false";
+        default: throw std::runtime_error("Unsupported dtype for printing");
+    }
+}
+
+void print_recursive(std::stringstream& ss, const Tensor& t, std::vector<size_t>& coords, int dim,
+                     size_t edge_items) {
+    ss << "[";
+    size_t dim_size = t.shape()[dim];
+
+    if (dim == t.ndim() - 1) {
+        if (dim_size > 2 * edge_items) {
+            for (size_t i = 0; i < edge_items; ++i) {
+                coords[dim] = i;
+                size_t offset = ShapeUtils::linear_index(coords, t.strides()) / t.itemsize();
+                ss << dispatch_element_to_string(t, offset) << " ";
+            }
+            ss << "... ";
+            for (size_t i = dim_size - edge_items; i < dim_size; ++i) {
+                coords[dim] = i;
+                size_t offset = ShapeUtils::linear_index(coords, t.strides()) / t.itemsize();
+                ss << dispatch_element_to_string(t, offset);
+                if (i < dim_size - 1) ss << " ";
+            }
+        } else {
+            for (size_t i = 0; i < dim_size; ++i) {
+                coords[dim] = i;
+                size_t offset = ShapeUtils::linear_index(coords, t.strides()) / t.itemsize();
+                ss << dispatch_element_to_string(t, offset);
+                if (i < dim_size - 1) ss << " ";
+            }
+        }
+    } else {
+        if (dim_size > 2 * edge_items) {
+            for (size_t i = 0; i < edge_items; ++i) {
+                 if (i > 0) {
+                    ss << "\n";
+                    for (int j = 0; j <= dim; ++j) ss << " ";
+                }
+                coords[dim] = i;
+                print_recursive(ss, t, coords, dim + 1, edge_items);
+            }
+            ss << "\n";
+            for (int j = 0; j <= dim; ++j) ss << " ";
+            ss << "...";
+            for (size_t i = dim_size - edge_items; i < dim_size; ++i) {
+                ss << "\n";
+                for (int j = 0; j <= dim; ++j) ss << " ";
+                coords[dim] = i;
+                print_recursive(ss, t, coords, dim + 1, edge_items);
+            }
+
+        } else {
+            for (size_t i = 0; i < dim_size; ++i) {
+                if (i > 0) {
+                    ss << "\n";
+                    for (int j = 0; j <= dim; ++j) {
+                        ss << " ";
+                    }
+                }
+                coords[dim] = i;
+                print_recursive(ss, t, coords, dim + 1, edge_items);
+            }
+        }
+    }
+    ss << "]";
 }
 
 }  // anonymous namespace
@@ -457,6 +553,19 @@ std::string version_string(uint32_t version) {
     default:
       return "Unknown (" + std::to_string(version) + ")";
   }
+}
+
+std::string to_string(const Tensor& tensor) {
+    auto t_cpu = tensor.cpu();
+    
+    if (t_cpu.size() == 0) return "[]";
+    if (t_cpu.ndim() == 0) return dispatch_element_to_string(t_cpu, 0);
+
+    std::stringstream ss;
+    std::vector<size_t> coords(t_cpu.ndim(), 0);
+    print_recursive(ss, t_cpu, coords, 0, 3);
+    
+    return ss.str();
 }
 
 }  // namespace io

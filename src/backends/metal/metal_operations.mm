@@ -34,7 +34,12 @@ enum class MetalOpType {
     Log,
     Sin,
     Cos,
-    Tan
+    Tan,
+    // Reductions
+    Sum,
+    Mean,
+    Max,
+    Min
 };
 
 // Must match layout in binary_kernels.metal
@@ -57,6 +62,20 @@ struct UnaryKernelParams {
     uint input_strides[kMaxDims];
 };
 
+// Must match layout in kernels.metal
+struct ReductionKernelParams {
+    MetalOpType op_type;
+    uint rank;
+    uint output_rank;
+    uint input_shape[kMaxDims];
+    uint input_strides[kMaxDims];
+    uint output_shape[kMaxDims];
+    uint output_strides[kMaxDims];
+    uint reduction_axes[kMaxDims];
+    uint num_reduction_axes;
+    uint reduction_size;
+};
+
 MetalOpType to_metal_op_type(ops::OpType op_type) {
     switch(op_type) {
         // Binary
@@ -73,9 +92,27 @@ MetalOpType to_metal_op_type(ops::OpType op_type) {
         case ops::OpType::Sin:    return MetalOpType::Sin;
         case ops::OpType::Cos:    return MetalOpType::Cos;
         case ops::OpType::Tan:    return MetalOpType::Tan;
+        // Reductions
+        case ops::OpType::Sum:    return MetalOpType::Sum;
+        case ops::OpType::Mean:   return MetalOpType::Mean;
+        case ops::OpType::Max:    return MetalOpType::Max;
+        case ops::OpType::Min:    return MetalOpType::Min;
         default: throw std::runtime_error("Unsupported operation for Metal.");
     }
 }
+
+// Helper functions for logging
+#ifdef DEBUG
+template<typename T>
+NSString* vectorToString(const std::vector<T>& vec) {
+    NSMutableString* str = [NSMutableString stringWithString:@"["];
+    for (size_t i = 0; i < vec.size(); ++i) {
+        [str appendFormat:@"%llu%@", (unsigned long long)vec[i], (i < vec.size() - 1) ? @", " : @""];
+    }
+    [str appendString:@"]"];
+    return str;
+}
+#endif
 
 // Unified class for all Metal binary operations
 class MetalBinaryOperation : public ops::Operation {
@@ -373,6 +410,170 @@ public:
     }
 };
 
+// ============================================================================
+// Metal Reduction Operation
+// ============================================================================
+
+class MetalReductionOperation : public ops::Operation {
+private:
+    ops::OpType op_type_;
+    std::string op_name_;
+    
+    // Cache for pipeline states
+    mutable std::map<DType, id<MTLComputePipelineState>> pipeline_states_;
+
+public:
+    MetalReductionOperation(ops::OpType op_type, std::string op_name)
+        : op_type_(op_type), op_name_(std::move(op_name)) {}
+
+    ops::OpType type() const override { return op_type_; }
+    std::string name() const override { return op_name_; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+        (void)lhs; (void)rhs;
+        throw std::runtime_error("Not a binary operation");
+    }
+
+    Tensor execute_unary(const Tensor& input) const override {
+        (void)input;
+        throw std::runtime_error("Not a unary operation");
+    }
+
+    id<MTLComputePipelineState> get_pipeline_state(DType dtype) const {
+        if (pipeline_states_.count(dtype)) {
+            return pipeline_states_.at(dtype);
+        }
+
+        std::string type_suffix;
+        switch (dtype) {
+            case DType::Float32: type_suffix = "float"; break;
+            case DType::Float16: type_suffix = "half"; break;
+            // TODO: Add support for other types like int
+            default:
+                throw std::runtime_error("Unsupported data type for Metal reduction: " + dtype_name(dtype));
+        }
+
+        std::string kernel_name = "reduction_kernel_" + type_suffix;
+
+        id<MTLDevice> device = (__bridge id<MTLDevice>)MetalContext::instance().device();
+        id<MTLLibrary> library = (__bridge id<MTLLibrary>)get_default_library();
+        
+        NSError* error = nil;
+        id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:kernel_name.c_str()]];
+        if (!function) {
+            throw std::runtime_error("Failed to find kernel: " + kernel_name);
+        }
+
+        id<MTLComputePipelineState> pipeline_state = [device newComputePipelineStateWithFunction:function error:&error];
+        if (!pipeline_state) {
+            throw std::runtime_error("Failed to create Metal pipeline state for kernel: " + kernel_name);
+        }
+
+        pipeline_states_[dtype] = pipeline_state;
+        return pipeline_state;
+    }
+
+    Tensor execute_reduction(const Tensor& input, const std::vector<int>& raw_axes, bool keep_dims) const override {
+        if (input.device() != Device::GPU) {
+            throw std::runtime_error("Metal reduction op input must be on GPU.");
+        }
+
+        // --- Prepare shapes and axes ---
+        auto axes = raw_axes;
+        if (axes.empty()) { // Reduce over all axes
+            axes.resize(input.shape().size());
+            std::iota(axes.begin(), axes.end(), 0);
+        }
+
+        Shape output_shape;
+        size_t reduction_size = 1;
+        std::vector<bool> is_reduction_axis(input.shape().size(), false);
+        for (int axis : axes) {
+            is_reduction_axis[axis] = true;
+            reduction_size *= input.shape()[axis];
+        }
+
+        for (size_t i = 0; i < input.shape().size(); ++i) {
+            if (!is_reduction_axis[i]) {
+                output_shape.push_back(input.shape()[i]);
+            } else if (keep_dims) {
+                output_shape.push_back(1);
+            }
+        }
+        if (output_shape.empty()) output_shape.push_back(1);
+        
+        // --- Get pipeline and create result tensor ---
+        DType dtype = input.dtype();
+        id<MTLComputePipelineState> pipeline_state = get_pipeline_state(dtype);
+        Tensor result = Tensor(output_shape, dtype, Device::GPU);
+
+        // --- Get command encoder ---
+        id<MTLCommandQueue> command_queue = (__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue();
+        id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
+        id<MTLComputeCommandEncoder> command_encoder = [command_buffer computeCommandEncoder];
+
+        [command_encoder setComputePipelineState:pipeline_state];
+
+        // --- Prepare kernel parameters ---
+        ReductionKernelParams params;
+        params.op_type = to_metal_op_type(op_type_);
+        params.rank = input.shape().size();
+        params.output_rank = result.shape().size();
+        if (params.rank > kMaxDims) {
+            throw std::runtime_error("Tensor rank exceeds Metal kernel's max dimensions.");
+        }
+
+        std::fill_n(params.input_shape, kMaxDims, 0);
+        std::fill_n(params.input_strides, kMaxDims, 0);
+        std::fill_n(params.output_shape, kMaxDims, 0);
+        std::fill_n(params.output_strides, kMaxDims, 0);
+        std::fill_n(params.reduction_axes, kMaxDims, 0);
+
+        for(size_t i = 0; i < input.shape().size(); ++i) {
+            params.input_shape[i] = input.shape()[i];
+            params.input_strides[i] = input.strides()[i] / input.itemsize();
+        }
+
+        auto result_strides_vec = ShapeUtils::get_contiguous_strides(result.shape(), result.itemsize());
+        for(size_t i = 0; i < result.shape().size(); ++i) {
+            params.output_shape[i] = result.shape()[i];
+            params.output_strides[i] = result_strides_vec[i] / result.itemsize();
+        }
+
+        params.num_reduction_axes = axes.size();
+        for(size_t i = 0; i < axes.size(); ++i) {
+            params.reduction_axes[i] = axes[i];
+        }
+        params.reduction_size = reduction_size;
+
+        auto* input_storage = static_cast<const MetalStorage*>(input.storage().get());
+        auto* res_storage = static_cast<MetalStorage*>(result.storage().get());
+
+        [command_encoder setBuffer:(__bridge id<MTLBuffer>)input_storage->buffer() offset:input.offset() atIndex:0];
+        [command_encoder setBuffer:(__bridge id<MTLBuffer>)res_storage->buffer() offset:result.offset() atIndex:1];
+        [command_encoder setBytes:&params length:sizeof(params) atIndex:2];
+
+        // --- Dispatch threads ---
+        NSUInteger width = result.size();
+        NSUInteger max_threads = [pipeline_state maxTotalThreadsPerThreadgroup];
+        MTLSize threads_per_group = MTLSizeMake(std::min(width, max_threads), 1, 1);
+        MTLSize thread_groups = MTLSizeMake((width + threads_per_group.width - 1) / threads_per_group.width, 1, 1);
+
+        [command_encoder dispatchThreadgroups:thread_groups threadsPerThreadgroup:threads_per_group];
+        [command_encoder endEncoding];
+        [command_buffer commit];
+        [command_buffer waitUntilCompleted];
+
+        if ([command_buffer status] == MTLCommandBufferStatusError) {
+            NSLog(@"Error: %@", [command_buffer error]);
+            throw std::runtime_error("Metal command buffer execution failed.");
+        }
+        
+        return result;
+    }
+};
+
 void register_metal_operations() {
     if (!is_metal_available()) return;
     
@@ -418,6 +619,12 @@ void register_metal_operations() {
     ops::OperationRegistry::register_operation(
         ops::OpType::Tan, Device::GPU,
         std::make_unique<MetalUnaryOperation>(ops::OpType::Tan, "tan"));
+
+    // Reduction Ops
+    ops::OperationRegistry::register_operation(ops::OpType::Sum, Device::GPU, std::make_unique<MetalReductionOperation>(ops::OpType::Sum, "sum"));
+    ops::OperationRegistry::register_operation(ops::OpType::Mean, Device::GPU, std::make_unique<MetalReductionOperation>(ops::OpType::Mean, "mean"));
+    ops::OperationRegistry::register_operation(ops::OpType::Max, Device::GPU, std::make_unique<MetalReductionOperation>(ops::OpType::Max, "max"));
+    ops::OperationRegistry::register_operation(ops::OpType::Min, Device::GPU, std::make_unique<MetalReductionOperation>(ops::OpType::Min, "min"));
 }
 
 } // namespace metal

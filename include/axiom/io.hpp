@@ -159,6 +159,17 @@ bool validate_tensor(const Tensor& tensor);
 std::string version_string(uint32_t version);
 
 // ============================================================================
+// String formatting
+// ============================================================================
+
+/**
+ * Get a NumPy-style string representation of the tensor.
+ * @param tensor The tensor to format.
+ * @return A string with the formatted tensor.
+ */
+std::string to_string(const Tensor& tensor);
+
+// ============================================================================
 // Convenience functions (NumPy-style API)
 // ============================================================================
 

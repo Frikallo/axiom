@@ -76,13 +76,13 @@ int main() {
 - [x] Basic tensor class with shape/stride handling
 - [x] Memory management and storage abstraction
 - [x] CMake build system setup
-- [ ] Basic arithmetic operations (+, -, *, /)
+- [X] Basic arithmetic operations (+, -, *, /)
 
 ### Phase 2: Operations & Backends
 
 - [X] Metal backend implementation
 - [ ] Linear algebra operations (matmul, dot, etc.)
-- [ ] Reduction operations (sum, mean, max, etc.)
+- [X] Reduction operations (sum, mean, max, etc.)
 - [X] Broadcasting semantics
 
 ### Phase 3: Advanced Features

@@ -9,6 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <sstream>
 
 using namespace axiom;
 
@@ -851,6 +852,28 @@ void test_mixed_memory_orders() {
   }
 }
 
+void test_tensor_printing() {
+    auto a = axiom::Tensor::arange(4).reshape({2, 2}).astype(axiom::DType::Float32);
+    std::stringstream ss;
+    ss << a;
+    std::string expected = "[[0.0000 1.0000]\n [2.0000 3.0000]]";
+    assert(ss.str() == expected);
+}
+
+void test_tensor_printing_ellipsis() {
+    auto a = axiom::Tensor::arange(100).reshape({10, 10});
+    std::stringstream ss;
+    ss << a;
+    std::string expected = "[[0 1 2 ... 7 8 9]\n"
+                         " [10 11 12 ... 17 18 19]\n"
+                         " [20 21 22 ... 27 28 29]\n"
+                         " ...\n"
+                         " [70 71 72 ... 77 78 79]\n"
+                         " [80 81 82 ... 87 88 89]\n"
+                         " [90 91 92 ... 97 98 99]]";
+    assert(ss.str() == expected);
+}
+
 //=============================================================================
 // Main Test Runner
 //=============================================================================
@@ -920,6 +943,8 @@ int main() {
     runner.run_test("Cross-Device Workflow", test_cross_device_workflow);
   }
   runner.run_test("Mixed Memory Orders", test_mixed_memory_orders);
+  runner.run_test("Tensor Printing", test_tensor_printing);
+  runner.run_test("Tensor Printing Ellipsis", test_tensor_printing_ellipsis);
 
   // Print final results
   std::cout << std::endl;
