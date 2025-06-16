@@ -197,9 +197,6 @@ Tensor mean(const Tensor& input, const std::vector<int>& axis = {}, bool keep_di
 Tensor max(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
 Tensor min(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
 
-// Operator overloads
-Tensor operator-(const Tensor& input);
-
 // In-place operations
 void add_inplace(Tensor& lhs, const Tensor& rhs);
 void subtract_inplace(Tensor& lhs, const Tensor& rhs);

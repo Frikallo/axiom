@@ -82,8 +82,11 @@ void assert_tensor_equals_cpu(const axiom::Tensor& t, const std::vector<T>& expe
 
 void test_negate(axiom::Device device) {
     auto a = axiom::Tensor::arange(6).reshape({2, 3}).astype(axiom::DType::Float32).to(device);
-    auto c = axiom::ops::negate(a);
-    float expected_data[] = {0, -1, -2, -3, -4, -5};
+    auto b = axiom::ops::negate(a);
+    assert_tensor_equals_cpu<float>(b, {0, -1, -2, -3, -4, -5});
+
+    // Test with operator overload
+    auto c = -a;
     assert_tensor_equals_cpu<float>(c, {0, -1, -2, -3, -4, -5});
 }
 

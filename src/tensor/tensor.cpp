@@ -9,6 +9,8 @@
 
 #include "axiom/einops.hpp"
 #include "axiom/io.hpp"
+#include "axiom/operations.hpp"
+#include "axiom/system.hpp"
 
 namespace axiom {
 
@@ -904,6 +906,39 @@ Tensor Tensor::load_tensor_from_archive(const std::string& filename,
                                         const std::string& tensor_name,
                                         Device device) {
   return io::load_from_archive(filename, tensor_name, device);
+}
+
+std::ostream& operator<<(std::ostream& os, const Tensor& tensor) {
+    os << "Tensor(shape=" << vec_to_string(tensor.shape())
+       << ", dtype=" << tensor.dtype_name()
+       << ", device=" << axiom::system::device_to_string(tensor.device())
+       << ", data=\n";
+    // This is a simplified printout. A full implementation would be more complex.
+    // For now, let's just show a few elements.
+    auto t_cpu = tensor.cpu(); // Ensure data is on CPU to print
+    const void* data = t_cpu.data();
+    size_t total_elements = t_cpu.size();
+    
+    // In a real implementation, you would switch on dtype and print accordingly.
+    // For simplicity, we'll assume float32 for this example printout.
+    if (t_cpu.dtype() == DType::Float32 && total_elements > 0) {
+        const float* float_data = static_cast<const float*>(data);
+        os << "[";
+        for (size_t i = 0; i < std::min((size_t)10, total_elements); ++i) {
+            os << float_data[i] << (i < std::min((size_t)10, total_elements) - 1 ? ", " : "");
+        }
+        if (total_elements > 10) os << ", ...";
+        os << "]";
+    } else {
+        os << "[...]" << std::endl;
+    }
+    
+    os << ")";
+    return os;
+}
+
+Tensor operator-(const Tensor& tensor) {
+    return ops::negate(tensor);
 }
 
 }  // namespace axiom

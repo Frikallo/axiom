@@ -402,11 +402,6 @@ Tensor min(const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
     return execute_reduction_operation(OpType::Min, input, axis, keep_dims);
 }
 
-// Operator overloads
-Tensor operator-(const Tensor& input) {
-    return negate(input);
-}
-
 void execute_binary_inplace(OpType op_type, Tensor& lhs, const Tensor& rhs) {
     auto device = lhs.device(); // In-place ops run on the device of the lhs
     auto op = OperationRegistry::get_operation(op_type, device);

@@ -346,4 +346,9 @@ class Tensor {
   }
 };
 
+std::ostream& operator<<(std::ostream& os, const Tensor& tensor);
+
+// Operator overloads
+Tensor operator-(const Tensor& tensor);
+
 }  // namespace axiom
