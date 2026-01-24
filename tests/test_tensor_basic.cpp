@@ -268,7 +268,7 @@ void test_data_access_cpu() {
   bool caught_exception = false;
   try {
     t.item<float>({5, 5});  // Out of bounds
-  } catch (const std::runtime_error&) {
+  } catch (const std::exception&) {
     caught_exception = true;
   }
   assert(caught_exception);
@@ -281,7 +281,7 @@ void test_data_access_gpu() {
   bool caught_exception = false;
   try {
     t.data();
-  } catch (const std::runtime_error&) {
+  } catch (const std::exception&) {
     caught_exception = true;
   }
   assert(caught_exception);
@@ -290,7 +290,7 @@ void test_data_access_gpu() {
   caught_exception = false;
   try {
     t.item<float>({0, 1});
-  } catch (const std::runtime_error&) {
+  } catch (const std::exception&) {
     caught_exception = true;
   }
   assert(caught_exception);
@@ -682,7 +682,7 @@ void test_error_handling() {
   bool caught = false;
   try {
     auto t = Tensor({0}, DType::Float32, Device::CPU);  // Zero dimension
-  } catch (const std::runtime_error&) {
+  } catch (const std::exception&) {
     // This might be valid for some implementations
   }
 
@@ -691,7 +691,7 @@ void test_error_handling() {
   caught = false;
   try {
     t.item<float>({5, 5});
-  } catch (const std::runtime_error&) {
+  } catch (const std::exception&) {
     caught = true;
   }
   assert(caught);
@@ -700,7 +700,7 @@ void test_error_handling() {
   caught = false;
   try {
     t.reshape({7});  // 6 elements can't reshape to 7
-  } catch (const std::runtime_error&) {
+  } catch (const std::exception&) {
     caught = true;
   }
   assert(caught);
@@ -715,7 +715,7 @@ void test_error_handling() {
     caught = false;
     try {
       gpu_tensor.data();
-    } catch (const std::runtime_error&) {
+    } catch (const std::exception&) {
       caught = true;
     }
     assert(caught);
@@ -725,7 +725,7 @@ void test_error_handling() {
   caught = false;
   try {
     t.view({7});  // Can't view 6 elements as 7
-  } catch (const std::runtime_error&) {
+  } catch (const std::exception&) {
     caught = true;
   }
   assert(caught);

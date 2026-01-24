@@ -1014,7 +1014,7 @@ Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
         }
         // Add other types as needed
         default:
-            throw TypeError::unsupported_dtype(dtype_name(dtype), "arange");
+            throw TypeError::unsupported_dtype(axiom::dtype_name(dtype), "arange");
     }
     
     return t;
@@ -1058,7 +1058,7 @@ Tensor Tensor::randn(const Shape& shape, DType dtype, Device device,
         break;
       }
       default:
-        throw TypeError("randn only supports floating point types, got " + dtype_name(dtype));
+        throw TypeError("randn only supports floating point types, got " + axiom::dtype_name(dtype));
     }
   }
 

@@ -599,8 +599,7 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b
         result_shape.push_back(N);
     }
 
-    if (result_shape.empty()) result_shape = {1};  // Scalar result
-
+    // Scalar result (rank-0 tensor) is handled naturally with empty shape
     Tensor result = Tensor::zeros(result_shape, a.dtype(), Device::CPU);
 
     // Get strides for the matrix dimensions
@@ -638,8 +637,18 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b
         c_row_stride = result.strides()[result_ndim - 2] / c_itemsize;
         c_col_stride = result.strides()[result_ndim - 1] / c_itemsize;
     } else if (result_ndim == 1) {
-        c_row_stride = result.strides()[0] / c_itemsize;
-        c_col_stride = 0;
+        // For 1D result (from 1D @ 2D), treat as row vector: c_row=0, c_col=stride
+        // Or as column vector (from 2D @ 1D): c_row=stride, c_col=0
+        // We need to determine which based on input shapes
+        if (a_ndim == 1 && b_ndim >= 2) {
+            // (K,) @ (..., K, N) -> (..., N) - result is conceptually a row, so col varies
+            c_row_stride = 0;
+            c_col_stride = result.strides()[0] / c_itemsize;
+        } else {
+            // (..., M, K) @ (K,) -> (..., M) - result is conceptually a column, so row varies
+            c_row_stride = result.strides()[0] / c_itemsize;
+            c_col_stride = 0;
+        }
     } else {
         c_row_stride = 0;
         c_col_stride = 0;
@@ -765,7 +774,7 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, b
             output_shape.push_back(input.shape()[i]);
         }
     }
-    if (output_shape.empty()) output_shape.push_back(1);
+    // Scalar result (rank-0 tensor) is handled naturally with empty shape
 
     // Create output tensor with Int64 dtype for indices
     Tensor result = Tensor::zeros(output_shape, DType::Int64, Device::CPU);
@@ -873,7 +882,7 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor& input, int axis, b
             output_shape.push_back(input.shape()[i]);
         }
     }
-    if (output_shape.empty()) output_shape.push_back(1);
+    // Scalar result (rank-0 tensor) is handled naturally with empty shape
 
     // Create output tensor with Int64 dtype for indices
     Tensor result = Tensor::zeros(output_shape, DType::Int64, Device::CPU);

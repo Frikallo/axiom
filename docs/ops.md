@@ -2,22 +2,33 @@
 
 This document lists all operations available in Axiom, organized by category.
 
+## Test Coverage Status
+
+This document is now maintained with test coverage tracking. Operations marked with:
+- ✅ **Fully tested** - Comprehensive test coverage exists
+- ⚠️ **Partially tested** - Some test coverage, but edge cases or variants may be missing
+- ❌ **Not tested** - No dedicated test coverage exists
+
+Last updated: 2026-01-23
+
 ## Tensor Creation
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `Tensor::zeros(shape)` | Create tensor filled with zeros | `Tensor::zeros({3, 4})` |
-| `Tensor::ones(shape)` | Create tensor filled with ones | `Tensor::ones({3, 4})` |
-| `Tensor::empty(shape)` | Create uninitialized tensor | `Tensor::empty({3, 4})` |
-| `Tensor::full(shape, value)` | Create tensor filled with value | `Tensor::full({3, 4}, 3.14f)` |
-| `Tensor::eye(n)` | Create identity matrix | `Tensor::eye(4)` |
-| `Tensor::identity(n)` | Alias for eye | `Tensor::identity(4)` |
-| `Tensor::randn(shape)` | Create tensor with random normal values | `Tensor::randn({3, 4})` |
-| `Tensor::arange(start, end, step)` | Create range tensor | `Tensor::arange(0, 10, 2)` |
-| `Tensor::from_data(ptr, shape)` | Create from raw data pointer | `Tensor::from_data(data, {3, 4})` |
-| `Tensor::from_array(arr, shape)` | Create from C array | `Tensor::from_array(arr, {3, 4})` |
+| Function | Description | Example | Status |
+|----------|-------------|---------|--------|
+| `Tensor::zeros(shape)` | Create tensor filled with zeros | `Tensor::zeros({3, 4})` | ✅ |
+| `Tensor::ones(shape)` | Create tensor filled with ones | `Tensor::ones({3, 4})` | ✅ |
+| `Tensor::empty(shape)` | Create uninitialized tensor | `Tensor::empty({3, 4})` | ✅ |
+| `Tensor::full(shape, value)` | Create tensor filled with value | `Tensor::full({3, 4}, 3.14f)` | ✅ |
+| `Tensor::eye(n)` | Create identity matrix | `Tensor::eye(4)` | ✅ |
+| `Tensor::identity(n)` | Alias for eye | `Tensor::identity(4)` | ✅ |
+| `Tensor::randn(shape)` | Create tensor with random normal values | `Tensor::randn({3, 4})` | ✅ |
+| `Tensor::arange(start, end, step)` | Create range tensor | `Tensor::arange(0, 10, 2)` | ✅ |
+| `Tensor::from_data(ptr, shape)` | Create from raw data pointer | `Tensor::from_data(data, {3, 4})` | ✅ |
+| `Tensor::from_array(arr, shape)` | Create from C array | `Tensor::from_array(arr, {3, 4})` | ❌ |
 
 ## Random Number Generation
+
+**Status: ✅ Fully tested (8/8 tests passing)**
 
 Axiom uses the PCG (Permuted Congruential Generator) algorithm for random number generation. PCG provides excellent statistical properties, small state size (128 bits), and is suitable for parallel workloads.
 
@@ -65,24 +76,26 @@ auto b = Tensor::randn({3, 3});  // b == a
 
 ## Shape Manipulation
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `tensor.reshape(new_shape)` | Reshape tensor (returns view if possible) | `t.reshape({6, 2})` |
-| `tensor.view(new_shape)` | Create view with new shape (contiguous only) | `t.view({6, 2})` |
-| `tensor.flatten(start, end)` | Flatten dimensions (zero-copy view if possible) | `t.flatten()` |
-| `tensor.transpose()` | Swap last two dimensions | `t.transpose()` |
-| `tensor.transpose(axes)` | Permute dimensions | `t.transpose({2, 0, 1})` |
-| `tensor.squeeze(axis)` | Remove dimensions of size 1 | `t.squeeze(0)` |
-| `tensor.unsqueeze(axis)` | Add dimension of size 1 | `t.unsqueeze(0)` |
-| `tensor.rearrange(pattern)` | Einops-style reshape | `t.rearrange("b c h w -> b (c h) w")` |
+| Function | Description | Example | Status |
+|----------|-------------|---------|--------|
+| `tensor.reshape(new_shape)` | Reshape tensor (returns view if possible) | `t.reshape({6, 2})` | ✅ |
+| `tensor.view(new_shape)` | Create view with new shape (contiguous only) | `t.view({6, 2})` | ✅ |
+| `tensor.flatten(start, end)` | Flatten dimensions (zero-copy view if possible) | `t.flatten()` | ✅ |
+| `tensor.transpose()` | Swap last two dimensions | `t.transpose()` | ✅ |
+| `tensor.transpose(axes)` | Permute dimensions | `t.transpose({2, 0, 1})` | ✅ |
+| `tensor.squeeze(axis)` | Remove dimensions of size 1 | `t.squeeze(0)` | ✅ |
+| `tensor.unsqueeze(axis)` | Add dimension of size 1 | `t.unsqueeze(0)` | ✅ |
+| `tensor.rearrange(pattern)` | Einops-style reshape | `t.rearrange("b c h w -> b (c h) w")` | ✅ |
 
 ## Expand and Repeat
 
-| Function | Description | Zero-Copy | Example |
-|----------|-------------|-----------|---------|
-| `tensor.expand(shape)` | Expand dims of size 1 using 0-stride | Yes | `t.expand({64, 128, 256})` |
-| `tensor.repeat(repeats)` | Repeat tensor by copying data | No | `t.repeat({2, 3, 1})` |
-| `tensor.tile(reps)` | Alias for repeat (NumPy style) | No | `t.tile({2, 2})` |
+**Status: ✅ Fully tested**
+
+| Function | Description | Zero-Copy | Example | Status |
+|----------|-------------|-----------|---------|--------|
+| `tensor.expand(shape)` | Expand dims of size 1 using 0-stride | Yes | `t.expand({64, 128, 256})` | ✅ |
+| `tensor.repeat(repeats)` | Repeat tensor by copying data | No | `t.repeat({2, 3, 1})` | ✅ |
+| `tensor.tile(reps)` | Alias for repeat (NumPy style) | No | `t.tile({2, 2})` | ✅ |
 
 **expand vs repeat:**
 - `expand()` creates a **zero-cost view** by setting stride to 0 for broadcast dimensions
@@ -156,16 +169,18 @@ All binary operations support broadcasting.
 
 ## Comparison Operations
 
+**Status: ✅ Fully tested (13/13 tests passing)**
+
 Return boolean tensors.
 
-| Function | Operator | Description |
-|----------|----------|-------------|
-| `ops::equal(a, b)` | `a == b` | Element-wise equality |
-| `ops::not_equal(a, b)` | `a != b` | Element-wise inequality |
-| `ops::less(a, b)` | `a < b` | Element-wise less than |
-| `ops::less_equal(a, b)` | `a <= b` | Element-wise less or equal |
-| `ops::greater(a, b)` | `a > b` | Element-wise greater than |
-| `ops::greater_equal(a, b)` | `a >= b` | Element-wise greater or equal |
+| Function | Operator | Description | Status |
+|----------|----------|-------------|--------|
+| `ops::equal(a, b)` | `a == b` | Element-wise equality | ✅ |
+| `ops::not_equal(a, b)` | `a != b` | Element-wise inequality | ✅ |
+| `ops::less(a, b)` | `a < b` | Element-wise less than | ✅ |
+| `ops::less_equal(a, b)` | `a <= b` | Element-wise less or equal | ✅ |
+| `ops::greater(a, b)` | `a > b` | Element-wise greater than | ✅ |
+| `ops::greater_equal(a, b)` | `a >= b` | Element-wise greater or equal | ✅ |
 
 ---
 
@@ -234,15 +249,15 @@ Integer types only.
 
 ### Member Functions
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `tensor.sum(axis, keep_dims)` | Sum over axis | `t.sum(0)` |
-| `tensor.sum(axes, keep_dims)` | Sum over multiple axes | `t.sum({0, 1})` |
-| `tensor.mean(axis, keep_dims)` | Mean over axis | `t.mean(-1)` |
-| `tensor.max(axis, keep_dims)` | Maximum over axis | `t.max(0)` |
-| `tensor.min(axis, keep_dims)` | Minimum over axis | `t.min()` |
-| `tensor.argmax(axis, keep_dims)` | Index of maximum (returns Int64) | `t.argmax(1)` |
-| `tensor.argmin(axis, keep_dims)` | Index of minimum (returns Int64) | `t.argmin(-1)` |
+| Function | Description | Example | Status |
+|----------|-------------|---------|--------|
+| `tensor.sum(axis, keep_dims)` | Sum over axis | `t.sum(0)` | ✅ |
+| `tensor.sum(axes, keep_dims)` | Sum over multiple axes | `t.sum({0, 1})` | ✅ |
+| `tensor.mean(axis, keep_dims)` | Mean over axis | `t.mean(-1)` | ✅ |
+| `tensor.max(axis, keep_dims)` | Maximum over axis | `t.max(0)` | ✅ |
+| `tensor.min(axis, keep_dims)` | Minimum over axis | `t.min()` | ✅ |
+| `tensor.argmax(axis, keep_dims)` | Index of maximum (returns Int64) | `t.argmax(1)` | ✅ |
+| `tensor.argmin(axis, keep_dims)` | Index of minimum (returns Int64) | `t.argmin(-1)` | ✅ |
 
 **Parameters:**
 - `axis`: Dimension to reduce. `-1` reduces all dimensions (default).
@@ -253,24 +268,26 @@ Integer types only.
 
 ## Matrix Multiplication
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `a.matmul(b)` | Matrix multiplication (member) | `a.matmul(b)` |
-| `a.matmul(b, transpose_a, transpose_b)` | MatMul with optional transpose | `a.matmul(b, false, true)` |
-| `a.mm(b)` | Alias for matmul | `a.mm(b)` |
-| `a.dot(b)` | Alias for matmul (vectors) | `a.dot(b)` |
-| `ops::matmul(a, b)` | Matrix multiplication (free function) | `ops::matmul(a, b)` |
-| `ops::matmul(a, b, transpose_a, transpose_b)` | MatMul with optional transpose | `ops::matmul(a, b, false, true)` |
+**Status: ✅ Fully tested (14/14 tests passing)**
+
+| Function | Description | Example | Status |
+|----------|-------------|---------|--------|
+| `a.matmul(b)` | Matrix multiplication (member) | `a.matmul(b)` | ✅ |
+| `a.matmul(b, transpose_a, transpose_b)` | MatMul with optional transpose | `a.matmul(b, false, true)` | ✅ |
+| `a.mm(b)` | Alias for matmul | `a.mm(b)` | ✅ |
+| `a.dot(b)` | Alias for matmul (vectors) | `a.dot(b)` | ✅ |
+| `ops::matmul(a, b)` | Matrix multiplication (free function) | `ops::matmul(a, b)` | ✅ |
+| `ops::matmul(a, b, transpose_a, transpose_b)` | MatMul with optional transpose | `ops::matmul(a, b, false, true)` | ✅ |
 
 ### Supported Shapes
 
-| A Shape | B Shape | Result Shape | Description |
-|---------|---------|--------------|-------------|
-| `(M, K)` | `(K, N)` | `(M, N)` | Standard 2D matmul |
-| `(K,)` | `(K, N)` | `(N,)` | Vector-matrix multiply |
-| `(M, K)` | `(K,)` | `(M,)` | Matrix-vector multiply |
-| `(K,)` | `(K,)` | `()` | Dot product |
-| `(..., M, K)` | `(..., K, N)` | `(..., M, N)` | Batched matmul |
+| A Shape | B Shape | Result Shape | Description | Status |
+|---------|---------|--------------|-------------|--------|
+| `(M, K)` | `(K, N)` | `(M, N)` | Standard 2D matmul | ✅ |
+| `(K,)` | `(K, N)` | `(N,)` | Vector-matrix multiply | ✅ |
+| `(M, K)` | `(K,)` | `(M,)` | Matrix-vector multiply | ✅ |
+| `(K,)` | `(K,)` | `()` | Dot product (scalar) | ✅ |
+| `(..., M, K)` | `(..., K, N)` | `(..., M, N)` | Batched matmul | ✅ |
 
 ### Transpose Flags
 

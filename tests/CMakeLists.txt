@@ -155,3 +155,128 @@ set_tests_properties(tensor_reductions
     PROPERTIES
         TIMEOUT 30
 )
+
+# Matrix multiplication tests
+add_executable(test_tensor_matmul
+    test_tensor_matmul.cpp
+)
+
+target_link_libraries(test_tensor_matmul
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_matmul
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_matmul
+    COMMAND test_tensor_matmul
+)
+
+set_tests_properties(tensor_matmul
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Random number generation tests
+add_executable(test_tensor_random
+    test_tensor_random.cpp
+)
+
+target_link_libraries(test_tensor_random
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_random
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_random
+    COMMAND test_tensor_random
+)
+
+set_tests_properties(tensor_random
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Shape operations tests
+add_executable(test_tensor_shape_ops
+    test_tensor_shape_ops.cpp
+)
+
+target_link_libraries(test_tensor_shape_ops
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_shape_ops
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_shape_ops
+    COMMAND test_tensor_shape_ops
+)
+
+set_tests_properties(tensor_shape_ops
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Comparison operations tests
+add_executable(test_tensor_comparisons
+    test_tensor_comparisons.cpp
+)
+
+target_link_libraries(test_tensor_comparisons
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_comparisons
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_comparisons
+    COMMAND test_tensor_comparisons
+)
+
+set_tests_properties(tensor_comparisons
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Argmax/Argmin tests
+add_executable(test_tensor_argmax_argmin
+    test_tensor_argmax_argmin.cpp
+)
+
+target_link_libraries(test_tensor_argmax_argmin
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_argmax_argmin
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_argmax_argmin
+    COMMAND test_tensor_argmax_argmin
+)
+
+set_tests_properties(tensor_argmax_argmin
+    PROPERTIES
+        TIMEOUT 30
+)

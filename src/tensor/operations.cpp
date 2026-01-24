@@ -1,6 +1,7 @@
 #include "axiom/operations.hpp"
 #include "axiom/tensor.hpp"
 #include "axiom/error.hpp"
+#include "axiom/system.hpp"
 #include "backends/cpu/cpu_operations.hpp"
 #include "backends/metal/metal_operations.hpp"
 #include <algorithm>
@@ -215,7 +216,7 @@ static Tensor execute_unary_operation(OpType op_type, const Tensor& input) {
   const Operation* op = OperationRegistry::get_operation(op_type, target_device);
   
   if (!op) {
-    throw DeviceError("Operation not available for device: " + device_name(target_device));
+    throw DeviceError("Operation not available for device: " + axiom::system::device_to_string(target_device));
   }
   
   return op->execute_unary(input);
@@ -229,7 +230,7 @@ static Tensor execute_reduction_operation(OpType op_type, const Tensor& input, c
 
     const auto* op = OperationRegistry::get_operation(op_type, target_device);
     if (!op) {
-        throw DeviceError("Reduction operation not available for device: " + device_name(target_device));
+        throw DeviceError("Reduction operation not available for device: " + axiom::system::device_to_string(target_device));
     }
 
     return op->execute_reduction(input, axis, keep_dims);
@@ -465,7 +466,7 @@ void execute_binary_inplace(OpType op_type, Tensor& lhs, const Tensor& rhs) {
     auto device = lhs.device(); // In-place ops run on the device of the lhs
     auto op = OperationRegistry::get_operation(op_type, device);
     if (!op) {
-        throw DeviceError("Operation not available for device: " + device_name(device));
+        throw DeviceError("Operation not available for device: " + axiom::system::device_to_string(device));
     }
     op->execute_binary_inplace(lhs, rhs);
 }
