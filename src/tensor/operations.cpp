@@ -1,13 +1,27 @@
 #include "axiom/operations.hpp"
 #include "axiom/tensor.hpp"
+#include "axiom/error.hpp"
 #include "backends/cpu/cpu_operations.hpp"
 #include "backends/metal/metal_operations.hpp"
 #include <algorithm>
 #include <cmath>
-#include <stdexcept>
+#include <sstream>
 
 namespace axiom {
 namespace ops {
+
+// Helper function to convert vector to string
+template<typename T>
+static std::string vec_to_string(const std::vector<T>& vec) {
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+        if (i > 0) oss << ", ";
+        oss << vec[i];
+    }
+    oss << "]";
+    return oss.str();
+}
 
 // ============================================================================
 // Broadcasting utilities
@@ -47,7 +61,9 @@ BroadcastInfo compute_broadcast_info(const Shape& lhs_shape, const Shape& rhs_sh
       info.rhs_strides_adjustment[i] = 0;  // Stride becomes 0 for broadcasting
       info.needs_broadcast = true;
     } else {
-      throw std::runtime_error("Cannot broadcast shapes: dimension mismatch");
+      throw ShapeError::broadcast_incompatible("dimension mismatch at axis " + std::to_string(i) +
+                                               ": " + std::to_string(lhs_dim) + " vs " + 
+                                               std::to_string(rhs_dim));
     }
   }
   
@@ -169,24 +185,24 @@ void OperationRegistry::initialize_builtin_operations() {
 
 Tensor Operation::execute_unary(const Tensor& input) const {
   (void)input; // Suppress unused parameter warning
-  throw std::runtime_error("Unary operations not implemented yet");
+  throw RuntimeError::not_implemented("Unary operations for " + name());
 }
 
 Tensor Operation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
     (void)input; (void)axis; (void)keep_dims;
-    throw std::runtime_error("Reduction operations not implemented yet");
+    throw RuntimeError::not_implemented("Reduction operations for " + name());
 }
 
 Tensor Operation::execute_matmul(const Tensor& a, const Tensor& b,
                                  bool transpose_a, bool transpose_b) const {
     (void)a; (void)b; (void)transpose_a; (void)transpose_b;
-    throw std::runtime_error("MatMul operations not implemented yet");
+    throw RuntimeError::not_implemented("MatMul operations for " + name());
 }
 
 void Operation::execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const {
   (void)lhs; // Suppress unused parameter warning
   (void)rhs; // Suppress unused parameter warning
-  throw std::runtime_error("In-place operations not implemented yet");
+  throw RuntimeError::not_implemented("In-place operations for " + name());
 }
 
 // ============================================================================
@@ -199,7 +215,7 @@ static Tensor execute_unary_operation(OpType op_type, const Tensor& input) {
   const Operation* op = OperationRegistry::get_operation(op_type, target_device);
   
   if (!op) {
-    throw std::runtime_error("Operation not available for the tensor's device");
+    throw DeviceError("Operation not available for device: " + device_name(target_device));
   }
   
   return op->execute_unary(input);
@@ -213,7 +229,7 @@ static Tensor execute_reduction_operation(OpType op_type, const Tensor& input, c
 
     const auto* op = OperationRegistry::get_operation(op_type, target_device);
     if (!op) {
-        throw std::runtime_error("Reduction operation not available for the tensor's device");
+        throw DeviceError("Reduction operation not available for device: " + device_name(target_device));
     }
 
     return op->execute_reduction(input, axis, keep_dims);
@@ -237,7 +253,7 @@ static Tensor execute_matmul_operation(const Tensor& a, const Tensor& b,
     }
 
     if (!op) {
-        throw std::runtime_error("MatMul operation not available for any device");
+        throw DeviceError("MatMul operation not available for any device");
     }
 
     // Move tensors to target device if needed
@@ -254,7 +270,8 @@ static Tensor execute_matmul_operation(const Tensor& a, const Tensor& b,
 static Tensor execute_binary_operation(OpType op_type, const Tensor& lhs, const Tensor& rhs) {
   // Check if tensors are broadcastable
   if (!are_broadcastable(lhs.shape(), rhs.shape())) {
-    throw std::runtime_error("Tensors are not broadcastable");
+    throw ShapeError::broadcast_incompatible("shapes " + vec_to_string(lhs.shape()) + 
+                                            " and " + vec_to_string(rhs.shape()));
   }
   
   // Determine the target device (prefer GPU if available)
@@ -270,7 +287,7 @@ static Tensor execute_binary_operation(OpType op_type, const Tensor& lhs, const 
   }
   
   if (!op) {
-    throw std::runtime_error("Operation not available for any device");
+    throw DeviceError("Operation not available for any device");
   }
   
   // Move tensors to target device if needed
@@ -448,7 +465,7 @@ void execute_binary_inplace(OpType op_type, Tensor& lhs, const Tensor& rhs) {
     auto device = lhs.device(); // In-place ops run on the device of the lhs
     auto op = OperationRegistry::get_operation(op_type, device);
     if (!op) {
-        throw std::runtime_error("Operation not available for the given device.");
+        throw DeviceError("Operation not available for device: " + device_name(device));
     }
     op->execute_binary_inplace(lhs, rhs);
 }

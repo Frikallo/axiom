@@ -1,7 +1,7 @@
 #include "cpu_operations.hpp"
 #include "axiom/tensor.hpp"
 #include "axiom/shape.hpp"
-#include <stdexcept>
+#include "axiom/error.hpp"
 #include "axiom/operations.hpp"
 
 namespace axiom {
@@ -16,7 +16,7 @@ template<typename Func>
 Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor& lhs, const Tensor& rhs) const {
   // Ensure tensors are on CPU
   if (lhs.device() != Device::CPU || rhs.device() != Device::CPU) {
-    throw std::runtime_error("CPU operations require CPU tensors");
+    throw DeviceError::cpu_only("CPU binary operations");
   }
   
   // Compute broadcast information
@@ -59,9 +59,9 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor& lhs, const Tensor&
       break;
     case DType::Complex64: // Fallthrough
     case DType::Complex128:
-      throw std::runtime_error("Complex types are not yet supported by CPU operations.");
+      throw TypeError::unsupported_dtype(dtype_name(result_dtype), "CPU binary operations");
     default:
-      throw std::runtime_error("Unsupported data type for CPU operations");
+      throw TypeError::unsupported_dtype(dtype_name(result_dtype), "CPU binary operations");
   }
 #undef DISPATCH_CPU_BINARY_OP
 
@@ -201,19 +201,20 @@ template<typename Func>
 void CPUBinaryOperation<Func>::execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const {
     // In-place operations require lhs to be writeable
     if (!lhs.flags().writeable) {
-        throw std::runtime_error("Cannot perform in-place operation on a non-writeable tensor.");
+        throw MemoryError("Cannot perform in-place operation on a non-writeable tensor");
     }
 
     // Check for type safety. In-place ops do not promote the lhs tensor.
     DType promoted_dtype = ops::promote_types(lhs.dtype(), rhs.dtype());
     if (promoted_dtype != lhs.dtype()) {
-        throw std::runtime_error("In-place operation would require unsafe type casting.");
+        throw TypeError("In-place operation would require unsafe type casting from " + 
+                       dtype_name(lhs.dtype()) + " to " + dtype_name(promoted_dtype));
     }
 
     // Check for broadcast safety. In-place ops cannot change the lhs shape.
     if (!ops::are_broadcastable(lhs.shape(), rhs.shape()) || 
         ops::compute_broadcast_info(lhs.shape(), rhs.shape()).result_shape != lhs.shape()) {
-        throw std::runtime_error("In-place operation with broadcasting cannot change tensor shape.");
+        throw ShapeError("In-place operation with broadcasting cannot change tensor shape");
     }
 
     // Dispatch to the typed implementation
@@ -236,7 +237,7 @@ void CPUBinaryOperation<Func>::execute_binary_inplace(Tensor& lhs, const Tensor&
         DISPATCH_CPU_INPLACE_OP(DType::UInt64, uint64_t)
         DISPATCH_CPU_INPLACE_OP(DType::Bool, bool)
         default:
-            throw std::runtime_error("Unsupported data type for CPU in-place operations");
+            throw TypeError::unsupported_dtype(dtype_name(lhs.dtype()), "CPU in-place operations");
     }
     #undef DISPATCH_CPU_INPLACE_OP
 }
@@ -311,7 +312,7 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(Tensor& lhs, const Tens
 template<typename Func>
 Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor& input) const {
   if (input.device() != Device::CPU) {
-    throw std::runtime_error("CPU operations require CPU tensors");
+    throw DeviceError::cpu_only("CPU unary operations");
   }
 
   // Unary ops usually return the same dtype as input, except for some functions
@@ -339,9 +340,9 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor& input) const {
     DISPATCH_CPU_UNARY_OP(DType::Bool, bool)
     case DType::Complex64: // Fallthrough
     case DType::Complex128:
-      throw std::runtime_error("Complex types are not yet supported by CPU operations.");
+      throw TypeError::unsupported_dtype(dtype_name(result_dtype), "CPU unary operations");
     default:
-      throw std::runtime_error("Unsupported data type for CPU operations");
+      throw TypeError::unsupported_dtype(dtype_name(result_dtype), "CPU unary operations");
   }
 #undef DISPATCH_CPU_UNARY_OP
 
@@ -392,7 +393,7 @@ Shape calculate_reduction_shape(const Shape& input_shape, const std::vector<int>
 template<typename Func>
 Tensor CPUReductionOperation<Func>::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
     if (input.device() != Device::CPU) {
-        throw std::runtime_error("CPU operations require CPU tensors");
+        throw DeviceError::cpu_only("CPU reduction operations");
     }
 
     // For now, we only support float32 for reductions
@@ -566,7 +567,7 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b
     get_matmul_dims(a, b, transpose_a, transpose_b, M, N, K, K_b);
 
     if (K != K_b) {
-        throw std::runtime_error(
+        throw ShapeError(
             "MatMul dimension mismatch: A has " + std::to_string(K) +
             " columns but B has " + std::to_string(K_b) + " rows");
     }
@@ -715,11 +716,11 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b
 Tensor CPUMatMulOperation::execute_matmul(const Tensor& a, const Tensor& b,
                                            bool transpose_a, bool transpose_b) const {
     if (a.device() != Device::CPU || b.device() != Device::CPU) {
-        throw std::runtime_error("CPU MatMul requires CPU tensors");
+        throw DeviceError::cpu_only("CPU MatMul");
     }
 
     if (a.ndim() == 0 || b.ndim() == 0) {
-        throw std::runtime_error("MatMul does not support 0-dimensional tensors");
+        throw ShapeError("MatMul does not support 0-dimensional tensors");
     }
 
     // Type promote and dispatch
@@ -736,7 +737,7 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor& a, const Tensor& b,
         DISPATCH_MATMUL(DType::Int32, int32_t)
         DISPATCH_MATMUL(DType::Int64, int64_t)
         default:
-            throw std::runtime_error("Unsupported dtype for MatMul: " + dtype_name(result_dtype));
+            throw TypeError::unsupported_dtype(dtype_name(result_dtype), "MatMul");
     }
 #undef DISPATCH_MATMUL
 }
@@ -752,7 +753,7 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, b
     // Normalize axis
     if (axis < 0) axis += static_cast<int>(ndim);
     if (axis < 0 || axis >= static_cast<int>(ndim)) {
-        throw std::runtime_error("ArgMax: axis out of bounds");
+        throw ShapeError::invalid_axis(axis, ndim);
     }
 
     // Calculate output shape
@@ -828,7 +829,7 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, b
 
 Tensor CPUArgMaxOperation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
     if (input.device() != Device::CPU) {
-        throw std::runtime_error("CPU ArgMax requires CPU tensor");
+        throw DeviceError::cpu_only("CPU ArgMax");
     }
 
     int ax = axis.empty() ? -1 : axis[0];
@@ -848,7 +849,7 @@ Tensor CPUArgMaxOperation::execute_reduction(const Tensor& input, const std::vec
         DISPATCH_ARGMAX(DType::Int32, int32_t)
         DISPATCH_ARGMAX(DType::Int64, int64_t)
         default:
-            throw std::runtime_error("Unsupported dtype for ArgMax");
+            throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "ArgMax");
     }
 #undef DISPATCH_ARGMAX
 }
@@ -860,7 +861,7 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor& input, int axis, b
     // Normalize axis
     if (axis < 0) axis += static_cast<int>(ndim);
     if (axis < 0 || axis >= static_cast<int>(ndim)) {
-        throw std::runtime_error("ArgMin: axis out of bounds");
+        throw ShapeError::invalid_axis(axis, ndim);
     }
 
     // Calculate output shape
@@ -933,7 +934,7 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor& input, int axis, b
 
 Tensor CPUArgMinOperation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
     if (input.device() != Device::CPU) {
-        throw std::runtime_error("CPU ArgMin requires CPU tensor");
+        throw DeviceError::cpu_only("CPU ArgMin");
     }
 
     int ax = axis.empty() ? -1 : axis[0];
@@ -953,7 +954,7 @@ Tensor CPUArgMinOperation::execute_reduction(const Tensor& input, const std::vec
         DISPATCH_ARGMIN(DType::Int32, int32_t)
         DISPATCH_ARGMIN(DType::Int64, int64_t)
         default:
-            throw std::runtime_error("Unsupported dtype for ArgMin");
+            throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "ArgMin");
     }
 #undef DISPATCH_ARGMIN
 }

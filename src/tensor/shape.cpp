@@ -1,8 +1,8 @@
 #include "axiom/shape.hpp"
 
+#include "axiom/error.hpp"
 #include <algorithm>
 #include <numeric>
-#include <stdexcept>
 
 namespace axiom {
 
@@ -58,7 +58,7 @@ bool ShapeUtils::broadcastable(const Shape& shape1, const Shape& shape2) {
 
 Shape ShapeUtils::broadcast_shape(const Shape& shape1, const Shape& shape2) {
   if (!broadcastable(shape1, shape2)) {
-    throw std::runtime_error("Shapes are not broadcastable");
+    throw ShapeError::broadcast_incompatible("shapes not broadcastable");
   }
 
   size_t ndim1 = shape1.size();
@@ -90,8 +90,8 @@ bool ShapeUtils::is_valid_shape(const Shape& shape) {
 size_t ShapeUtils::linear_index(const std::vector<size_t>& indices,
                                 const Strides& strides) {
   if (indices.size() != strides.size()) {
-    throw std::runtime_error(
-        "Number of indices must match number of dimensions");
+    throw ShapeError("Number of indices (" + std::to_string(indices.size()) + 
+                     ") must match number of dimensions (" + std::to_string(strides.size()) + ")");
   }
 
   size_t linear_idx = 0;
@@ -129,10 +129,11 @@ Shape squeeze_shape(const Shape& shape, int axis) {
     // Remove specific axis if it has size 1
     if (axis < 0) axis += shape.size();
     if (axis < 0 || axis >= static_cast<int>(shape.size())) {
-      throw std::runtime_error("Axis out of bounds");
+      throw ShapeError::invalid_axis(axis, shape.size());
     }
     if (shape[axis] != 1) {
-      throw std::runtime_error("Cannot squeeze dimension that is not 1");
+      throw ShapeError("Cannot squeeze dimension " + std::to_string(axis) + 
+                       " that has size " + std::to_string(shape[axis]) + " (not 1)");
     }
 
     for (size_t i = 0; i < shape.size(); ++i) {
@@ -150,7 +151,8 @@ Shape unsqueeze_shape(const Shape& shape, int axis) {
 
   if (axis < 0) axis += shape.size() + 1;
   if (axis < 0 || axis > static_cast<int>(shape.size())) {
-    throw std::runtime_error("Axis out of bounds for unsqueeze");
+    throw ShapeError("Axis " + std::to_string(axis) + " out of bounds for unsqueeze (shape has " + 
+                     std::to_string(shape.size()) + " dimensions)");
   }
 
   result.insert(result.begin() + axis, 1);
@@ -167,7 +169,7 @@ Shape reshape_shape(const Shape& current_shape, const Shape& new_shape) {
   for (size_t i = 0; i < result.size(); ++i) {
     if (static_cast<int>(result[i]) == -1) {
       if (infer_idx != -1) {
-        throw std::runtime_error("Only one dimension can be inferred");
+        throw ShapeError("Only one dimension can be inferred in reshape");
       }
       infer_idx = i;
     }
@@ -182,7 +184,7 @@ Shape reshape_shape(const Shape& current_shape, const Shape& new_shape) {
     }
 
     if (current_size % known_size != 0) {
-      throw std::runtime_error("Cannot infer dimension for reshape");
+      throw ShapeError::invalid_reshape(current_size, known_size);
     }
 
     result[infer_idx] = current_size / known_size;
@@ -190,7 +192,7 @@ Shape reshape_shape(const Shape& current_shape, const Shape& new_shape) {
   }
 
   if (current_size != new_size) {
-    throw std::runtime_error("Cannot reshape: total size mismatch");
+    throw ShapeError::invalid_reshape(current_size, new_size);
   }
 
   return result;

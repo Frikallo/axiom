@@ -3,6 +3,7 @@
 #import "metal_common.hpp"
 #import "metal_storage.hpp"
 #import "axiom/operations.hpp"
+#import "axiom/error.hpp"
 #import "axiom/shape.hpp"
 #import "axiom/tensor.hpp"
 #import "axiom/dtype.hpp"
@@ -122,7 +123,7 @@ MetalOpType to_metal_op_type(ops::OpType op_type) {
         case ops::OpType::Mean:   return MetalOpType::Mean;
         case ops::OpType::Max:    return MetalOpType::Max;
         case ops::OpType::Min:    return MetalOpType::Min;
-        default: throw std::runtime_error("Unsupported operation for Metal.");
+        default: throw RuntimeError::not_implemented("operation for Metal backend");
     }
 }
 
@@ -179,7 +180,7 @@ public:
             case DType::UInt8:   type_suffix = "uint8_t"; break;
             case DType::Int8:    type_suffix = "int8_t"; break;
             default:
-                throw std::runtime_error("Unsupported data type for Metal operation: " + dtype_name(dtype));
+                throw TypeError::unsupported_dtype(dtype_name(dtype), "Metal binary operation");
         }
 
         std::string kernel_name = "binary_kernel_" + type_suffix;
@@ -190,12 +191,12 @@ public:
         NSError* error = nil;
         id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:kernel_name.c_str()]];
         if (!function) {
-            throw std::runtime_error("Failed to find kernel: " + kernel_name);
+            throw DeviceError("Failed to find Metal kernel: " + kernel_name);
         }
 
         id<MTLComputePipelineState> pipeline_state = [device newComputePipelineStateWithFunction:function error:&error];
         if (!pipeline_state) {
-            throw std::runtime_error("Failed to create Metal pipeline state for kernel: " + kernel_name);
+            throw DeviceError("Failed to create Metal pipeline state for kernel: " + kernel_name);
         }
 
         pipeline_states_[dtype] = pipeline_state;
@@ -205,10 +206,10 @@ public:
     Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
         // Type promotion should happen before this point.
         if (lhs.dtype() != rhs.dtype()) {
-             throw std::runtime_error("Metal kernel inputs must have the same dtype.");
+             throw TypeError::dtype_mismatch(dtype_name(lhs.dtype()), dtype_name(rhs.dtype()));
         }
         if (lhs.device() != Device::GPU || rhs.device() != Device::GPU) {
-            throw std::runtime_error("Metal binary op inputs must be on GPU.");
+            throw DeviceError("Metal binary op inputs must be on GPU");
         }
         
         Shape result_shape = ShapeUtils::broadcast_shape(lhs.shape(), rhs.shape());
@@ -234,7 +235,8 @@ public:
         params.rank = result_shape.size();
 
         if (params.rank > kMaxDims) {
-            throw std::runtime_error("Tensor rank exceeds Metal kernel's max dimensions.");
+            throw ShapeError("Tensor rank " + std::to_string(params.rank) + 
+                           " exceeds Metal kernel's max dimensions (" + std::to_string(kMaxDims) + ")");
         }
         
         // The result tensor is always contiguous
@@ -293,7 +295,7 @@ public:
 
         if ([command_buffer status] == MTLCommandBufferStatusError) {
             NSLog(@"Error: %@", [command_buffer error]);
-            throw std::runtime_error("Metal command buffer execution failed.");
+            throw DeviceError("Metal command buffer execution failed");
         }
         
         return result;
@@ -301,17 +303,17 @@ public:
 
     Tensor execute_unary(const Tensor& input) const override {
         (void)input;
-        throw std::runtime_error("Not a unary operation");
+        throw RuntimeError::internal("execute_unary called on binary operation");
     }
 
     Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override {
         (void)input; (void)axis; (void)keep_dims;
-        throw std::runtime_error("Not a reduction operation");
+        throw RuntimeError::internal("execute_reduction called on binary operation");
     }
 
     void execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const override {
         (void)lhs; (void)rhs;
-        throw std::runtime_error("In-place not supported for Metal binary operations yet.");
+        throw RuntimeError::not_implemented("in-place operations for Metal binary operations");
     }
 };
 
@@ -339,7 +341,7 @@ public:
             case DType::Float32: type_suffix = "float"; break;
             case DType::Float16: type_suffix = "half"; break;
             default:
-                throw std::runtime_error("Unsupported data type for Metal unary operation: " + dtype_name(dtype));
+                throw TypeError::unsupported_dtype(dtype_name(dtype), "Metal unary operation");
         }
 
         std::string kernel_name = "unary_kernel_" + type_suffix;
@@ -350,12 +352,12 @@ public:
         NSError* error = nil;
         id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:kernel_name.c_str()]];
         if (!function) {
-            throw std::runtime_error("Failed to find kernel: " + kernel_name);
+            throw DeviceError("Failed to find Metal kernel: " + kernel_name);
         }
 
         id<MTLComputePipelineState> pipeline_state = [device newComputePipelineStateWithFunction:function error:&error];
         if (!pipeline_state) {
-            throw std::runtime_error("Failed to create Metal pipeline state for kernel: " + kernel_name);
+            throw DeviceError("Failed to create Metal pipeline state for kernel: " + kernel_name);
         }
 
         pipeline_states_[dtype] = pipeline_state;
@@ -364,12 +366,12 @@ public:
 
     Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
         (void)lhs; (void)rhs;
-        throw std::runtime_error("Not a binary operation");
+        throw RuntimeError::internal("execute_binary called on unary operation");
     }
 
     Tensor execute_unary(const Tensor& input) const override {
         if (input.device() != Device::GPU) {
-            throw std::runtime_error("Metal unary op input must be on GPU.");
+            throw DeviceError("Metal unary op input must be on GPU");
         }
         
         DType dtype = input.dtype();
@@ -391,7 +393,8 @@ public:
         params.rank = input.ndim();
 
         if (params.rank > kMaxDims) {
-            throw std::runtime_error("Tensor rank exceeds Metal kernel's max dimensions.");
+            throw ShapeError("Tensor rank " + std::to_string(params.rank) + 
+                           " exceeds Metal kernel's max dimensions (" + std::to_string(kMaxDims) + ")");
         }
         
         std::fill_n(params.input_shape, kMaxDims, 0);
@@ -418,7 +421,7 @@ public:
 
         if ([command_buffer status] == MTLCommandBufferStatusError) {
             NSLog(@"Error: %@", [command_buffer error]);
-            throw std::runtime_error("Metal command buffer execution failed.");
+            throw DeviceError("Metal command buffer execution failed");
         }
         
         return result;
@@ -426,12 +429,12 @@ public:
 
     Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override {
         (void)input; (void)axis; (void)keep_dims;
-        throw std::runtime_error("Not a reduction operation");
+        throw RuntimeError::internal("execute_reduction called on unary operation");
     }
 
     void execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const override {
         (void)lhs; (void)rhs;
-        throw std::runtime_error("Not a binary operation");
+        throw RuntimeError::internal("execute_binary_inplace called on unary operation");
     }
 };
 
@@ -457,12 +460,12 @@ public:
 
     Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
         (void)lhs; (void)rhs;
-        throw std::runtime_error("Not a binary operation");
+        throw RuntimeError::internal("execute_binary called on reduction operation");
     }
 
     Tensor execute_unary(const Tensor& input) const override {
         (void)input;
-        throw std::runtime_error("Not a unary operation");
+        throw RuntimeError::internal("execute_unary called on reduction operation");
     }
 
     id<MTLComputePipelineState> get_pipeline_state(DType dtype) const {
@@ -476,7 +479,7 @@ public:
             case DType::Float16: type_suffix = "half"; break;
             // TODO: Add support for other types like int
             default:
-                throw std::runtime_error("Unsupported data type for Metal reduction: " + dtype_name(dtype));
+                throw TypeError::unsupported_dtype(dtype_name(dtype), "Metal reduction");
         }
 
         std::string kernel_name = "reduction_kernel_" + type_suffix;
@@ -487,12 +490,12 @@ public:
         NSError* error = nil;
         id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:kernel_name.c_str()]];
         if (!function) {
-            throw std::runtime_error("Failed to find kernel: " + kernel_name);
+            throw DeviceError("Failed to find Metal kernel: " + kernel_name);
         }
 
         id<MTLComputePipelineState> pipeline_state = [device newComputePipelineStateWithFunction:function error:&error];
         if (!pipeline_state) {
-            throw std::runtime_error("Failed to create Metal pipeline state for kernel: " + kernel_name);
+            throw DeviceError("Failed to create Metal pipeline state for kernel: " + kernel_name);
         }
 
         pipeline_states_[dtype] = pipeline_state;
@@ -501,7 +504,7 @@ public:
 
     Tensor execute_reduction(const Tensor& input, const std::vector<int>& raw_axes, bool keep_dims) const override {
         if (input.device() != Device::GPU) {
-            throw std::runtime_error("Metal reduction op input must be on GPU.");
+            throw DeviceError("Metal reduction op input must be on GPU");
         }
 
         // --- Prepare shapes and axes ---
@@ -546,7 +549,8 @@ public:
         params.rank = input.shape().size();
         params.output_rank = result.shape().size();
         if (params.rank > kMaxDims) {
-            throw std::runtime_error("Tensor rank exceeds Metal kernel's max dimensions.");
+            throw ShapeError("Tensor rank " + std::to_string(params.rank) + 
+                           " exceeds Metal kernel's max dimensions (" + std::to_string(kMaxDims) + ")");
         }
 
         std::fill_n(params.input_shape, kMaxDims, 0);
@@ -592,7 +596,7 @@ public:
 
         if ([command_buffer status] == MTLCommandBufferStatusError) {
             NSLog(@"Error: %@", [command_buffer error]);
-            throw std::runtime_error("Metal command buffer execution failed.");
+            throw DeviceError("Metal command buffer execution failed");
         }
         
         return result;
@@ -614,7 +618,7 @@ public:
 
     Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
         (void)lhs; (void)rhs;
-        throw std::runtime_error("Use execute_matmul for MatMul operations");
+        throw RuntimeError::internal("Use execute_matmul for MatMul operations");
     }
 
     id<MTLComputePipelineState> get_pipeline_state(DType dtype, bool use_tiled) const {
@@ -628,7 +632,7 @@ public:
             case DType::Float32: type_suffix = "float"; break;
             case DType::Float16: type_suffix = "half"; break;
             default:
-                throw std::runtime_error("Unsupported data type for Metal MatMul: " + dtype_name(dtype));
+                throw TypeError::unsupported_dtype(dtype_name(dtype), "Metal MatMul");
         }
 
         std::string kernel_name = use_tiled
@@ -641,12 +645,12 @@ public:
         NSError* error = nil;
         id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:kernel_name.c_str()]];
         if (!function) {
-            throw std::runtime_error("Failed to find kernel: " + kernel_name);
+            throw DeviceError("Failed to find Metal kernel: " + kernel_name);
         }
 
         id<MTLComputePipelineState> pipeline_state = [device newComputePipelineStateWithFunction:function error:&error];
         if (!pipeline_state) {
-            throw std::runtime_error("Failed to create Metal pipeline state for kernel: " + kernel_name);
+            throw DeviceError("Failed to create Metal pipeline state for kernel: " + kernel_name);
         }
 
         pipeline_states_[key] = pipeline_state;
@@ -700,11 +704,11 @@ public:
     Tensor execute_matmul(const Tensor& a, const Tensor& b,
                           bool transpose_a, bool transpose_b) const override {
         if (a.device() != Device::GPU || b.device() != Device::GPU) {
-            throw std::runtime_error("Metal MatMul requires GPU tensors");
+            throw DeviceError("Metal MatMul requires GPU tensors");
         }
 
         if (a.ndim() == 0 || b.ndim() == 0) {
-            throw std::runtime_error("MatMul does not support 0-dimensional tensors");
+            throw ShapeError("MatMul does not support 0-dimensional tensors");
         }
 
         // Type promote
@@ -722,7 +726,7 @@ public:
         get_matmul_dims(a_promoted, b_promoted, transpose_a, transpose_b, M, N, K, K_b);
 
         if (K != K_b) {
-            throw std::runtime_error(
+            throw ShapeError(
                 "MatMul dimension mismatch: A has " + std::to_string(K) +
                 " columns but B has " + std::to_string(K_b) + " rows");
         }
@@ -889,7 +893,7 @@ public:
 
         if ([command_buffer status] == MTLCommandBufferStatusError) {
             NSLog(@"Error: %@", [command_buffer error]);
-            throw std::runtime_error("Metal MatMul command buffer execution failed.");
+            throw DeviceError("Metal MatMul command buffer execution failed");
         }
 
         return result;

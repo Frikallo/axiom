@@ -1,7 +1,6 @@
 #include "axiom/storage.hpp"
 
-#include <stdexcept>
-
+#include "axiom/error.hpp"
 #include "backends/cpu/cpu_storage.hpp"
 
 #ifdef __APPLE__
@@ -31,13 +30,13 @@ std::unique_ptr<Storage> make_storage(size_t size_bytes, Device device) {
       if (backends::metal::is_metal_available()) {
         return backends::metal::make_metal_storage(size_bytes);
       } else {
-        throw std::runtime_error("Metal GPU not available on this system");
+        throw DeviceError::not_available("Metal GPU");
       }
 #else
-      throw std::runtime_error("GPU storage not available on this platform");
+      throw DeviceError::not_available("GPU storage on this platform");
 #endif
   }
-  throw std::runtime_error("Unknown device type");
+  throw DeviceError("Unknown device type");
 }
 
 }  // namespace axiom

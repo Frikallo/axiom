@@ -1,6 +1,7 @@
 #pragma once
 
 #include "axiom/operations.hpp"
+#include "axiom/error.hpp"
 #include <type_traits>
 #include <cmath>
 
@@ -79,7 +80,7 @@ class CPUUnaryOperation : public ops::Operation {
 
   Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
     (void)lhs; (void)rhs;
-    throw std::runtime_error("Not a binary operation");
+    throw RuntimeError::internal("execute_binary called on unary operation");
   }
 
   Tensor execute_unary(const Tensor& input) const override;
@@ -110,14 +111,14 @@ class CPUReductionOperation : public ops::Operation {
 
   Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
     (void)lhs; (void)rhs;
-    throw std::runtime_error("Not a binary operation");
+    throw RuntimeError::internal("execute_binary called on reduction operation");
   }
 
   Tensor execute_unary(const Tensor& input) const override {
     // This will be called by the high-level reduction function
     // We will need a new execute_reduction method
     (void)input;
-    throw std::runtime_error("Use execute_reduction for reduction operations");
+    throw RuntimeError::internal("Use execute_reduction for reduction operations");
   }
 
   Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override;
@@ -416,7 +417,7 @@ class CPUArgMaxOperation : public ops::Operation {
 
   Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
     (void)lhs; (void)rhs;
-    throw std::runtime_error("ArgMax is not a binary operation");
+    throw RuntimeError::internal("execute_binary called on ArgMax operation");
   }
 
   Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override;
@@ -434,7 +435,7 @@ class CPUArgMinOperation : public ops::Operation {
 
   Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
     (void)lhs; (void)rhs;
-    throw std::runtime_error("ArgMin is not a binary operation");
+    throw RuntimeError::internal("execute_binary called on ArgMin operation");
   }
 
   Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override;
@@ -470,7 +471,7 @@ class CPUMatMulOperation : public ops::Operation {
 
   Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
     (void)lhs; (void)rhs;
-    throw std::runtime_error("Use execute_matmul for MatMul operations");
+    throw RuntimeError::internal("Use execute_matmul for MatMul operations");
   }
 
   Tensor execute_matmul(const Tensor& a, const Tensor& b,

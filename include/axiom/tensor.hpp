@@ -8,6 +8,7 @@
 #include <variant>
 
 #include "dtype.hpp"
+#include "error.hpp"
 #include "shape.hpp"
 #include "storage.hpp"
 #include "type_conversion.hpp"
@@ -104,8 +105,7 @@ class Tensor {
   template <typename T>
   T* typed_data() {
     if (device() != Device::CPU) {
-      throw std::runtime_error(
-          "Direct data access only available for CPU tensors");
+      throw DeviceError::cpu_only("direct data access");
     }
     return reinterpret_cast<T*>(data());
   }
@@ -113,8 +113,7 @@ class Tensor {
   template <typename T>
   const T* typed_data() const {
     if (device() != Device::CPU) {
-      throw std::runtime_error(
-          "Direct data access only available for CPU tensors");
+      throw DeviceError::cpu_only("direct data access");
     }
     return reinterpret_cast<const T*>(data());
   }
@@ -123,7 +122,7 @@ class Tensor {
   T item(const std::vector<size_t>& indices) const {
     validate_indices(indices);
     if (device() != Device::CPU) {
-      throw std::runtime_error("item() only available for CPU tensors");
+      throw DeviceError::cpu_only("item()");
     }
     size_t byte_offset = ShapeUtils::linear_index(indices, strides_);
     const T* data_ptr = reinterpret_cast<const T*>(
@@ -135,10 +134,10 @@ class Tensor {
   void set_item(const std::vector<size_t>& indices, const T& value) {
     validate_indices(indices);
     if (device() != Device::CPU) {
-      throw std::runtime_error("set_item() only available for CPU tensors");
+      throw DeviceError::cpu_only("set_item()");
     }
     if (!flags_.writeable) {
-      throw std::runtime_error("Tensor is not writeable");
+      throw MemoryError("Tensor is not writeable");
     }
     size_t byte_offset = ShapeUtils::linear_index(indices, strides_);
     T* data_ptr =
@@ -149,10 +148,10 @@ class Tensor {
   template <typename T>
   void fill(const T& value) {
     if (device() != Device::CPU) {
-      throw std::runtime_error("fill() only available for CPU tensors");
+      throw DeviceError::cpu_only("fill()");
     }
     if (!flags_.writeable) {
-      throw std::runtime_error("Tensor is not writeable");
+      throw MemoryError("Tensor is not writeable");
     }
 
     if (is_contiguous()) {
@@ -354,7 +353,7 @@ class Tensor {
         }
       }
     } else {
-      throw std::runtime_error("Non-copying from_data not yet implemented");
+      throw RuntimeError::not_implemented("non-copying from_data");
     }
     return tensor;
   }
@@ -365,7 +364,8 @@ class Tensor {
                            Device device = Device::CPU,
                            MemoryOrder order = MemoryOrder::RowMajor) {
     if (ShapeUtils::size(shape) != N) {
-      throw std::runtime_error("Array size doesn't match tensor shape");
+      throw ShapeError("Array size " + std::to_string(N) + " doesn't match tensor shape size " + 
+                       std::to_string(ShapeUtils::size(shape)));
     }
     auto source_tensor = from_data(data, shape, true, order);
     if (target_dtype != dtype_of_v<T>) {

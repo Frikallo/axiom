@@ -1,8 +1,8 @@
 #include "cpu_storage.hpp"
 
+#include "axiom/error.hpp"
 #include <algorithm>
 #include <cstring>
-#include <stdexcept>
 
 namespace axiom {
 namespace backends {
@@ -20,14 +20,14 @@ CPUStorage::CPUStorage(size_t size_bytes)
 
 void* CPUStorage::data() {
   if (data_ == nullptr) {
-    throw std::runtime_error("Storage has no data");
+    throw MemoryError("Storage has no data");
   }
   return data_.get() + offset_;
 }
 
 const void* CPUStorage::data() const {
   if (data_ == nullptr) {
-    throw std::runtime_error("Storage has no data");
+    throw MemoryError("Storage has no data");
   }
   return data_.get() + offset_;
 }

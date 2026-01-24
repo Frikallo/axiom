@@ -1,7 +1,7 @@
 #import "metal_storage.hpp"
 
 #import <Metal/Metal.h>
-#include <stdexcept>
+#import "axiom/error.hpp"
 #include "backends/cpu/cpu_storage.hpp"
 
 namespace axiom {
@@ -27,7 +27,7 @@ MetalStorage::MetalStorage(void* device, size_t size_bytes)
     id<MTLDevice> mtl_device = (__bridge id<MTLDevice>)device_;
     id<MTLBuffer> mtl_buffer = [mtl_device newBufferWithLength:size_bytes options:MTLResourceStorageModeShared];
     if (!mtl_buffer) {
-        throw std::runtime_error("Failed to allocate Metal buffer");
+        throw MemoryError::allocation_failed(size_bytes);
     }
     buffer_ = (__bridge_retained void*)mtl_buffer;
 }
@@ -41,11 +41,11 @@ MetalStorage::~MetalStorage() {
 }
 
 void* MetalStorage::data() {
-    throw std::runtime_error("Cannot directly access GPU memory from CPU. Use copy_to to transfer data.");
+    throw DeviceError("Cannot directly access GPU memory from CPU. Use copy_to to transfer data");
 }
 
 const void* MetalStorage::data() const {
-    throw std::runtime_error("Cannot directly access GPU memory from CPU. Use copy_to to transfer data.");
+    throw DeviceError("Cannot directly access GPU memory from CPU. Use copy_to to transfer data");
 }
 
 size_t MetalStorage::size_bytes() const {
@@ -99,7 +99,7 @@ std::unique_ptr<Storage> MetalStorage::clone() const {
 std::unique_ptr<Storage> make_metal_storage(size_t size_bytes) {
     init_metal_device();
     if (!is_metal_available()) {
-        throw std::runtime_error("Metal is not available on this device.");
+        throw DeviceError::not_available("Metal");
     }
     return std::make_unique<MetalStorage>((__bridge void*)g_metal_device, size_bytes);
 }

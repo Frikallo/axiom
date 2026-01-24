@@ -1,6 +1,7 @@
 #import "metal_common.hpp"
 
 #import <Metal/Metal.h>
+#import "axiom/error.hpp"
 #import "metal_storage.hpp"
 
 #ifdef AXIOM_METAL_EMBED_LIBRARY
@@ -79,7 +80,7 @@ void init_default_library() {
 #endif
         if (!g_default_library) {
             NSLog(@"Failed to load Metal library: %@", error);
-            throw std::runtime_error("Failed to load default Metal library.");
+            throw DeviceError("Failed to load default Metal library");
         }
     });
 }

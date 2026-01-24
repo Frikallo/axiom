@@ -34,11 +34,12 @@ size_t Tensor::calculate_storage_size() const { return size() * itemsize(); }
 
 void Tensor::validate_indices(const std::vector<size_t>& indices) const {
   if (indices.size() != ndim()) {
-    throw std::runtime_error("Number of indices must match tensor dimensions");
+    throw ShapeError("Number of indices (" + std::to_string(indices.size()) + 
+                     ") must match tensor dimensions (" + std::to_string(ndim()) + ")");
   }
   for (size_t i = 0; i < indices.size(); ++i) {
     if (indices[i] >= shape_[i]) {
-      throw std::runtime_error("Index out of bounds");
+      throw IndexError::out_of_bounds(indices[i], shape_[i], i);
     }
   }
 }
@@ -74,7 +75,7 @@ Tensor::Tensor(const Shape& shape, DType dtype, Device device,
                MemoryOrder order)
     : shape_(shape), dtype_(dtype), offset_(0), flags_(), memory_order_(order) {
   if (!ShapeUtils::is_valid_shape(shape_)) {
-    throw std::runtime_error("Invalid shape");
+    throw ShapeError("Invalid shape: " + vec_to_string(shape));
   }
 
   strides_ = ShapeUtils::calculate_strides(shape_, dtype_size(dtype_), order);
@@ -99,11 +100,13 @@ Tensor::Tensor(std::shared_ptr<Storage> storage, const Shape& shape,
       flags_(),
       memory_order_(order) {
   if (!storage_) {
-    throw std::runtime_error("Storage cannot be null");
+    throw MemoryError("Storage cannot be null");
   }
 
   if (shape_.size() != strides_.size()) {
-    throw std::runtime_error("Shape and strides must have same length");
+    throw ShapeError("Shape and strides must have same length: shape has " + 
+                     std::to_string(shape_.size()) + " dimensions but strides has " + 
+                     std::to_string(strides_.size()));
   }
 
   size_t required_size = 0;
@@ -117,7 +120,7 @@ Tensor::Tensor(std::shared_ptr<Storage> storage, const Shape& shape,
   }
 
   if (offset_ + required_size > storage_->size_bytes()) {
-    throw std::runtime_error("Storage too small for tensor view");
+    throw MemoryError::storage_too_small(offset_ + required_size, storage_->size_bytes());
   }
 
   update_contiguity_flags();
@@ -184,7 +187,8 @@ const void* Tensor::data() const {
 
 Tensor Tensor::slice(const std::vector<Slice>& slice_args) const {
     if (slice_args.size() > ndim()) {
-        throw std::runtime_error("Too many indices for tensor");
+        throw IndexError("Too many indices for tensor: got " + std::to_string(slice_args.size()) + 
+                        " but tensor has " + std::to_string(ndim()) + " dimensions");
     }
 
     Shape new_shape;
@@ -207,7 +211,7 @@ Tensor Tensor::slice(const std::vector<Slice>& slice_args) const {
 
         // Normalize step
         int64_t step = arg.step.value_or(1);
-        if (step == 0) throw std::runtime_error("Slice step cannot be zero");
+        if (step == 0) throw IndexError::invalid_slice("step cannot be zero");
 
         start_indices.push_back(start);
 
@@ -235,7 +239,8 @@ Tensor Tensor::slice(const std::vector<Slice>& slice_args) const {
 
 Tensor Tensor::operator[](std::initializer_list<Index> indices) const {
     if (indices.size() > ndim()) {
-        throw std::runtime_error("Too many indices for tensor");
+        throw IndexError("Too many indices for tensor: got " + std::to_string(indices.size()) + 
+                        " but tensor has " + std::to_string(ndim()) + " dimensions");
     }
 
     std::vector<Slice> slice_args;
@@ -408,7 +413,8 @@ Tensor Tensor::transpose() const {
 
 Tensor Tensor::transpose(const std::vector<int>& axes) const {
   if (axes.size() != ndim()) {
-    throw std::runtime_error("Number of axes must match tensor dimensions");
+    throw ShapeError("Number of axes (" + std::to_string(axes.size()) + 
+                     ") must match tensor dimensions (" + std::to_string(ndim()) + ")");
   }
 
   Shape new_shape(ndim());
@@ -418,7 +424,7 @@ Tensor Tensor::transpose(const std::vector<int>& axes) const {
     int axis = axes[i];
     if (axis < 0) axis += ndim();
     if (axis < 0 || axis >= static_cast<int>(ndim())) {
-      throw std::runtime_error("Axis out of bounds");
+      throw ShapeError::invalid_axis(axis, ndim());
     }
 
     new_shape[i] = shape_[axis];
@@ -443,7 +449,7 @@ Tensor Tensor::squeeze(int axis) const {
   } else {
     int real_axis = axis < 0 ? axis + ndim() : axis;
     if (real_axis < 0 || real_axis >= (int)ndim()) {
-        throw std::runtime_error("Squeeze axis out of bounds");
+        throw ShapeError::invalid_axis(real_axis, ndim());
     }
     if (shape_[real_axis] != 1) {
         return *this; // It's a no-op
@@ -476,11 +482,11 @@ Tensor Tensor::unsqueeze(int axis) const {
 
 Tensor Tensor::view(const Shape& new_shape) const {
   if (ShapeUtils::size(new_shape) != size()) {
-    throw std::runtime_error("View must have same number of elements");
+    throw ShapeError::invalid_reshape(size(), ShapeUtils::size(new_shape));
   }
 
   if (!is_contiguous()) {
-    throw std::runtime_error("Cannot create view of non-contiguous tensor");
+    throw MemoryError::not_contiguous("view");
   }
 
   Strides new_strides = ShapeUtils::calculate_strides(new_shape, itemsize(),
@@ -497,7 +503,9 @@ Tensor Tensor::flatten(int start_dim, int end_dim) const {
   if (start_dim < 0 || start_dim >= ndims ||
       end_dim < 0 || end_dim >= ndims ||
       start_dim > end_dim) {
-    throw std::runtime_error("Invalid flatten dimensions");
+    throw ShapeError("Invalid flatten dimensions: start_dim=" + std::to_string(start_dim) + 
+                     ", end_dim=" + std::to_string(end_dim) + " for tensor with " + 
+                     std::to_string(ndims) + " dimensions");
   }
 
   // Calculate new shape
@@ -551,7 +559,9 @@ Tensor Tensor::expand(const Shape& new_shape) const {
   // Only dimensions of size 1 can be expanded
 
   if (new_shape.size() < shape_.size()) {
-    throw std::runtime_error("expand: new shape must have at least as many dimensions");
+    throw ShapeError("expand: new shape must have at least as many dimensions (got " + 
+                     std::to_string(new_shape.size()) + " but tensor has " + 
+                     std::to_string(shape_.size()) + ")");
   }
 
   size_t dim_diff = new_shape.size() - shape_.size();
@@ -563,7 +573,7 @@ Tensor Tensor::expand(const Shape& new_shape) const {
     if (i < dim_diff) {
       // New leading dimensions - stride is 0 (broadcast)
       if (new_shape[i] == 0) {
-        throw std::runtime_error("expand: cannot expand to size 0");
+        throw ShapeError("expand: cannot expand to size 0");
       }
       new_strides[i] = 0;
     } else {
@@ -580,7 +590,7 @@ Tensor Tensor::expand(const Shape& new_shape) const {
       } else if (new_size == old_size) {
         new_strides[i] = strides_[old_idx];
       } else {
-        throw std::runtime_error(
+        throw ShapeError(
             "expand: can only expand dimensions of size 1, got size " +
             std::to_string(old_size) + " at dimension " + std::to_string(old_idx));
       }
@@ -595,7 +605,8 @@ Tensor Tensor::repeat(const std::vector<size_t>& repeats) const {
   // Each dimension is repeated by the corresponding factor
 
   if (repeats.size() != shape_.size()) {
-    throw std::runtime_error("repeat: number of repeat values must match tensor dimensions");
+    throw ShapeError("repeat: number of repeat values (" + std::to_string(repeats.size()) + 
+                     ") must match tensor dimensions (" + std::to_string(shape_.size()) + ")");
   }
 
   // Calculate new shape
@@ -787,10 +798,7 @@ Tensor Tensor::astype(DType new_dtype) const {
 
 Tensor Tensor::astype_safe(DType new_dtype) const {
   if (type_conversion::conversion_may_lose_precision(dtype_, new_dtype)) {
-    throw std::runtime_error(
-        "Type conversion from " + dtype_name() + " to " +
-        axiom::dtype_name(new_dtype) +
-        " may lose precision. Use astype() to force conversion.");
+    throw TypeError::conversion_not_safe(dtype_name(), axiom::dtype_name(new_dtype));
   }
   return astype(new_dtype);
 }
@@ -975,7 +983,7 @@ Tensor Tensor::identity(size_t n, DType dtype, Device device,
 Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
                       Device device) {
     if (step == 0) {
-        throw std::runtime_error("Step cannot be zero.");
+        throw ValueError("Step cannot be zero");
     }
     if ((step > 0 && start >= end) || (step < 0 && start <= end)) {
         return Tensor::empty({0}, dtype, device);
@@ -985,7 +993,7 @@ Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
     
     // This implementation is for CPU only for now.
     if (device != Device::CPU) {
-        throw std::runtime_error("arange is currently only supported on CPU.");
+        throw DeviceError::cpu_only("arange");
     }
     
     switch (dtype) {
@@ -1006,7 +1014,7 @@ Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
         }
         // Add other types as needed
         default:
-            throw std::runtime_error("Unsupported dtype for arange");
+            throw TypeError::unsupported_dtype(dtype_name(dtype), "arange");
     }
     
     return t;
@@ -1050,7 +1058,7 @@ Tensor Tensor::randn(const Shape& shape, DType dtype, Device device,
         break;
       }
       default:
-        throw std::runtime_error("randn only supports floating point types");
+        throw TypeError("randn only supports floating point types, got " + dtype_name(dtype));
     }
   }
 
