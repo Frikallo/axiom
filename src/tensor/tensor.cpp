@@ -486,9 +486,209 @@ Tensor Tensor::view(const Shape& new_shape) const {
   return Tensor(storage_, new_shape, new_strides, dtype_, offset_);
 }
 
+Tensor Tensor::flatten(int start_dim, int end_dim) const {
+  // Normalize negative indices
+  int ndims = static_cast<int>(ndim());
+  if (start_dim < 0) start_dim += ndims;
+  if (end_dim < 0) end_dim += ndims;
+
+  if (start_dim < 0 || start_dim >= ndims ||
+      end_dim < 0 || end_dim >= ndims ||
+      start_dim > end_dim) {
+    throw std::runtime_error("Invalid flatten dimensions");
+  }
+
+  // Calculate new shape
+  Shape new_shape;
+  size_t flattened_size = 1;
+
+  for (int i = 0; i < start_dim; ++i) {
+    new_shape.push_back(shape_[i]);
+  }
+
+  for (int i = start_dim; i <= end_dim; ++i) {
+    flattened_size *= shape_[i];
+  }
+  new_shape.push_back(flattened_size);
+
+  for (int i = end_dim + 1; i < ndims; ++i) {
+    new_shape.push_back(shape_[i]);
+  }
+
+  // Check if we can return a view (must be contiguous in flattened region)
+  bool can_view = true;
+  if (end_dim > start_dim) {
+    // Check that strides are contiguous in the flattened region
+    for (int i = start_dim; i < end_dim; ++i) {
+      if (strides_[i] != static_cast<size_t>(shape_[i + 1]) * strides_[i + 1]) {
+        can_view = false;
+        break;
+      }
+    }
+  }
+
+  if (can_view) {
+    // Create view with new strides
+    Strides new_strides;
+    for (int i = 0; i < start_dim; ++i) {
+      new_strides.push_back(strides_[i]);
+    }
+    new_strides.push_back(strides_[end_dim]);  // Stride of flattened dim
+    for (int i = end_dim + 1; i < ndims; ++i) {
+      new_strides.push_back(strides_[i]);
+    }
+    return Tensor(storage_, new_shape, new_strides, dtype_, offset_, memory_order_);
+  } else {
+    // Need to copy
+    return ascontiguousarray().reshape(new_shape);
+  }
+}
+
+Tensor Tensor::expand(const Shape& new_shape) const {
+  // expand creates a view by setting stride to 0 for expanded dimensions
+  // Only dimensions of size 1 can be expanded
+
+  if (new_shape.size() < shape_.size()) {
+    throw std::runtime_error("expand: new shape must have at least as many dimensions");
+  }
+
+  size_t dim_diff = new_shape.size() - shape_.size();
+
+  // Validate and compute new strides
+  Strides new_strides(new_shape.size(), 0);
+
+  for (size_t i = 0; i < new_shape.size(); ++i) {
+    if (i < dim_diff) {
+      // New leading dimensions - stride is 0 (broadcast)
+      if (new_shape[i] == 0) {
+        throw std::runtime_error("expand: cannot expand to size 0");
+      }
+      new_strides[i] = 0;
+    } else {
+      size_t old_idx = i - dim_diff;
+      size_t old_size = shape_[old_idx];
+      size_t new_size = new_shape[i];
+
+      if (old_size == new_size) {
+        // Same size - keep stride
+        new_strides[i] = strides_[old_idx];
+      } else if (old_size == 1) {
+        // Expanding from 1 - set stride to 0
+        new_strides[i] = 0;
+      } else if (new_size == old_size) {
+        new_strides[i] = strides_[old_idx];
+      } else {
+        throw std::runtime_error(
+            "expand: can only expand dimensions of size 1, got size " +
+            std::to_string(old_size) + " at dimension " + std::to_string(old_idx));
+      }
+    }
+  }
+
+  return Tensor(storage_, new_shape, new_strides, dtype_, offset_, memory_order_);
+}
+
+Tensor Tensor::repeat(const std::vector<size_t>& repeats) const {
+  // repeat actually copies data
+  // Each dimension is repeated by the corresponding factor
+
+  if (repeats.size() != shape_.size()) {
+    throw std::runtime_error("repeat: number of repeat values must match tensor dimensions");
+  }
+
+  // Calculate new shape
+  Shape new_shape(shape_.size());
+  for (size_t i = 0; i < shape_.size(); ++i) {
+    new_shape[i] = shape_[i] * repeats[i];
+  }
+
+  // Create output tensor
+  Tensor result(new_shape, dtype_, device(), memory_order_);
+
+  if (device() == Device::CPU) {
+    // For CPU, copy data with proper repetition
+    size_t total_elements = result.size();
+    const uint8_t* src_base = static_cast<const uint8_t*>(data());
+    uint8_t* dst_base = static_cast<uint8_t*>(result.data());
+
+    std::vector<size_t> dst_coords(new_shape.size(), 0);
+
+    for (size_t i = 0; i < total_elements; ++i) {
+      // Map dst coords to src coords using modulo
+      std::vector<size_t> src_coords(shape_.size());
+      for (size_t d = 0; d < shape_.size(); ++d) {
+        src_coords[d] = dst_coords[d] % shape_[d];
+      }
+
+      // Calculate byte offsets
+      size_t src_offset = ShapeUtils::linear_index(src_coords, strides_);
+      size_t dst_offset = ShapeUtils::linear_index(dst_coords, result.strides());
+
+      // Copy element
+      std::memcpy(dst_base + dst_offset, src_base + src_offset, itemsize());
+
+      // Increment dst coords
+      for (int d = static_cast<int>(new_shape.size()) - 1; d >= 0; --d) {
+        if (++dst_coords[d] < new_shape[d]) break;
+        dst_coords[d] = 0;
+      }
+    }
+  } else {
+    // For GPU, we need a kernel (for now, go through CPU)
+    auto cpu_result = cpu().repeat(repeats);
+    result = cpu_result.to(device());
+  }
+
+  return result;
+}
+
 Tensor Tensor::matmul(const Tensor& other, bool transpose_self,
                       bool transpose_other) const {
   return ops::matmul(*this, other, transpose_self, transpose_other);
+}
+
+Tensor Tensor::sum(int axis, bool keep_dims) const {
+  if (axis == -1) {
+    return ops::sum(*this, {}, keep_dims);
+  }
+  return ops::sum(*this, {axis}, keep_dims);
+}
+
+Tensor Tensor::sum(const std::vector<int>& axes, bool keep_dims) const {
+  return ops::sum(*this, axes, keep_dims);
+}
+
+Tensor Tensor::mean(int axis, bool keep_dims) const {
+  if (axis == -1) {
+    return ops::mean(*this, {}, keep_dims);
+  }
+  return ops::mean(*this, {axis}, keep_dims);
+}
+
+Tensor Tensor::mean(const std::vector<int>& axes, bool keep_dims) const {
+  return ops::mean(*this, axes, keep_dims);
+}
+
+Tensor Tensor::max(int axis, bool keep_dims) const {
+  if (axis == -1) {
+    return ops::max(*this, {}, keep_dims);
+  }
+  return ops::max(*this, {axis}, keep_dims);
+}
+
+Tensor Tensor::min(int axis, bool keep_dims) const {
+  if (axis == -1) {
+    return ops::min(*this, {}, keep_dims);
+  }
+  return ops::min(*this, {axis}, keep_dims);
+}
+
+Tensor Tensor::argmax(int axis, bool keep_dims) const {
+  return ops::argmax(*this, axis, keep_dims);
+}
+
+Tensor Tensor::argmin(int axis, bool keep_dims) const {
+  return ops::argmin(*this, axis, keep_dims);
 }
 
 Tensor Tensor::copy(MemoryOrder order) const {

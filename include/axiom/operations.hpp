@@ -91,6 +91,8 @@ enum class OpType {
   Mean,
   Max,
   Min,
+  ArgMax,
+  ArgMin,
 
   // Matrix operations
   MatMul,
@@ -206,6 +208,11 @@ Tensor sum(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dim
 Tensor mean(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
 Tensor max(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
 Tensor min(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
+
+// Argmax/Argmin - returns indices of max/min values along an axis
+// Returns Int64 tensor with indices
+Tensor argmax(const Tensor& input, int axis = -1, bool keep_dims = false);
+Tensor argmin(const Tensor& input, int axis = -1, bool keep_dims = false);
 
 // Matrix multiplication operations
 // matmul: General matrix multiplication with broadcasting of batch dimensions

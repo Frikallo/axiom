@@ -181,12 +181,33 @@ class Tensor {
   Tensor squeeze(int axis = -1) const;
   Tensor unsqueeze(int axis) const;
   Tensor view(const Shape& new_shape) const;
+  Tensor flatten(int start_dim = 0, int end_dim = -1) const;
+
+  // Expand and repeat operations
+  // expand: Zero-copy view using 0-stride for broadcasted dims
+  // Only works when expanding dims of size 1
+  Tensor expand(const Shape& new_shape) const;
+
+  // repeat: Copies data to create repeated tensor
+  // Each dim is repeated by the corresponding factor
+  Tensor repeat(const std::vector<size_t>& repeats) const;
+  Tensor tile(const std::vector<size_t>& reps) const { return repeat(reps); }  // NumPy alias
 
   // Matrix operations
   Tensor matmul(const Tensor& other, bool transpose_self = false,
                 bool transpose_other = false) const;
   Tensor mm(const Tensor& other) const { return matmul(other); }  // Alias
   Tensor dot(const Tensor& other) const { return matmul(other); } // Alias for vectors
+
+  // Reduction member functions
+  Tensor sum(int axis = -1, bool keep_dims = false) const;
+  Tensor sum(const std::vector<int>& axes, bool keep_dims = false) const;
+  Tensor mean(int axis = -1, bool keep_dims = false) const;
+  Tensor mean(const std::vector<int>& axes, bool keep_dims = false) const;
+  Tensor max(int axis = -1, bool keep_dims = false) const;
+  Tensor min(int axis = -1, bool keep_dims = false) const;
+  Tensor argmax(int axis = -1, bool keep_dims = false) const;
+  Tensor argmin(int axis = -1, bool keep_dims = false) const;
 
   // Memory operations
   Tensor copy(MemoryOrder order = MemoryOrder::RowMajor) const;

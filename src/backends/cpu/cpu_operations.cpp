@@ -419,19 +419,22 @@ void CPUReductionOperation<Func>::reduction_recursive_helper(const Tensor& input
 template<typename Func>
 template<typename T>
 Tensor CPUReductionOperation<Func>::execute_reduction_typed(const Tensor& input, const std::vector<int>& axes, bool keep_dims) const {
-    auto input_float = input.astype(DType::Float32);
+    // Only convert if necessary - avoid unnecessary copies
+    const Tensor& input_typed = (input.dtype() == DType::Float32) ? input : input.astype(DType::Float32);
+
     Shape result_shape = calculate_reduction_shape(input.shape(), axes, keep_dims);
-    Tensor result = Tensor::full(result_shape, Func::template identity<T>());
+
+    // Create result tensor initialized with identity value
+    Tensor result(result_shape, DType::Float32, Device::CPU);
     result.fill(Func::template identity<T>());
 
     std::vector<int> norm_axes = axes;
     if (norm_axes.empty()) {
-        for(size_t i = 0; i < input.ndim(); ++i) norm_axes.push_back(i);
+        for(size_t i = 0; i < input.ndim(); ++i) norm_axes.push_back(static_cast<int>(i));
     }
-    
-    std::vector<size_t> current_coords(input.ndim(), 0);
-    reduction_recursive_helper<T>(input_float, result, norm_axes, current_coords, 0, func_, keep_dims);
 
+    std::vector<size_t> current_coords(input.ndim(), 0);
+    reduction_recursive_helper<T>(input_typed, result, norm_axes, current_coords, 0, func_, keep_dims);
 
     if (op_type_ == ops::OpType::Mean) {
         size_t reduction_size = 1;
@@ -705,6 +708,223 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor& a, const Tensor& b,
 }
 
 // ============================================================================
+// CPU ArgMax/ArgMin Operation Implementation
+// ============================================================================
+
+template<typename T>
+Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, bool keep_dims) const {
+    size_t ndim = input.ndim();
+
+    // Normalize axis
+    if (axis < 0) axis += static_cast<int>(ndim);
+    if (axis < 0 || axis >= static_cast<int>(ndim)) {
+        throw std::runtime_error("ArgMax: axis out of bounds");
+    }
+
+    // Calculate output shape
+    Shape output_shape;
+    for (size_t i = 0; i < ndim; ++i) {
+        if (static_cast<int>(i) == axis) {
+            if (keep_dims) output_shape.push_back(1);
+        } else {
+            output_shape.push_back(input.shape()[i]);
+        }
+    }
+    if (output_shape.empty()) output_shape.push_back(1);
+
+    // Create output tensor with Int64 dtype for indices
+    Tensor result = Tensor::zeros(output_shape, DType::Int64, Device::CPU);
+    int64_t* result_data = result.typed_data<int64_t>();
+    const T* input_data = input.typed_data<T>();
+
+    // Calculate sizes
+    size_t outer_size = 1;
+    for (int i = 0; i < axis; ++i) outer_size *= input.shape()[i];
+
+    size_t axis_size = input.shape()[axis];
+
+    size_t inner_size = 1;
+    for (size_t i = axis + 1; i < ndim; ++i) inner_size *= input.shape()[i];
+
+    // Get strides in elements
+    size_t axis_stride = input.strides()[axis] / input.itemsize();
+
+    // Iterate over all positions
+    for (size_t outer = 0; outer < outer_size; ++outer) {
+        for (size_t inner = 0; inner < inner_size; ++inner) {
+            // Find max along axis
+            size_t best_idx = 0;
+            T best_val = std::numeric_limits<T>::lowest();
+
+            for (size_t k = 0; k < axis_size; ++k) {
+                // Calculate input index
+                std::vector<size_t> coords(ndim);
+                size_t temp_outer = outer;
+                for (int i = axis - 1; i >= 0; --i) {
+                    coords[i] = temp_outer % input.shape()[i];
+                    temp_outer /= input.shape()[i];
+                }
+                coords[axis] = k;
+                size_t temp_inner = inner;
+                for (int i = static_cast<int>(ndim) - 1; i > axis; --i) {
+                    coords[i] = temp_inner % input.shape()[i];
+                    temp_inner /= input.shape()[i];
+                }
+
+                size_t input_offset = 0;
+                for (size_t i = 0; i < ndim; ++i) {
+                    input_offset += coords[i] * (input.strides()[i] / input.itemsize());
+                }
+
+                T val = input_data[input_offset];
+                if (val > best_val) {
+                    best_val = val;
+                    best_idx = k;
+                }
+            }
+
+            // Store result
+            size_t result_idx = outer * inner_size + inner;
+            result_data[result_idx] = static_cast<int64_t>(best_idx);
+        }
+    }
+
+    return result;
+}
+
+Tensor CPUArgMaxOperation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
+    if (input.device() != Device::CPU) {
+        throw std::runtime_error("CPU ArgMax requires CPU tensor");
+    }
+
+    int ax = axis.empty() ? -1 : axis[0];
+
+    // For full reduction (axis=-1 or all axes), flatten first
+    if (ax == -1 || axis.size() > 1) {
+        auto flat = input.flatten();
+        ax = 0;
+    }
+
+#define DISPATCH_ARGMAX(DTYPE, CTYPE) \
+    case DTYPE: return execute_argmax_typed<CTYPE>(input, ax, keep_dims);
+
+    switch (input.dtype()) {
+        DISPATCH_ARGMAX(DType::Float32, float)
+        DISPATCH_ARGMAX(DType::Float64, double)
+        DISPATCH_ARGMAX(DType::Int32, int32_t)
+        DISPATCH_ARGMAX(DType::Int64, int64_t)
+        default:
+            throw std::runtime_error("Unsupported dtype for ArgMax");
+    }
+#undef DISPATCH_ARGMAX
+}
+
+template<typename T>
+Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor& input, int axis, bool keep_dims) const {
+    size_t ndim = input.ndim();
+
+    // Normalize axis
+    if (axis < 0) axis += static_cast<int>(ndim);
+    if (axis < 0 || axis >= static_cast<int>(ndim)) {
+        throw std::runtime_error("ArgMin: axis out of bounds");
+    }
+
+    // Calculate output shape
+    Shape output_shape;
+    for (size_t i = 0; i < ndim; ++i) {
+        if (static_cast<int>(i) == axis) {
+            if (keep_dims) output_shape.push_back(1);
+        } else {
+            output_shape.push_back(input.shape()[i]);
+        }
+    }
+    if (output_shape.empty()) output_shape.push_back(1);
+
+    // Create output tensor with Int64 dtype for indices
+    Tensor result = Tensor::zeros(output_shape, DType::Int64, Device::CPU);
+    int64_t* result_data = result.typed_data<int64_t>();
+    const T* input_data = input.typed_data<T>();
+
+    // Calculate sizes
+    size_t outer_size = 1;
+    for (int i = 0; i < axis; ++i) outer_size *= input.shape()[i];
+
+    size_t axis_size = input.shape()[axis];
+
+    size_t inner_size = 1;
+    for (size_t i = axis + 1; i < ndim; ++i) inner_size *= input.shape()[i];
+
+    // Iterate over all positions
+    for (size_t outer = 0; outer < outer_size; ++outer) {
+        for (size_t inner = 0; inner < inner_size; ++inner) {
+            // Find min along axis
+            size_t best_idx = 0;
+            T best_val = std::numeric_limits<T>::max();
+
+            for (size_t k = 0; k < axis_size; ++k) {
+                // Calculate input index
+                std::vector<size_t> coords(ndim);
+                size_t temp_outer = outer;
+                for (int i = axis - 1; i >= 0; --i) {
+                    coords[i] = temp_outer % input.shape()[i];
+                    temp_outer /= input.shape()[i];
+                }
+                coords[axis] = k;
+                size_t temp_inner = inner;
+                for (int i = static_cast<int>(ndim) - 1; i > axis; --i) {
+                    coords[i] = temp_inner % input.shape()[i];
+                    temp_inner /= input.shape()[i];
+                }
+
+                size_t input_offset = 0;
+                for (size_t i = 0; i < ndim; ++i) {
+                    input_offset += coords[i] * (input.strides()[i] / input.itemsize());
+                }
+
+                T val = input_data[input_offset];
+                if (val < best_val) {
+                    best_val = val;
+                    best_idx = k;
+                }
+            }
+
+            // Store result
+            size_t result_idx = outer * inner_size + inner;
+            result_data[result_idx] = static_cast<int64_t>(best_idx);
+        }
+    }
+
+    return result;
+}
+
+Tensor CPUArgMinOperation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
+    if (input.device() != Device::CPU) {
+        throw std::runtime_error("CPU ArgMin requires CPU tensor");
+    }
+
+    int ax = axis.empty() ? -1 : axis[0];
+
+    // For full reduction (axis=-1 or all axes), flatten first
+    if (ax == -1 || axis.size() > 1) {
+        auto flat = input.flatten();
+        ax = 0;
+    }
+
+#define DISPATCH_ARGMIN(DTYPE, CTYPE) \
+    case DTYPE: return execute_argmin_typed<CTYPE>(input, ax, keep_dims);
+
+    switch (input.dtype()) {
+        DISPATCH_ARGMIN(DType::Float32, float)
+        DISPATCH_ARGMIN(DType::Float64, double)
+        DISPATCH_ARGMIN(DType::Int32, int32_t)
+        DISPATCH_ARGMIN(DType::Int64, int64_t)
+        default:
+            throw std::runtime_error("Unsupported dtype for ArgMin");
+    }
+#undef DISPATCH_ARGMIN
+}
+
+// ============================================================================
 // Factory functions
 // ============================================================================
 
@@ -806,6 +1026,10 @@ void register_cpu_operations() {
   OperationRegistry::register_operation(OpType::Mean, Device::CPU, std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Mean, "mean", SumFunc{}));
   OperationRegistry::register_operation(OpType::Max, Device::CPU, std::make_unique<CPUReductionOperation<MaxFunc>>(OpType::Max, "max", MaxFunc{}));
   OperationRegistry::register_operation(OpType::Min, Device::CPU, std::make_unique<CPUReductionOperation<MinFunc>>(OpType::Min, "min", MinFunc{}));
+
+  // Register argmax/argmin operations
+  OperationRegistry::register_operation(OpType::ArgMax, Device::CPU, std::make_unique<CPUArgMaxOperation>());
+  OperationRegistry::register_operation(OpType::ArgMin, Device::CPU, std::make_unique<CPUArgMinOperation>());
 
   // Register matrix multiplication operation
   OperationRegistry::register_operation(OpType::MatMul, Device::CPU, std::make_unique<CPUMatMulOperation>());

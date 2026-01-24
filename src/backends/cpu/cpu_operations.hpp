@@ -404,6 +404,46 @@ struct SumFunc {
   static T identity() { return static_cast<T>(0); }
 };
 
+// ============================================================================
+// CPU ArgMax/ArgMin Operation
+// ============================================================================
+
+class CPUArgMaxOperation : public ops::Operation {
+ public:
+  ops::OpType type() const override { return ops::OpType::ArgMax; }
+  std::string name() const override { return "argmax"; }
+  Device device() const override { return Device::CPU; }
+
+  Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    (void)lhs; (void)rhs;
+    throw std::runtime_error("ArgMax is not a binary operation");
+  }
+
+  Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override;
+
+ private:
+  template<typename T>
+  Tensor execute_argmax_typed(const Tensor& input, int axis, bool keep_dims) const;
+};
+
+class CPUArgMinOperation : public ops::Operation {
+ public:
+  ops::OpType type() const override { return ops::OpType::ArgMin; }
+  std::string name() const override { return "argmin"; }
+  Device device() const override { return Device::CPU; }
+
+  Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    (void)lhs; (void)rhs;
+    throw std::runtime_error("ArgMin is not a binary operation");
+  }
+
+  Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override;
+
+ private:
+  template<typename T>
+  Tensor execute_argmin_typed(const Tensor& input, int axis, bool keep_dims) const;
+};
+
 struct MaxFunc {
   template<typename T>
   T operator()(const T& a, const T& b) const { return std::max(a, b); }

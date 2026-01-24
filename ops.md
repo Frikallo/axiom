@@ -23,11 +23,33 @@ This document lists all operations available in Axiom, organized by category.
 |----------|-------------|---------|
 | `tensor.reshape(new_shape)` | Reshape tensor (returns view if possible) | `t.reshape({6, 2})` |
 | `tensor.view(new_shape)` | Create view with new shape (contiguous only) | `t.view({6, 2})` |
+| `tensor.flatten(start, end)` | Flatten dimensions (zero-copy view if possible) | `t.flatten()` |
 | `tensor.transpose()` | Swap last two dimensions | `t.transpose()` |
 | `tensor.transpose(axes)` | Permute dimensions | `t.transpose({2, 0, 1})` |
 | `tensor.squeeze(axis)` | Remove dimensions of size 1 | `t.squeeze(0)` |
 | `tensor.unsqueeze(axis)` | Add dimension of size 1 | `t.unsqueeze(0)` |
 | `tensor.rearrange(pattern)` | Einops-style reshape | `t.rearrange("b c h w -> b (c h) w")` |
+
+## Expand and Repeat
+
+| Function | Description | Zero-Copy | Example |
+|----------|-------------|-----------|---------|
+| `tensor.expand(shape)` | Expand dims of size 1 using 0-stride | Yes | `t.expand({64, 128, 256})` |
+| `tensor.repeat(repeats)` | Repeat tensor by copying data | No | `t.repeat({2, 3, 1})` |
+| `tensor.tile(reps)` | Alias for repeat (NumPy style) | No | `t.tile({2, 2})` |
+
+**expand vs repeat:**
+- `expand()` creates a **zero-cost view** by setting stride to 0 for broadcast dimensions
+- `repeat()` **copies data** - use when views are unsafe or you need contiguous output
+
+```cpp
+// expand: zero-copy broadcast (size-1 dims only)
+auto a = Tensor::ones({1, 64});
+auto b = a.expand({128, 64});  // Shape: (128, 64), no data copy
+
+// repeat: copies data
+auto c = a.repeat({128, 1});   // Same shape, but data is copied
+```
 
 ## Memory Operations
 
@@ -153,15 +175,32 @@ Integer types only.
 
 ## Reduction Operations
 
+### Free Functions
+
 | Function | Description | Example |
 |----------|-------------|---------|
 | `ops::sum(a, axis, keep_dims)` | Sum over axis | `ops::sum(a, {0}, true)` |
 | `ops::mean(a, axis, keep_dims)` | Mean over axis | `ops::mean(a, {0})` |
 | `ops::max(a, axis, keep_dims)` | Maximum over axis | `ops::max(a, {-1})` |
 | `ops::min(a, axis, keep_dims)` | Minimum over axis | `ops::min(a)` |
+| `ops::argmax(a, axis, keep_dims)` | Index of maximum | `ops::argmax(a, 0)` |
+| `ops::argmin(a, axis, keep_dims)` | Index of minimum | `ops::argmin(a, -1)` |
+
+### Member Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `tensor.sum(axis, keep_dims)` | Sum over axis | `t.sum(0)` |
+| `tensor.sum(axes, keep_dims)` | Sum over multiple axes | `t.sum({0, 1})` |
+| `tensor.mean(axis, keep_dims)` | Mean over axis | `t.mean(-1)` |
+| `tensor.max(axis, keep_dims)` | Maximum over axis | `t.max(0)` |
+| `tensor.min(axis, keep_dims)` | Minimum over axis | `t.min()` |
+| `tensor.argmax(axis, keep_dims)` | Index of maximum (returns Int64) | `t.argmax(1)` |
+| `tensor.argmin(axis, keep_dims)` | Index of minimum (returns Int64) | `t.argmin(-1)` |
 
 **Parameters:**
-- `axis`: Dimensions to reduce. Empty `{}` reduces all dimensions.
+- `axis`: Dimension to reduce. `-1` reduces all dimensions (default).
+- `axes`: Vector of dimensions to reduce.
 - `keep_dims`: If true, reduced dimensions become size 1 instead of being removed.
 
 ---
