@@ -348,4 +348,226 @@ template
 kernel void reduction_kernel<half>(device const half *input [[buffer(0)]],
                                    device half *result [[buffer(1)]],
                                    constant ReductionKernelParams &params [[buffer(2)]],
-                                   uint gid [[thread_position_in_grid]]); 
+                                   uint gid [[thread_position_in_grid]]);
+
+// ============================================================================
+// Matrix Multiplication Kernels
+// ============================================================================
+
+// Tile size for shared memory tiling - optimized for Apple Silicon
+// 8x8 tiles work well for general cases; could be 16x16 or 32x32 for larger matrices
+constant uint TILE_SIZE = 8;
+
+struct MatMulKernelParams {
+    // Matrix dimensions: C[M, N] = A[M, K] @ B[K, N]
+    uint M;              // Output rows
+    uint N;              // Output cols
+    uint K;              // Inner dimension (reduction)
+
+    // Strides for A matrix (in elements, not bytes)
+    // These handle both contiguous and transposed views
+    uint a_row_stride;   // Stride to move one row in A
+    uint a_col_stride;   // Stride to move one column in A
+
+    // Strides for B matrix (in elements)
+    uint b_row_stride;   // Stride to move one row in B
+    uint b_col_stride;   // Stride to move one column in B
+
+    // Strides for C matrix (in elements)
+    uint c_row_stride;   // Stride to move one row in C
+    uint c_col_stride;   // Stride to move one column in C
+
+    // Batch information
+    uint batch_size;             // Total number of batch elements
+    uint batch_ndim;             // Number of batch dimensions
+    uint batch_shape[MAX_DIMS];  // Shape of batch dimensions
+    uint a_batch_strides[MAX_DIMS];  // Batch strides for A
+    uint b_batch_strides[MAX_DIMS];  // Batch strides for B
+    uint c_batch_strides[MAX_DIMS];  // Batch strides for C
+};
+
+// Optimized tiled matrix multiplication kernel
+// Uses threadgroup memory to reduce global memory accesses
+// Handles arbitrary strides for zero-copy transposed views
+template<typename T>
+kernel void matmul_tiled_kernel(
+    device const T* A [[buffer(0)]],
+    device const T* B [[buffer(1)]],
+    device T* C [[buffer(2)]],
+    constant MatMulKernelParams& params [[buffer(3)]],
+    uint3 tid [[thread_position_in_threadgroup]],
+    uint3 tgid [[threadgroup_position_in_grid]]
+) {
+    uint batch_id = tgid.z;
+
+    // Threadgroup shared memory for tiles
+    threadgroup T A_tile[TILE_SIZE][TILE_SIZE];
+    threadgroup T B_tile[TILE_SIZE][TILE_SIZE];
+
+    // Global row and column for this thread's output element
+    uint row = tgid.y * TILE_SIZE + tid.y;
+    uint col = tgid.x * TILE_SIZE + tid.x;
+
+    // Compute batch offsets using broadcasted batch strides
+    uint a_batch_offset = 0;
+    uint b_batch_offset = 0;
+    uint c_batch_offset = 0;
+
+    if (params.batch_size > 1) {
+        // Unravel batch_id into batch coordinates
+        uint batch_coords[MAX_DIMS];
+        uint temp_batch_id = batch_id;
+        for (int i = int(params.batch_ndim) - 1; i >= 0; --i) {
+            batch_coords[i] = temp_batch_id % params.batch_shape[i];
+            temp_batch_id /= params.batch_shape[i];
+        }
+
+        // Compute batch offsets (strides of 0 enable broadcasting)
+        for (uint i = 0; i < params.batch_ndim; ++i) {
+            a_batch_offset += batch_coords[i] * params.a_batch_strides[i];
+            b_batch_offset += batch_coords[i] * params.b_batch_strides[i];
+            c_batch_offset += batch_coords[i] * params.c_batch_strides[i];
+        }
+    }
+
+    // Offset pointers for this batch
+    device const T* A_batch = A + a_batch_offset;
+    device const T* B_batch = B + b_batch_offset;
+    device T* C_batch = C + c_batch_offset;
+
+    // Accumulator for the dot product
+    T sum = T(0);
+
+    // Number of tiles needed to cover K dimension
+    uint num_tiles = (params.K + TILE_SIZE - 1) / TILE_SIZE;
+
+    for (uint tile = 0; tile < num_tiles; ++tile) {
+        // Load A tile: A[row, tile * TILE_SIZE + tid.x]
+        uint a_col = tile * TILE_SIZE + tid.x;
+        if (row < params.M && a_col < params.K) {
+            // Use strides for zero-copy transposed access
+            A_tile[tid.y][tid.x] = A_batch[row * params.a_row_stride + a_col * params.a_col_stride];
+        } else {
+            A_tile[tid.y][tid.x] = T(0);
+        }
+
+        // Load B tile: B[tile * TILE_SIZE + tid.y, col]
+        uint b_row = tile * TILE_SIZE + tid.y;
+        if (b_row < params.K && col < params.N) {
+            // Use strides for zero-copy transposed access
+            B_tile[tid.y][tid.x] = B_batch[b_row * params.b_row_stride + col * params.b_col_stride];
+        } else {
+            B_tile[tid.y][tid.x] = T(0);
+        }
+
+        // Synchronize to ensure tiles are loaded
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        // Compute partial dot product for this tile
+        #pragma unroll
+        for (uint k = 0; k < TILE_SIZE; ++k) {
+            sum += A_tile[tid.y][k] * B_tile[k][tid.x];
+        }
+
+        // Synchronize before loading next tile
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // Write result to C using strides
+    if (row < params.M && col < params.N) {
+        C_batch[row * params.c_row_stride + col * params.c_col_stride] = sum;
+    }
+}
+
+// Alternative: Simple non-tiled kernel for small matrices or fallback
+// Each thread computes one element of C
+template<typename T>
+kernel void matmul_simple_kernel(
+    device const T* A [[buffer(0)]],
+    device const T* B [[buffer(1)]],
+    device T* C [[buffer(2)]],
+    constant MatMulKernelParams& params [[buffer(3)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    uint row = gid.y;
+    uint col = gid.x;
+    uint batch_id = gid.z;
+
+    if (row >= params.M || col >= params.N || batch_id >= params.batch_size) {
+        return;
+    }
+
+    // Compute batch offsets
+    uint a_batch_offset = 0;
+    uint b_batch_offset = 0;
+    uint c_batch_offset = 0;
+
+    if (params.batch_size > 1) {
+        uint batch_coords[MAX_DIMS];
+        uint temp_batch_id = batch_id;
+        for (int i = int(params.batch_ndim) - 1; i >= 0; --i) {
+            batch_coords[i] = temp_batch_id % params.batch_shape[i];
+            temp_batch_id /= params.batch_shape[i];
+        }
+
+        for (uint i = 0; i < params.batch_ndim; ++i) {
+            a_batch_offset += batch_coords[i] * params.a_batch_strides[i];
+            b_batch_offset += batch_coords[i] * params.b_batch_strides[i];
+            c_batch_offset += batch_coords[i] * params.c_batch_strides[i];
+        }
+    }
+
+    device const T* A_batch = A + a_batch_offset;
+    device const T* B_batch = B + b_batch_offset;
+    device T* C_batch = C + c_batch_offset;
+
+    // Compute dot product for this element
+    T sum = T(0);
+    for (uint k = 0; k < params.K; ++k) {
+        T a_val = A_batch[row * params.a_row_stride + k * params.a_col_stride];
+        T b_val = B_batch[k * params.b_row_stride + col * params.b_col_stride];
+        sum += a_val * b_val;
+    }
+
+    C_batch[row * params.c_row_stride + col * params.c_col_stride] = sum;
+}
+
+// Explicit instantiations for tiled kernel
+template
+[[host_name("matmul_tiled_kernel_float")]]
+kernel void matmul_tiled_kernel<float>(
+    device const float* A [[buffer(0)]],
+    device const float* B [[buffer(1)]],
+    device float* C [[buffer(2)]],
+    constant MatMulKernelParams& params [[buffer(3)]],
+    uint3 tid [[thread_position_in_threadgroup]],
+    uint3 tgid [[threadgroup_position_in_grid]]);
+
+template
+[[host_name("matmul_tiled_kernel_half")]]
+kernel void matmul_tiled_kernel<half>(
+    device const half* A [[buffer(0)]],
+    device const half* B [[buffer(1)]],
+    device half* C [[buffer(2)]],
+    constant MatMulKernelParams& params [[buffer(3)]],
+    uint3 tid [[thread_position_in_threadgroup]],
+    uint3 tgid [[threadgroup_position_in_grid]]);
+
+// Explicit instantiations for simple kernel
+template
+[[host_name("matmul_simple_kernel_float")]]
+kernel void matmul_simple_kernel<float>(
+    device const float* A [[buffer(0)]],
+    device const float* B [[buffer(1)]],
+    device float* C [[buffer(2)]],
+    constant MatMulKernelParams& params [[buffer(3)]],
+    uint3 gid [[thread_position_in_grid]]);
+
+template
+[[host_name("matmul_simple_kernel_half")]]
+kernel void matmul_simple_kernel<half>(
+    device const half* A [[buffer(0)]],
+    device const half* B [[buffer(1)]],
+    device half* C [[buffer(2)]],
+    constant MatMulKernelParams& params [[buffer(3)]],
+    uint3 gid [[thread_position_in_grid]]);

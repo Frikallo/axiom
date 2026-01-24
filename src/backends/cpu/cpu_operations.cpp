@@ -449,6 +449,262 @@ Tensor CPUReductionOperation<Func>::execute_reduction_typed(const Tensor& input,
 }
 
 // ============================================================================
+// CPU MatMul Operation Implementation
+// ============================================================================
+
+void CPUMatMulOperation::get_matmul_dims(const Tensor& a, const Tensor& b,
+                                          bool transpose_a, bool transpose_b,
+                                          size_t& M, size_t& N, size_t& K,
+                                          size_t& K_b) {
+    size_t a_ndim = a.ndim();
+    size_t b_ndim = b.ndim();
+
+    // For 1D tensors, treat as row/column vector
+    size_t a_rows, a_cols, b_rows, b_cols;
+
+    if (a_ndim == 1) {
+        a_rows = 1;
+        a_cols = a.shape()[0];
+    } else {
+        a_rows = a.shape()[a_ndim - 2];
+        a_cols = a.shape()[a_ndim - 1];
+    }
+
+    if (b_ndim == 1) {
+        b_rows = b.shape()[0];
+        b_cols = 1;
+    } else {
+        b_rows = b.shape()[b_ndim - 2];
+        b_cols = b.shape()[b_ndim - 1];
+    }
+
+    // Apply transpose flags
+    if (transpose_a) std::swap(a_rows, a_cols);
+    if (transpose_b) std::swap(b_rows, b_cols);
+
+    M = a_rows;
+    K = a_cols;
+    K_b = b_rows;
+    N = b_cols;
+}
+
+Shape CPUMatMulOperation::compute_batch_shape(const Tensor& a, const Tensor& b) {
+    // Get batch dimensions (all dims except last 2)
+    size_t a_batch_dims = a.ndim() > 2 ? a.ndim() - 2 : 0;
+    size_t b_batch_dims = b.ndim() > 2 ? b.ndim() - 2 : 0;
+
+    Shape a_batch, b_batch;
+    for (size_t i = 0; i < a_batch_dims; ++i) a_batch.push_back(a.shape()[i]);
+    for (size_t i = 0; i < b_batch_dims; ++i) b_batch.push_back(b.shape()[i]);
+
+    // Broadcast batch dimensions
+    return ShapeUtils::broadcast_shape(a_batch, b_batch);
+}
+
+template<typename T>
+void CPUMatMulOperation::matmul_2d(const T* a_data, const T* b_data, T* c_data,
+                                    size_t M, size_t N, size_t K,
+                                    size_t a_row_stride, size_t a_col_stride,
+                                    size_t b_row_stride, size_t b_col_stride,
+                                    size_t c_row_stride, size_t c_col_stride) {
+    // Standard triple-loop matrix multiplication
+    // This handles arbitrary strides for transposed views
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            T sum = T(0);
+            for (size_t k = 0; k < K; ++k) {
+                T a_val = a_data[i * a_row_stride + k * a_col_stride];
+                T b_val = b_data[k * b_row_stride + j * b_col_stride];
+                sum += a_val * b_val;
+            }
+            c_data[i * c_row_stride + j * c_col_stride] = sum;
+        }
+    }
+}
+
+template<typename T>
+Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b,
+                                                 bool transpose_a, bool transpose_b) const {
+    size_t M, N, K, K_b;
+    get_matmul_dims(a, b, transpose_a, transpose_b, M, N, K, K_b);
+
+    if (K != K_b) {
+        throw std::runtime_error(
+            "MatMul dimension mismatch: A has " + std::to_string(K) +
+            " columns but B has " + std::to_string(K_b) + " rows");
+    }
+
+    size_t a_ndim = a.ndim();
+    size_t b_ndim = b.ndim();
+
+    // Compute output shape with broadcasted batch dimensions
+    Shape result_shape;
+
+    if (a_ndim > 2 || b_ndim > 2) {
+        Shape batch_shape = compute_batch_shape(a, b);
+        result_shape = batch_shape;
+    }
+
+    // Handle 1D cases for output shape
+    if (a_ndim == 1 && b_ndim == 1) {
+        // Vector dot product: returns scalar
+        result_shape = {};
+    } else if (a_ndim == 1) {
+        // (K,) @ (..., K, N) -> (..., N)
+        result_shape.push_back(N);
+    } else if (b_ndim == 1) {
+        // (..., M, K) @ (K,) -> (..., M)
+        result_shape.push_back(M);
+    } else {
+        // Standard case: (..., M, K) @ (..., K, N) -> (..., M, N)
+        result_shape.push_back(M);
+        result_shape.push_back(N);
+    }
+
+    if (result_shape.empty()) result_shape = {1};  // Scalar result
+
+    Tensor result = Tensor::zeros(result_shape, a.dtype(), Device::CPU);
+
+    // Get strides for the matrix dimensions
+    size_t a_itemsize = a.itemsize();
+    size_t b_itemsize = b.itemsize();
+    size_t c_itemsize = result.itemsize();
+
+    // Calculate element strides (converting byte strides to element strides)
+    size_t a_row_stride, a_col_stride;
+    size_t b_row_stride, b_col_stride;
+    size_t c_row_stride, c_col_stride;
+
+    if (a_ndim == 1) {
+        a_row_stride = 0;
+        a_col_stride = a.strides()[0] / a_itemsize;
+    } else {
+        a_row_stride = a.strides()[a_ndim - 2] / a_itemsize;
+        a_col_stride = a.strides()[a_ndim - 1] / a_itemsize;
+    }
+
+    if (b_ndim == 1) {
+        b_row_stride = b.strides()[0] / b_itemsize;
+        b_col_stride = 0;
+    } else {
+        b_row_stride = b.strides()[b_ndim - 2] / b_itemsize;
+        b_col_stride = b.strides()[b_ndim - 1] / b_itemsize;
+    }
+
+    // Handle transpose via stride swapping (zero-copy!)
+    if (transpose_a) std::swap(a_row_stride, a_col_stride);
+    if (transpose_b) std::swap(b_row_stride, b_col_stride);
+
+    size_t result_ndim = result.ndim();
+    if (result_ndim >= 2) {
+        c_row_stride = result.strides()[result_ndim - 2] / c_itemsize;
+        c_col_stride = result.strides()[result_ndim - 1] / c_itemsize;
+    } else if (result_ndim == 1) {
+        c_row_stride = result.strides()[0] / c_itemsize;
+        c_col_stride = 0;
+    } else {
+        c_row_stride = 0;
+        c_col_stride = 0;
+    }
+
+    const T* a_base = a.typed_data<T>();
+    const T* b_base = b.typed_data<T>();
+    T* c_base = result.typed_data<T>();
+
+    // For simple 2D case without batching
+    if (a_ndim <= 2 && b_ndim <= 2) {
+        matmul_2d<T>(a_base, b_base, c_base, M, N, K,
+                     a_row_stride, a_col_stride,
+                     b_row_stride, b_col_stride,
+                     c_row_stride, c_col_stride);
+    } else {
+        // Batch matmul with broadcasting
+        Shape batch_shape = compute_batch_shape(a, b);
+        size_t batch_size = ShapeUtils::size(batch_shape);
+        size_t batch_ndim = batch_shape.size();
+
+        // Compute batch strides for a, b, c
+        Strides a_batch_strides(batch_ndim, 0);
+        Strides b_batch_strides(batch_ndim, 0);
+        Strides c_batch_strides(batch_ndim, 0);
+
+        size_t a_batch_offset = batch_ndim - (a_ndim > 2 ? a_ndim - 2 : 0);
+        size_t b_batch_offset = batch_ndim - (b_ndim > 2 ? b_ndim - 2 : 0);
+
+        for (size_t i = 0; i < batch_ndim; ++i) {
+            if (i >= a_batch_offset && a_ndim > 2) {
+                size_t a_dim_idx = i - a_batch_offset;
+                if (a.shape()[a_dim_idx] != 1) {
+                    a_batch_strides[i] = a.strides()[a_dim_idx] / a_itemsize;
+                }
+            }
+            if (i >= b_batch_offset && b_ndim > 2) {
+                size_t b_dim_idx = i - b_batch_offset;
+                if (b.shape()[b_dim_idx] != 1) {
+                    b_batch_strides[i] = b.strides()[b_dim_idx] / b_itemsize;
+                }
+            }
+            c_batch_strides[i] = result.strides()[i] / c_itemsize;
+        }
+
+        // Iterate over batch dimensions
+        std::vector<size_t> batch_coords(batch_ndim, 0);
+        for (size_t batch_idx = 0; batch_idx < batch_size; ++batch_idx) {
+            // Compute batch offsets
+            size_t a_batch_off = 0, b_batch_off = 0, c_batch_off = 0;
+            for (size_t i = 0; i < batch_ndim; ++i) {
+                a_batch_off += batch_coords[i] * a_batch_strides[i];
+                b_batch_off += batch_coords[i] * b_batch_strides[i];
+                c_batch_off += batch_coords[i] * c_batch_strides[i];
+            }
+
+            matmul_2d<T>(a_base + a_batch_off, b_base + b_batch_off, c_base + c_batch_off,
+                         M, N, K,
+                         a_row_stride, a_col_stride,
+                         b_row_stride, b_col_stride,
+                         c_row_stride, c_col_stride);
+
+            // Increment batch coordinates
+            for (int i = batch_ndim - 1; i >= 0; --i) {
+                if (++batch_coords[i] < batch_shape[i]) break;
+                batch_coords[i] = 0;
+            }
+        }
+    }
+
+    return result;
+}
+
+Tensor CPUMatMulOperation::execute_matmul(const Tensor& a, const Tensor& b,
+                                           bool transpose_a, bool transpose_b) const {
+    if (a.device() != Device::CPU || b.device() != Device::CPU) {
+        throw std::runtime_error("CPU MatMul requires CPU tensors");
+    }
+
+    if (a.ndim() == 0 || b.ndim() == 0) {
+        throw std::runtime_error("MatMul does not support 0-dimensional tensors");
+    }
+
+    // Type promote and dispatch
+    DType result_dtype = ops::promote_types(a.dtype(), b.dtype());
+    Tensor a_promoted = (a.dtype() == result_dtype) ? a : a.astype(result_dtype);
+    Tensor b_promoted = (b.dtype() == result_dtype) ? b : b.astype(result_dtype);
+
+#define DISPATCH_MATMUL(DTYPE, CTYPE) \
+    case DTYPE: return execute_matmul_typed<CTYPE>(a_promoted, b_promoted, transpose_a, transpose_b);
+
+    switch (result_dtype) {
+        DISPATCH_MATMUL(DType::Float32, float)
+        DISPATCH_MATMUL(DType::Float64, double)
+        DISPATCH_MATMUL(DType::Int32, int32_t)
+        DISPATCH_MATMUL(DType::Int64, int64_t)
+        default:
+            throw std::runtime_error("Unsupported dtype for MatMul: " + dtype_name(result_dtype));
+    }
+#undef DISPATCH_MATMUL
+}
+
+// ============================================================================
 // Factory functions
 // ============================================================================
 
@@ -550,6 +806,9 @@ void register_cpu_operations() {
   OperationRegistry::register_operation(OpType::Mean, Device::CPU, std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Mean, "mean", SumFunc{}));
   OperationRegistry::register_operation(OpType::Max, Device::CPU, std::make_unique<CPUReductionOperation<MaxFunc>>(OpType::Max, "max", MaxFunc{}));
   OperationRegistry::register_operation(OpType::Min, Device::CPU, std::make_unique<CPUReductionOperation<MinFunc>>(OpType::Min, "min", MinFunc{}));
+
+  // Register matrix multiplication operation
+  OperationRegistry::register_operation(OpType::MatMul, Device::CPU, std::make_unique<CPUMatMulOperation>());
 }
 
 void add(Tensor& a, const Tensor& b) {

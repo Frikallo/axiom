@@ -486,6 +486,11 @@ Tensor Tensor::view(const Shape& new_shape) const {
   return Tensor(storage_, new_shape, new_strides, dtype_, offset_);
 }
 
+Tensor Tensor::matmul(const Tensor& other, bool transpose_self,
+                      bool transpose_other) const {
+  return ops::matmul(*this, other, transpose_self, transpose_other);
+}
+
 Tensor Tensor::copy(MemoryOrder order) const {
   auto new_tensor = Tensor(shape_, dtype_, device(), order);
 

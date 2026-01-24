@@ -177,6 +177,12 @@ Tensor Operation::execute_reduction(const Tensor& input, const std::vector<int>&
     throw std::runtime_error("Reduction operations not implemented yet");
 }
 
+Tensor Operation::execute_matmul(const Tensor& a, const Tensor& b,
+                                 bool transpose_a, bool transpose_b) const {
+    (void)a; (void)b; (void)transpose_a; (void)transpose_b;
+    throw std::runtime_error("MatMul operations not implemented yet");
+}
+
 void Operation::execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const {
   (void)lhs; // Suppress unused parameter warning
   (void)rhs; // Suppress unused parameter warning
@@ -204,13 +210,41 @@ static Tensor execute_unary_operation(OpType op_type, const Tensor& input) {
 // ============================================================================
 static Tensor execute_reduction_operation(OpType op_type, const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
     Device target_device = input.device();
-    
+
     const auto* op = OperationRegistry::get_operation(op_type, target_device);
     if (!op) {
         throw std::runtime_error("Reduction operation not available for the tensor's device");
     }
 
     return op->execute_reduction(input, axis, keep_dims);
+}
+
+// ============================================================================
+// Helper function for executing matmul operations
+// ============================================================================
+static Tensor execute_matmul_operation(const Tensor& a, const Tensor& b,
+                                       bool transpose_a, bool transpose_b) {
+    // Determine target device (prefer GPU if available)
+    Device target_device = (a.device() == Device::GPU || b.device() == Device::GPU)
+                           ? Device::GPU : Device::CPU;
+
+    const Operation* op = OperationRegistry::get_operation(OpType::MatMul, target_device);
+
+    // Fallback to CPU if GPU op not available
+    if (target_device == Device::GPU && !op) {
+        target_device = Device::CPU;
+        op = OperationRegistry::get_operation(OpType::MatMul, target_device);
+    }
+
+    if (!op) {
+        throw std::runtime_error("MatMul operation not available for any device");
+    }
+
+    // Move tensors to target device if needed
+    Tensor a_target = (a.device() == target_device) ? a : a.to(target_device);
+    Tensor b_target = (b.device() == target_device) ? b : b.to(target_device);
+
+    return op->execute_matmul(a_target, b_target, transpose_a, transpose_b);
 }
 
 // ============================================================================
@@ -416,6 +450,11 @@ void add_inplace(Tensor& lhs, const Tensor& rhs) { execute_binary_inplace(OpType
 void subtract_inplace(Tensor& lhs, const Tensor& rhs) { execute_binary_inplace(OpType::Subtract, lhs, rhs); }
 void multiply_inplace(Tensor& lhs, const Tensor& rhs) { execute_binary_inplace(OpType::Multiply, lhs, rhs); }
 void divide_inplace(Tensor& lhs, const Tensor& rhs) { execute_binary_inplace(OpType::Divide, lhs, rhs); }
+
+// Matrix multiplication
+Tensor matmul(const Tensor& a, const Tensor& b, bool transpose_a, bool transpose_b) {
+    return execute_matmul_operation(a, b, transpose_a, transpose_b);
+}
 
 }  // namespace ops
 }  // namespace axiom 

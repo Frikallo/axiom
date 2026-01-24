@@ -90,7 +90,11 @@ enum class OpType {
   Sum,
   Mean,
   Max,
-  Min
+  Min,
+
+  // Matrix operations
+  MatMul,
+  BatchMatMul
 };
 
 class Operation {
@@ -115,7 +119,13 @@ class Operation {
 
   // For reduction operations
   virtual Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const;
-  
+
+  // For matrix multiplication operations
+  // transpose_a/b: if true, the last two dimensions are treated as transposed
+  // This allows zero-copy transposed views without materializing
+  virtual Tensor execute_matmul(const Tensor& a, const Tensor& b,
+                                bool transpose_a, bool transpose_b) const;
+
   // For in-place operations (future extension)
   virtual void execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const;
 };
@@ -196,6 +206,18 @@ Tensor sum(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dim
 Tensor mean(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
 Tensor max(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
 Tensor min(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
+
+// Matrix multiplication operations
+// matmul: General matrix multiplication with broadcasting of batch dimensions
+// Supports:
+//   - 2D x 2D: standard matrix multiply (M,K) @ (K,N) -> (M,N)
+//   - ND x 2D: batch matmul with broadcasting
+//   - 2D x ND: batch matmul with broadcasting
+//   - ND x ND: batch matmul with auto-broadcasted batch dims
+// transpose_a/transpose_b: treat input matrices as transposed without materializing
+// This enables zero-copy transposed matrix multiplication
+Tensor matmul(const Tensor& a, const Tensor& b,
+              bool transpose_a = false, bool transpose_b = false);
 
 // In-place operations
 void add_inplace(Tensor& lhs, const Tensor& rhs);

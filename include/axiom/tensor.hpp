@@ -182,6 +182,12 @@ class Tensor {
   Tensor unsqueeze(int axis) const;
   Tensor view(const Shape& new_shape) const;
 
+  // Matrix operations
+  Tensor matmul(const Tensor& other, bool transpose_self = false,
+                bool transpose_other = false) const;
+  Tensor mm(const Tensor& other) const { return matmul(other); }  // Alias
+  Tensor dot(const Tensor& other) const { return matmul(other); } // Alias for vectors
+
   // Memory operations
   Tensor copy(MemoryOrder order = MemoryOrder::RowMajor) const;
   Tensor clone() const { return copy(); }

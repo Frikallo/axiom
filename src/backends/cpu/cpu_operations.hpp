@@ -419,6 +419,57 @@ struct MinFunc {
 };
 
 // ============================================================================
+// CPU MatMul Operation
+// ============================================================================
+
+class CPUMatMulOperation : public ops::Operation {
+ public:
+  ops::OpType type() const override { return ops::OpType::MatMul; }
+  std::string name() const override { return "matmul"; }
+  Device device() const override { return Device::CPU; }
+
+  Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    (void)lhs; (void)rhs;
+    throw std::runtime_error("Use execute_matmul for MatMul operations");
+  }
+
+  Tensor execute_matmul(const Tensor& a, const Tensor& b,
+                        bool transpose_a, bool transpose_b) const override;
+
+ private:
+  // Helper to get the logical dimensions considering transpose flags
+  static void get_matmul_dims(const Tensor& a, const Tensor& b,
+                              bool transpose_a, bool transpose_b,
+                              size_t& M, size_t& N, size_t& K,
+                              size_t& K_b);
+
+  // Compute broadcasted batch shape
+  static Shape compute_batch_shape(const Tensor& a, const Tensor& b);
+
+  // Get element from tensor with proper stride handling
+  template<typename T>
+  static T get_element(const T* data, const std::vector<size_t>& coords,
+                       const Strides& strides, size_t itemsize);
+
+  // Set element in tensor
+  template<typename T>
+  static void set_element(T* data, const std::vector<size_t>& coords,
+                          const Strides& strides, size_t itemsize, T value);
+
+  // Compute single matrix multiplication C = A @ B for one batch element
+  template<typename T>
+  static void matmul_2d(const T* a_data, const T* b_data, T* c_data,
+                        size_t M, size_t N, size_t K,
+                        size_t a_row_stride, size_t a_col_stride,
+                        size_t b_row_stride, size_t b_col_stride,
+                        size_t c_row_stride, size_t c_col_stride);
+
+  template<typename T>
+  Tensor execute_matmul_typed(const Tensor& a, const Tensor& b,
+                              bool transpose_a, bool transpose_b) const;
+};
+
+// ============================================================================
 // Factory functions
 // ============================================================================
 
