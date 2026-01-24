@@ -10,4 +10,5 @@
 #include "axiom/operations.hpp"
 #include "axiom/tensor_operators.hpp"
 #include "axiom/io.hpp"
+#include "axiom/random.hpp"
 #include "axiom/system.hpp" 

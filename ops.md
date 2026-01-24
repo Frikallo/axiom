@@ -17,6 +17,52 @@ This document lists all operations available in Axiom, organized by category.
 | `Tensor::from_data(ptr, shape)` | Create from raw data pointer | `Tensor::from_data(data, {3, 4})` |
 | `Tensor::from_array(arr, shape)` | Create from C array | `Tensor::from_array(arr, {3, 4})` |
 
+## Random Number Generation
+
+Axiom uses the PCG (Permuted Congruential Generator) algorithm for random number generation. PCG provides excellent statistical properties, small state size (128 bits), and is suitable for parallel workloads.
+
+### Seeding
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `Tensor::manual_seed(seed)` | Set RNG seed for reproducibility | `Tensor::manual_seed(42)` |
+| `axiom::manual_seed(seed)` | Free function alias | `axiom::manual_seed(42)` |
+| `axiom::get_seed()` | Get current seed value | `auto seed = axiom::get_seed()` |
+
+### Random Tensor Creation
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `Tensor::randn(shape)` | Normal distribution (mean=0, std=1) | `Tensor::randn({3, 4})` |
+
+### Direct RNG Access
+
+For advanced use cases, access the `RandomGenerator` directly:
+
+```cpp
+auto& rng = axiom::RandomGenerator::instance();
+
+// Generate values
+float normal_val = rng.normal<float>(0.0f, 1.0f);  // mean, stddev
+double uniform_val = rng.uniform<double>(0.0, 1.0); // low, high
+int64_t int_val = rng.randint(0, 100);              // [low, high)
+uint64_t raw = rng.random_uint64();                 // raw 64-bit value
+double unit = rng.random_double();                  // [0, 1)
+```
+
+### Reproducibility
+
+```cpp
+// Same seed produces identical sequences
+Tensor::manual_seed(42);
+auto a = Tensor::randn({3, 3});
+
+Tensor::manual_seed(42);
+auto b = Tensor::randn({3, 3});  // b == a
+```
+
+**Note:** The RNG state is thread-local. Each thread has its own independent generator.
+
 ## Shape Manipulation
 
 | Function | Description | Example |

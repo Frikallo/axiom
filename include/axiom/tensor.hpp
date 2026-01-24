@@ -290,6 +290,7 @@ class Tensor {
   static Tensor randn(const Shape& shape, DType dtype = DType::Float32,
                       Device device = Device::CPU,
                       MemoryOrder order = MemoryOrder::RowMajor);
+  static void manual_seed(uint64_t seed);
   static Tensor arange(int64_t start, int64_t end, int64_t step = 1,
                        DType dtype = DType::Int32, Device device = Device::CPU);
   static Tensor arange(int64_t end, DType dtype = DType::Int32,

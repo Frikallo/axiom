@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <iostream>
@@ -10,6 +9,7 @@
 #include "axiom/einops.hpp"
 #include "axiom/io.hpp"
 #include "axiom/operations.hpp"
+#include "axiom/random.hpp"
 #include "axiom/system.hpp"
 
 namespace axiom {
@@ -1014,37 +1014,36 @@ Tensor Tensor::arange(int64_t end, DType dtype, Device device) {
     return arange(0, end, 1, dtype, device);
 }
 
+void Tensor::manual_seed(uint64_t seed) {
+  axiom::manual_seed(seed);
+}
+
 Tensor Tensor::randn(const Shape& shape, DType dtype, Device device,
                      MemoryOrder order) {
   auto tensor = Tensor(shape, dtype, device, order);
 
-  // For CPU tensors, fill with random normal values
   if (device == Device::CPU) {
-    // Simple random number generation for demonstration
-    // In a real implementation, you'd use a proper random number generator
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::normal_distribution<float> dis(0.0f, 1.0f);
+    auto& rng = RandomGenerator::instance();
 
     switch (dtype) {
       case DType::Float32: {
         float* data = tensor.typed_data<float>();
         for (size_t i = 0; i < tensor.size(); ++i) {
-          data[i] = dis(gen);
+          data[i] = rng.normal<float>();
         }
         break;
       }
       case DType::Float64: {
         double* data = tensor.typed_data<double>();
         for (size_t i = 0; i < tensor.size(); ++i) {
-          data[i] = static_cast<double>(dis(gen));
+          data[i] = rng.normal<double>();
         }
         break;
       }
       case DType::Float16: {
         float16_t* data = tensor.typed_data<float16_t>();
         for (size_t i = 0; i < tensor.size(); ++i) {
-          data[i] = float16_t(dis(gen));
+          data[i] = float16_t(rng.normal<float>());
         }
         break;
       }

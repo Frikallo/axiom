@@ -117,7 +117,6 @@ template<typename Func>
 template<typename T>
 void CPUBinaryOperation<Func>::execute_binary_broadcast(const Tensor& lhs, const Tensor& rhs, Tensor& result,
                                                        const ops::BroadcastInfo& broadcast_info) const {
-  // For simplicity, implement basic broadcasting
   const Shape& result_shape = broadcast_info.result_shape;
   
   // For comparison operations with bool output
@@ -259,14 +258,49 @@ void CPUBinaryOperation<Func>::execute_inplace_typed(Tensor& lhs, const Tensor& 
 template<typename Func>
 template<typename T>
 void CPUBinaryOperation<Func>::execute_inplace_broadcast(Tensor& lhs, const Tensor& rhs) const {
-    // This simplified version only handles broadcasting from a scalar
-    if (rhs.size() != 1) {
-        throw std::runtime_error("In-place broadcasting is only supported for scalar rhs.");
+    const Shape& lhs_shape = lhs.shape();
+    const Shape& rhs_shape = rhs.shape();
+    size_t lhs_ndim = lhs_shape.size();
+    size_t rhs_ndim = rhs_shape.size();
+
+    // Prepare broadcasted strides for rhs (lhs strides remain as-is)
+    Strides rhs_bcast_strides(lhs_ndim, 0);
+    size_t rhs_dim_offset = lhs_ndim - rhs_ndim;
+
+    for (size_t i = 0; i < rhs_ndim; ++i) {
+        if (rhs_shape[i] != 1) {
+            rhs_bcast_strides[i + rhs_dim_offset] = rhs.strides()[i];
+        }
     }
+
     T* lhs_data = lhs.template typed_data<T>();
-    const T rhs_val = *rhs.template typed_data<T>();
-    for (size_t i = 0; i < lhs.size(); ++i) {
-        lhs_data[i] = func_(lhs_data[i], rhs_val);
+    const T* rhs_data = rhs.template typed_data<T>();
+    const Strides& lhs_strides = lhs.strides();
+    size_t total_elements = lhs.size();
+
+    std::vector<size_t> coords(lhs_ndim, 0);
+
+    for (size_t i = 0; i < total_elements; ++i) {
+        size_t lhs_byte_offset = 0;
+        size_t rhs_byte_offset = 0;
+
+        for (size_t j = 0; j < lhs_ndim; ++j) {
+            lhs_byte_offset += coords[j] * lhs_strides[j];
+            rhs_byte_offset += coords[j] * rhs_bcast_strides[j];
+        }
+
+        T& lhs_val = *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(lhs_data) + lhs_byte_offset);
+        const T& rhs_val = *reinterpret_cast<const T*>(reinterpret_cast<const uint8_t*>(rhs_data) + rhs_byte_offset);
+
+        lhs_val = func_(lhs_val, rhs_val);
+
+        // Increment coordinates
+        for (int j = static_cast<int>(lhs_ndim) - 1; j >= 0; --j) {
+            if (++coords[j] < lhs_shape[j]) {
+                break;
+            }
+            coords[j] = 0;
+        }
     }
 }
 

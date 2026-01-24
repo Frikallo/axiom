@@ -67,6 +67,7 @@ set(AXIOM_SOURCES
     src/tensor/type_conversion.cpp
     src/tensor/einops.cpp
     src/tensor/operations.cpp
+    src/tensor/random.cpp
     src/tensor/system.cpp
     
     # CPU backend
