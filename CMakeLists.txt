@@ -63,6 +63,7 @@ set(AXIOM_SOURCES
     src/tensor/shape.cpp
     src/tensor/storage.cpp
     src/tensor/dtype.cpp
+    src/tensor/debug.cpp
     src/tensor/io.cpp
     src/tensor/type_conversion.cpp
     src/tensor/einops.cpp

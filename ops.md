@@ -345,3 +345,137 @@ auto c2 = ops::matmul(a2, b2);         // Shape: (2, 8, 4, 5)
 | `Tensor::save_tensors(map, filename)` | Save multiple tensors |
 | `Tensor::load_tensors(filename)` | Load multiple tensors |
 | `Tensor::list_tensors_in_archive(filename)` | List tensors in archive |
+
+---
+
+## View & Memory Introspection
+
+Understand tensor memory layout and predict operation costs.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `tensor.is_view()` | True if tensor shares data with another | `t.is_view()` |
+| `tensor.owns_data()` | True if tensor owns its storage | `t.owns_data()` |
+| `tensor.has_zero_stride()` | True if any stride is 0 (broadcast view) | `t.has_zero_stride()` |
+| `tensor.shares_storage(other)` | True if tensors share memory | `a.shares_storage(b)` |
+| `tensor.would_materialize_on_reshape(shape)` | Predict if reshape copies | `t.would_materialize_on_reshape({2, 6})` |
+| `tensor.would_materialize_on_transpose()` | Predict if transpose copies | `t.would_materialize_on_transpose()` |
+
+```cpp
+auto a = Tensor::ones({3, 4});
+auto b = a.reshape({12});           // b.is_view() -> depends on contiguity
+auto c = a.slice({{0, 2}});         // c.shares_storage(a) -> true
+auto d = a.expand({2, 3, 4});       // d.has_zero_stride() -> true
+```
+
+---
+
+## Explicit Broadcasting
+
+Clearer intent for broadcasting operations.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `tensor.expand_as(other)` | Expand to match another tensor's shape | `x.expand_as(y)` |
+| `tensor.broadcast_to(shape)` | Expand to target shape | `x.broadcast_to({64, 128})` |
+
+```cpp
+auto x = Tensor::ones({1, 64});
+auto y = Tensor::ones({32, 64});
+auto z = x.expand_as(y);           // Shape: (32, 64), zero-copy
+auto w = x.broadcast_to({16, 64}); // Shape: (16, 64), zero-copy
+```
+
+---
+
+## Safety Rails & Debugging
+
+Catch numerical issues early.
+
+### NaN/Inf Detection
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `tensor.has_nan()` | Check for NaN values | `bool` |
+| `tensor.has_inf()` | Check for Inf values | `bool` |
+| `tensor.is_finite()` | True if no NaN or Inf | `bool` |
+| `tensor.nan_guard()` | Throw if NaN detected | `Tensor&` |
+| `tensor.assert_finite()` | Throw if NaN or Inf detected | `Tensor&` |
+
+```cpp
+auto result = model.forward(input)
+    .nan_guard()           // Throws if NaN
+    .assert_finite();      // Throws if NaN or Inf
+
+if (loss.has_nan()) {
+    std::cerr << "Training diverged!" << std::endl;
+}
+```
+
+### Shape Assertions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `tensor.assert_shape(shape)` | Assert exact shape | `t.assert_shape({32, 3, 224, 224})` |
+| `tensor.assert_shape(pattern)` | Assert shape pattern | `t.assert_shape("batch 3 height width")` |
+
+```cpp
+// Named dimensions (any size ok, just checks ndim)
+input.assert_shape("batch channels height width");
+
+// Mixed: named + exact values
+input.assert_shape("batch 3 224 224");  // Throws if channels != 3 or h/w != 224
+```
+
+### Debug Info
+
+| Function | Description |
+|----------|-------------|
+| `tensor.debug_info()` | Full diagnostic string |
+
+```cpp
+std::cout << tensor.debug_info();
+// Output:
+// Tensor Debug Info:
+//   Shape: [2, 3]
+//   Strides: [12, 4]
+//   DType: float32
+//   Device: CPU
+//   Size: 6 elements, 24 bytes
+//   Memory order: RowMajor
+//   Contiguous: yes
+//   Is view: no
+//   Owns data: yes
+//   Has zero stride: no
+//   Has NaN: no
+//   Has Inf: no
+```
+
+---
+
+## Profiling & Tracing
+
+Track operations and performance.
+
+### Tracing
+
+```cpp
+axiom::trace::enable();
+axiom::trace::clear();
+
+// ... tensor operations ...
+
+std::cout << axiom::trace::dump();
+axiom::trace::disable();
+```
+
+### Profiling
+
+```cpp
+axiom::profile::enable();
+
+auto c = a.matmul(b);
+
+auto& last = axiom::profile::last_op();
+std::cout << "Op: " << last.name << ", Duration: " << last.duration.count() << "ns\n";
+```

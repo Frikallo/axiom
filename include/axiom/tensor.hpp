@@ -81,6 +81,18 @@ class Tensor {
   size_t offset() const { return offset_; }
   bool empty() const { return size() == 0; }
 
+  // View/materialization introspection
+  bool is_view() const { return !flags_.owndata || offset_ > 0; }
+  bool owns_data() const { return flags_.owndata && offset_ == 0; }
+  bool has_zero_stride() const;  // True if any stride is 0 (broadcast view)
+  bool shares_storage(const Tensor& other) const {
+    return storage_.get() == other.storage_.get();
+  }
+
+  // Check if an operation would require materialization (data copy)
+  bool would_materialize_on_reshape(const Shape& new_shape) const;
+  bool would_materialize_on_transpose() const { return !is_contiguous(); }
+
   // Data access
   void* data();
   const void* data() const;
@@ -187,6 +199,8 @@ class Tensor {
   // expand: Zero-copy view using 0-stride for broadcasted dims
   // Only works when expanding dims of size 1
   Tensor expand(const Shape& new_shape) const;
+  Tensor expand_as(const Tensor& other) const { return expand(other.shape()); }
+  Tensor broadcast_to(const Shape& shape) const { return expand(shape); }
 
   // repeat: Copies data to create repeated tensor
   // Each dim is repeated by the corresponding factor
@@ -234,6 +248,18 @@ class Tensor {
   bool same_dtype(const Tensor& other) const;
   bool same_device(const Tensor& other) const;
   bool same_memory_order(const Tensor& other) const;
+
+  // Safety rails / debugging
+  bool has_nan() const;
+  bool has_inf() const;
+  bool is_finite() const { return !has_nan() && !has_inf(); }
+  Tensor& nan_guard();        // Returns *this, throws if NaN detected
+  Tensor& assert_finite();    // Returns *this, throws if NaN or Inf detected
+  Tensor& assert_shape(const std::string& pattern);  // e.g. "b h w" or "batch 3 height width"
+  Tensor& assert_shape(const Shape& expected);
+
+  // Debug info
+  std::string debug_info() const;  // Detailed tensor info for debugging
 
   // File I/O methods
   void save(const std::string& filename) const;

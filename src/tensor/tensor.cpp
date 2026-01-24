@@ -1,6 +1,7 @@
 #include "axiom/tensor.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
@@ -1119,6 +1120,151 @@ std::ostream& operator<<(std::ostream& os, const Tensor& tensor) {
 
 Tensor operator-(const Tensor& tensor) {
     return ops::negate(tensor);
+}
+
+// ============================================================================
+// View/materialization introspection
+// ============================================================================
+
+bool Tensor::has_zero_stride() const {
+  for (size_t s : strides_) {
+    if (s == 0) return true;
+  }
+  return false;
+}
+
+bool Tensor::would_materialize_on_reshape(const Shape& new_shape) const {
+  if (ShapeUtils::size(new_shape) != size()) return true;
+  
+  bool can_view = false;
+  if ((memory_order_ == MemoryOrder::RowMajor && is_c_contiguous()) ||
+      (memory_order_ == MemoryOrder::ColMajor && is_f_contiguous())) {
+    can_view = true;
+  }
+  return !can_view;
+}
+
+// ============================================================================
+// Safety rails
+// ============================================================================
+
+bool Tensor::has_nan() const {
+  if (device() != Device::CPU) {
+    return cpu().has_nan();
+  }
+
+  if (!is_floating_dtype(dtype_)) return false;
+
+  auto check_nan = [this]<typename T>() {
+    const T* data = typed_data<T>();
+    for (size_t i = 0; i < size(); ++i) {
+      if (std::isnan(static_cast<double>(data[i]))) return true;
+    }
+    return false;
+  };
+
+  switch (dtype_) {
+    case DType::Float32: return check_nan.template operator()<float>();
+    case DType::Float64: return check_nan.template operator()<double>();
+    default: return false;
+  }
+}
+
+bool Tensor::has_inf() const {
+  if (device() != Device::CPU) {
+    return cpu().has_inf();
+  }
+
+  if (!is_floating_dtype(dtype_)) return false;
+
+  auto check_inf = [this]<typename T>() {
+    const T* data = typed_data<T>();
+    for (size_t i = 0; i < size(); ++i) {
+      if (std::isinf(static_cast<double>(data[i]))) return true;
+    }
+    return false;
+  };
+
+  switch (dtype_) {
+    case DType::Float32: return check_inf.template operator()<float>();
+    case DType::Float64: return check_inf.template operator()<double>();
+    default: return false;
+  }
+}
+
+Tensor& Tensor::nan_guard() {
+  if (has_nan()) {
+    throw std::runtime_error("NaN detected in tensor " + repr());
+  }
+  return *this;
+}
+
+Tensor& Tensor::assert_finite() {
+  if (has_nan()) {
+    throw std::runtime_error("NaN detected in tensor " + repr());
+  }
+  if (has_inf()) {
+    throw std::runtime_error("Inf detected in tensor " + repr());
+  }
+  return *this;
+}
+
+Tensor& Tensor::assert_shape(const Shape& expected) {
+  if (shape_ != expected) {
+    throw std::runtime_error("Shape mismatch: expected " + 
+        vec_to_string(expected) + " but got " + vec_to_string(shape_));
+  }
+  return *this;
+}
+
+Tensor& Tensor::assert_shape(const std::string& pattern) {
+  std::vector<std::string> tokens;
+  std::istringstream iss(pattern);
+  std::string token;
+  while (iss >> token) {
+    tokens.push_back(token);
+  }
+
+  if (tokens.size() != ndim()) {
+    throw std::runtime_error("Shape pattern '" + pattern + "' has " + 
+        std::to_string(tokens.size()) + " dimensions but tensor has " + 
+        std::to_string(ndim()));
+  }
+
+  for (size_t i = 0; i < tokens.size(); ++i) {
+    try {
+      size_t expected = std::stoull(tokens[i]);
+      if (shape_[i] != expected) {
+        throw std::runtime_error("Shape mismatch at dim " + std::to_string(i) + 
+            ": expected " + std::to_string(expected) + " but got " + 
+            std::to_string(shape_[i]));
+      }
+    } catch (const std::invalid_argument&) {
+      // Named dimension, just check that it exists (any size is ok)
+    }
+  }
+  return *this;
+}
+
+std::string Tensor::debug_info() const {
+  std::ostringstream oss;
+  oss << "Tensor Debug Info:\n";
+  oss << "  Shape: " << vec_to_string(shape_) << "\n";
+  oss << "  Strides: " << vec_to_string(strides_) << "\n";
+  oss << "  DType: " << dtype_name() << "\n";
+  oss << "  Device: " << (device() == Device::CPU ? "CPU" : "GPU") << "\n";
+  oss << "  Size: " << size() << " elements, " << nbytes() << " bytes\n";
+  oss << "  Memory order: " << (memory_order_ == MemoryOrder::RowMajor ? "RowMajor" : "ColMajor") << "\n";
+  oss << "  Contiguous: " << (is_contiguous() ? "yes" : "no") << "\n";
+  oss << "  Is view: " << (is_view() ? "yes" : "no") << "\n";
+  oss << "  Owns data: " << (owns_data() ? "yes" : "no") << "\n";
+  oss << "  Has zero stride: " << (has_zero_stride() ? "yes" : "no") << "\n";
+  oss << "  Storage offset: " << offset_ << " bytes\n";
+  if (is_floating_dtype(dtype_) && device() == Device::CPU && size() > 0) {
+    oss << "  Has NaN: " << (has_nan() ? "yes" : "no") << "\n";
+    oss << "  Has Inf: " << (has_inf() ? "yes" : "no") << "\n";
+  }
+  return oss.str();
 }
 
 }  // namespace axiom

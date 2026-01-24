@@ -3,6 +3,7 @@
 // This is the single entry-point for the Axiom library.
 // Include this file to get access to all the core functionality.
 
+#include "axiom/debug.hpp"
 #include "axiom/dtype.hpp"
 #include "axiom/shape.hpp"
 #include "axiom/storage.hpp"
