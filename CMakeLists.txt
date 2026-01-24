@@ -34,14 +34,16 @@ if(APPLE)
 
     find_library(METAL_FRAMEWORK Metal)
     find_library(FOUNDATION_FRAMEWORK Foundation)
+    find_library(MPS_FRAMEWORK MetalPerformanceShaders)
+    find_library(MPSGRAPH_FRAMEWORK MetalPerformanceShadersGraph)
     
-    if(METAL_FRAMEWORK AND FOUNDATION_FRAMEWORK)
+    if(METAL_FRAMEWORK AND FOUNDATION_FRAMEWORK AND MPS_FRAMEWORK AND MPSGRAPH_FRAMEWORK)
         enable_language(OBJCXX)
         set(CMAKE_OBJCXX_STANDARD 20)
         set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
         set(AXIOM_HAS_METAL ON)
     else()
-        message(WARNING "Metal or Foundation framework not found. GPU support will be disabled.")
+        message(WARNING "Metal, Foundation, MPS, or MPSGraph framework not found. GPU support will be disabled.")
         set(AXIOM_HAS_METAL OFF)
     endif()
 endif()
@@ -82,6 +84,7 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_storage.mm
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
+        src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/kernels.metal
     )
     
@@ -89,6 +92,7 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_storage.mm
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
+        src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/kernels.metal
         PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"
@@ -174,6 +178,8 @@ if(APPLE AND AXIOM_HAS_METAL)
         PUBLIC
             ${METAL_FRAMEWORK}
             ${FOUNDATION_FRAMEWORK}
+            ${MPS_FRAMEWORK}
+            ${MPSGRAPH_FRAMEWORK}
     )
     
     # Enable Metal support

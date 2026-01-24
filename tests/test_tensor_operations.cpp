@@ -188,12 +188,13 @@ void test_cpu_type_promotion_success() {
 void test_unsupported_gpu_op_fallback() {
 #ifdef __APPLE__
     if (!axiom::system::is_metal_available()) return;
-    // Power is not implemented on Metal, should fall back to CPU.
+    // Power is now implemented on Metal via MPSGraph, should run on GPU!
     auto a = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 4.0f).to(axiom::Device::GPU);
     auto c = axiom::ops::power(a, b);
     
-    ASSERT(c.device() == axiom::Device::CPU, "Device mismatch");
+    // NEW: Power now runs on GPU via MPSGraph!
+    ASSERT(c.device() == axiom::Device::GPU, "Power should run on GPU");
     
     auto c_cpu = c.cpu();
     const float* c_data = c_cpu.typed_data<float>();

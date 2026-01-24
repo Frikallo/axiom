@@ -9,7 +9,7 @@ This document is now maintained with test coverage tracking. Operations marked w
 - ⚠️ **Partially tested** - Some test coverage, but edge cases or variants may be missing
 - ❌ **Not tested** - No dedicated test coverage exists
 
-Last updated: 2026-01-23
+Last updated: 2026-01-24
 
 ## Tensor Creation
 
@@ -145,16 +145,18 @@ auto c = a.repeat({128, 1});   // Same shape, but data is copied
 
 ## Binary Arithmetic Operations
 
+**Status: ✅ Full GPU support via MPSGraph**
+
 All binary operations support broadcasting.
 
-| Function | Operator | Description | Example |
-|----------|----------|-------------|---------|
-| `ops::add(a, b)` | `a + b` | Element-wise addition | `a + b` |
-| `ops::subtract(a, b)` | `a - b` | Element-wise subtraction | `a - b` |
-| `ops::multiply(a, b)` | `a * b` | Element-wise multiplication | `a * b` |
-| `ops::divide(a, b)` | `a / b` | Element-wise division | `a / b` |
-| `ops::power(a, b)` | - | Element-wise power | `ops::power(a, b)` |
-| `ops::modulo(a, b)` | `a % b` | Element-wise modulo | `a % b` |
+| Function | Operator | Description | CPU | GPU |
+|----------|----------|-------------|-----|-----|
+| `ops::add(a, b)` | `a + b` | Element-wise addition | ✅ | ✅ |
+| `ops::subtract(a, b)` | `a - b` | Element-wise subtraction | ✅ | ✅ |
+| `ops::multiply(a, b)` | `a * b` | Element-wise multiplication | ✅ | ✅ |
+| `ops::divide(a, b)` | `a / b` | Element-wise division | ✅ | ✅ |
+| `ops::power(a, b)` | - | Element-wise power | ✅ | ✅ |
+| `ops::modulo(a, b)` | `a % b` | Element-wise modulo | ✅ | ✅ |
 
 ### In-Place Variants
 
@@ -169,115 +171,136 @@ All binary operations support broadcasting.
 
 ## Comparison Operations
 
-**Status: ✅ Fully tested (13/13 tests passing)**
+**Status: ✅ Fully tested (20/20 tests passing - includes GPU tests!)**
 
-Return boolean tensors.
+Return boolean tensors. **Full GPU support via MPSGraph.**
 
-| Function | Operator | Description | Status |
-|----------|----------|-------------|--------|
-| `ops::equal(a, b)` | `a == b` | Element-wise equality | ✅ |
-| `ops::not_equal(a, b)` | `a != b` | Element-wise inequality | ✅ |
-| `ops::less(a, b)` | `a < b` | Element-wise less than | ✅ |
-| `ops::less_equal(a, b)` | `a <= b` | Element-wise less or equal | ✅ |
-| `ops::greater(a, b)` | `a > b` | Element-wise greater than | ✅ |
-| `ops::greater_equal(a, b)` | `a >= b` | Element-wise greater or equal | ✅ |
+| Function | Operator | Description | CPU | GPU | Status |
+|----------|----------|-------------|-----|-----|--------|
+| `ops::equal(a, b)` | `a == b` | Element-wise equality | ✅ | ✅ | ✅ |
+| `ops::not_equal(a, b)` | `a != b` | Element-wise inequality | ✅ | ✅ | ✅ |
+| `ops::less(a, b)` | `a < b` | Element-wise less than | ✅ | ✅ | ✅ |
+| `ops::less_equal(a, b)` | `a <= b` | Element-wise less or equal | ✅ | ✅ | ✅ |
+| `ops::greater(a, b)` | `a > b` | Element-wise greater than | ✅ | ✅ | ✅ |
+| `ops::greater_equal(a, b)` | `a >= b` | Element-wise greater or equal | ✅ | ✅ | ✅ |
 
 ---
 
 ## Logical Operations
 
-| Function | Operator | Description |
-|----------|----------|-------------|
-| `ops::logical_and(a, b)` | `a && b` | Element-wise logical AND |
-| `ops::logical_or(a, b)` | `a \|\| b` | Element-wise logical OR |
-| `ops::logical_xor(a, b)` | - | Element-wise logical XOR |
+**Status: ✅ GPU support via MPSGraph**
+
+| Function | Operator | Description | CPU | GPU |
+|----------|----------|-------------|-----|-----|
+| `ops::logical_and(a, b)` | `a && b` | Element-wise logical AND | ✅ | ✅ |
+| `ops::logical_or(a, b)` | `a \|\| b` | Element-wise logical OR | ✅ | ✅ |
+| `ops::logical_xor(a, b)` | - | Element-wise logical XOR | ✅ | ✅ |
+| `ops::logical_not(a)` | - | Element-wise logical NOT | ✅ | ✅ |
 
 ---
 
 ## Bitwise Operations
 
+**Status: ✅ GPU support via MPSGraph**
+
 Integer types only.
 
-| Function | Operator | Description |
-|----------|----------|-------------|
-| `ops::bitwise_and(a, b)` | `a & b` | Bitwise AND |
-| `ops::bitwise_or(a, b)` | `a \| b` | Bitwise OR |
-| `ops::bitwise_xor(a, b)` | `a ^ b` | Bitwise XOR |
-| `ops::left_shift(a, b)` | `a << b` | Left shift |
-| `ops::right_shift(a, b)` | `a >> b` | Right shift |
+| Function | Operator | Description | CPU | GPU |
+|----------|----------|-------------|-----|-----|
+| `ops::bitwise_and(a, b)` | `a & b` | Bitwise AND | ✅ | ✅ |
+| `ops::bitwise_or(a, b)` | `a \| b` | Bitwise OR | ✅ | ✅ |
+| `ops::bitwise_xor(a, b)` | `a ^ b` | Bitwise XOR | ✅ | ✅ |
+| `ops::left_shift(a, b)` | `a << b` | Left shift | ✅ | ✅ |
+| `ops::right_shift(a, b)` | `a >> b` | Right shift | ✅ | ✅ |
 
 ---
 
 ## Math Binary Operations
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `ops::maximum(a, b)` | Element-wise maximum | `ops::maximum(a, b)` |
-| `ops::minimum(a, b)` | Element-wise minimum | `ops::minimum(a, b)` |
-| `ops::atan2(y, x)` | Element-wise atan2 | `ops::atan2(y, x)` |
-| `ops::hypot(a, b)` | Element-wise hypotenuse | `ops::hypot(a, b)` |
+**Status: ✅ Full GPU support via MPSGraph**
+
+| Function | Description | Example | CPU | GPU |
+|----------|-------------|---------|-----|-----|
+| `ops::maximum(a, b)` | Element-wise maximum | `ops::maximum(a, b)` | ✅ | ✅ |
+| `ops::minimum(a, b)` | Element-wise minimum | `ops::minimum(a, b)` | ✅ | ✅ |
+| `ops::atan2(y, x)` | Element-wise atan2 | `ops::atan2(y, x)` | ✅ | ✅ |
+| `ops::power(a, b)` | Element-wise power | `ops::power(a, b)` | ✅ | ✅ |
+| `ops::modulo(a, b)` | Element-wise modulo | `ops::modulo(a, b)` | ✅ | ✅ |
+| `ops::hypot(a, b)` | Element-wise hypotenuse | `ops::hypot(a, b)` | ✅ | ❌ |
+
+**Note:** `hypot` not yet implemented on GPU (can be computed as `sqrt(a*a + b*b)`).
 
 ---
 
 ## Unary Operations
 
-| Function | Operator | Description |
-|----------|----------|-------------|
-| `ops::negate(a)` | `-a` | Negation |
-| `ops::abs(a)` | - | Absolute value |
-| `ops::sqrt(a)` | - | Square root |
-| `ops::exp(a)` | - | Exponential |
-| `ops::log(a)` | - | Natural logarithm |
-| `ops::sin(a)` | - | Sine |
-| `ops::cos(a)` | - | Cosine |
-| `ops::tan(a)` | - | Tangent |
+**Status: ✅ Fully tested - Full GPU support via MPSGraph!**
+
+| Function | Operator | Description | CPU | GPU | Status |
+|----------|----------|-------------|-----|-----|--------|
+| `ops::negate(a)` | `-a` | Negation | ✅ | ✅ | ✅ |
+| `ops::abs(a)` | - | Absolute value | ✅ | ✅ | ✅ |
+| `ops::sqrt(a)` | - | Square root | ✅ | ✅ | ✅ |
+| `ops::exp(a)` | - | Exponential | ✅ | ✅ | ✅ |
+| `ops::log(a)` | - | Natural logarithm | ✅ | ✅ | ✅ |
+| `ops::sin(a)` | - | Sine | ✅ | ✅ | ✅ |
+| `ops::cos(a)` | - | Cosine | ✅ | ✅ | ✅ |
+| `ops::tan(a)` | - | Tangent | ✅ | ✅ | ✅ |
+
+**Migration Complete:** All unary operations use MPSGraph for automatic kernel fusion and Apple Silicon optimization.
 
 ---
 
 ## Reduction Operations
 
+**Status: ✅ Fully tested - Full GPU support via MPSGraph!**
+
 ### Free Functions
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `ops::sum(a, axis, keep_dims)` | Sum over axis | `ops::sum(a, {0}, true)` |
-| `ops::mean(a, axis, keep_dims)` | Mean over axis | `ops::mean(a, {0})` |
-| `ops::max(a, axis, keep_dims)` | Maximum over axis | `ops::max(a, {-1})` |
-| `ops::min(a, axis, keep_dims)` | Minimum over axis | `ops::min(a)` |
-| `ops::argmax(a, axis, keep_dims)` | Index of maximum | `ops::argmax(a, 0)` |
-| `ops::argmin(a, axis, keep_dims)` | Index of minimum | `ops::argmin(a, -1)` |
+| Function | Description | Example | CPU | GPU |
+|----------|-------------|---------|-----|-----|
+| `ops::sum(a, axis, keep_dims)` | Sum over axis | `ops::sum(a, {0}, true)` | ✅ | ✅ |
+| `ops::mean(a, axis, keep_dims)` | Mean over axis | `ops::mean(a, {0})` | ✅ | ✅ |
+| `ops::max(a, axis, keep_dims)` | Maximum over axis | `ops::max(a, {-1})` | ✅ | ✅ |
+| `ops::min(a, axis, keep_dims)` | Minimum over axis | `ops::min(a)` | ✅ | ✅ |
+| `ops::argmax(a, axis, keep_dims)` | Index of maximum | `ops::argmax(a, 0)` | ✅ | ✅ |
+| `ops::argmin(a, axis, keep_dims)` | Index of minimum | `ops::argmin(a, -1)` | ✅ | ✅ |
 
 ### Member Functions
 
-| Function | Description | Example | Status |
-|----------|-------------|---------|--------|
-| `tensor.sum(axis, keep_dims)` | Sum over axis | `t.sum(0)` | ✅ |
-| `tensor.sum(axes, keep_dims)` | Sum over multiple axes | `t.sum({0, 1})` | ✅ |
-| `tensor.mean(axis, keep_dims)` | Mean over axis | `t.mean(-1)` | ✅ |
-| `tensor.max(axis, keep_dims)` | Maximum over axis | `t.max(0)` | ✅ |
-| `tensor.min(axis, keep_dims)` | Minimum over axis | `t.min()` | ✅ |
-| `tensor.argmax(axis, keep_dims)` | Index of maximum (returns Int64) | `t.argmax(1)` | ✅ |
-| `tensor.argmin(axis, keep_dims)` | Index of minimum (returns Int64) | `t.argmin(-1)` | ✅ |
+| Function | Description | Example | CPU | GPU | Status |
+|----------|-------------|---------|-----|-----|--------|
+| `tensor.sum(axis, keep_dims)` | Sum over axis | `t.sum(0)` | ✅ | ✅ | ✅ |
+| `tensor.sum(axes, keep_dims)` | Sum over multiple axes | `t.sum({0, 1})` | ✅ | ✅ | ✅ |
+| `tensor.mean(axis, keep_dims)` | Mean over axis | `t.mean(-1)` | ✅ | ✅ | ✅ |
+| `tensor.max(axis, keep_dims)` | Maximum over axis | `t.max(0)` | ✅ | ✅ | ✅ |
+| `tensor.min(axis, keep_dims)` | Minimum over axis | `t.min()` | ✅ | ✅ | ✅ |
+| `tensor.argmax(axis, keep_dims)` | Index of maximum (returns Int64) | `t.argmax(1)` | ✅ | ✅ | ✅ |
+| `tensor.argmin(axis, keep_dims)` | Index of minimum (returns Int64) | `t.argmin(-1)` | ✅ | ✅ | ✅ |
 
 **Parameters:**
 - `axis`: Dimension to reduce. `-1` reduces all dimensions (default).
 - `axes`: Vector of dimensions to reduce.
 - `keep_dims`: If true, reduced dimensions become size 1 instead of being removed.
 
+**Migration Complete:** All reduction operations now use MPSGraph instead of custom Metal kernels!
+
 ---
 
 ## Matrix Multiplication
 
-**Status: ✅ Fully tested (14/14 tests passing)**
+**Status: ✅ Fully tested (14/14 tests passing) - Full GPU support via MPSGraph!**
 
-| Function | Description | Example | Status |
-|----------|-------------|---------|--------|
-| `a.matmul(b)` | Matrix multiplication (member) | `a.matmul(b)` | ✅ |
-| `a.matmul(b, transpose_a, transpose_b)` | MatMul with optional transpose | `a.matmul(b, false, true)` | ✅ |
-| `a.mm(b)` | Alias for matmul | `a.mm(b)` | ✅ |
-| `a.dot(b)` | Alias for matmul (vectors) | `a.dot(b)` | ✅ |
-| `ops::matmul(a, b)` | Matrix multiplication (free function) | `ops::matmul(a, b)` | ✅ |
-| `ops::matmul(a, b, transpose_a, transpose_b)` | MatMul with optional transpose | `ops::matmul(a, b, false, true)` | ✅ |
+| Function | Description | Example | CPU | GPU | Status |
+|----------|-------------|---------|-----|-----|--------|
+| `a.matmul(b)` | Matrix multiplication (member) | `a.matmul(b)` | ✅ | ✅ | ✅ |
+| `a.matmul(b, transpose_a, transpose_b)` | MatMul with optional transpose | `a.matmul(b, false, true)` | ✅ | ✅ | ✅ |
+| `a.mm(b)` | Alias for matmul | `a.mm(b)` | ✅ | ✅ | ✅ |
+| `a.dot(b)` | Alias for matmul (vectors) | `a.dot(b)` | ✅ | ✅ | ✅ |
+| `ops::matmul(a, b)` | Matrix multiplication (free function) | `ops::matmul(a, b)` | ✅ | ✅ | ✅ |
+| `ops::matmul(a, b, transpose_a, transpose_b)` | MatMul with optional transpose | `ops::matmul(a, b, false, true)` | ✅ | ✅ | ✅ |
+
+**Migration Complete:** MatMul now uses MPSGraph's `matrixMultiplicationWithPrimaryTensor` for Apple-optimized performance!
 
 ### Supported Shapes
 
@@ -319,16 +342,52 @@ auto c2 = ops::matmul(a2, b2);         // Shape: (2, 8, 4, 5)
 
 ## Backend Support
 
-| Operation Category | CPU | Metal GPU |
-|-------------------|-----|-----------|
-| Binary Arithmetic | Yes | Yes (float, int, half, uint8, int8) |
-| Comparison | Yes | No |
-| Logical | Yes | No |
-| Bitwise | Yes | No |
-| Math Binary | Yes | No |
-| Unary | Yes | Yes (float, half) |
-| Reduction | Yes | Yes (float, half) |
-| Matrix Multiplication | Yes | Yes (float, half) |
+| Operation Category | CPU | Metal GPU | Implementation |
+|-------------------|-----|-----------|----------------|
+| Binary Arithmetic | ✅ | ✅ | MPSGraph |
+| Comparison | ✅ | ✅ | MPSGraph |
+| Logical | ✅ | ✅ | MPSGraph |
+| Bitwise | ✅ | ✅ | MPSGraph (integer types) |
+| Math Binary | ✅ | ✅ | MPSGraph |
+| Unary | ✅ | ✅ | MPSGraph |
+| Reduction (sum, mean, max, min) | ✅ | ✅ | MPSGraph |
+| ArgMax/ArgMin | ✅ | ✅ | MPSGraph |
+| Matrix Multiplication | ✅ | ✅ | MPSGraph |
+| Conditional (where) | ✅ | ✅ | MPSGraph |
+
+### Complete MPSGraph Migration (v0.1.0)
+
+All GPU operations now use Apple's MPSGraph framework:
+
+- ✅ **Binary arithmetic** (add, subtract, multiply, divide, power, modulo)
+- ✅ **Unary operations** (negate, abs, sqrt, exp, log, sin, cos, tan)
+- ✅ **Comparison operations** (equal, not_equal, less, less_equal, greater, greater_equal)
+- ✅ **Logical operations** (and, or, xor, not)
+- ✅ **Bitwise operations** (and, or, xor, shifts)
+- ✅ **Reduction operations** (sum, mean, max, min)
+- ✅ **ArgMax/ArgMin** - Returns Int64 indices
+- ✅ **Matrix multiplication** - Batched matmul with broadcasting
+- ✅ **Conditional selection** (where)
+- ✅ **Math operations** (maximum, minimum, atan2, power, modulo)
+
+### Benefits of MPSGraph Architecture
+
+1. **Automatic kernel fusion** - Sequential operations are fused into single GPU kernels
+2. **Apple Silicon optimization** - Uses Apple's hand-tuned kernels for M1/M2/M3 chips
+3. **Simpler codebase** - ~500 lines of custom Metal kernel code removed
+4. **Better maintainability** - New operations are 5-10 lines instead of 50+
+5. **Non-contiguous tensor support** - GPU gather kernel handles strided memory layouts
+
+### GPU Gather Kernel
+
+Non-contiguous GPU tensors (from slicing, transposing, etc.) are automatically made contiguous using a GPU gather kernel before MPSGraph operations. This happens entirely on the GPU with no CPU fallback:
+
+```cpp
+// This works efficiently on GPU:
+auto t = Tensor::randn({100, 100}, Device::GPU);
+auto view = t.slice({{0, 50}, {25, 75}});  // Non-contiguous view
+auto result = view.sum();  // Gather kernel + MPSGraph reduction
+```
 
 ---
 

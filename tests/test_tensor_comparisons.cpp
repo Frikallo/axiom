@@ -171,6 +171,82 @@ void test_comparison_broadcasting() {
     ASSERT(c.dtype() == axiom::DType::Bool, "Result should be bool");
 }
 
+// ============================================================================
+// GPU Tests
+// ============================================================================
+
+void test_equal_gpu() {
+    auto a = axiom::Tensor::arange(6).reshape({2, 3}).astype(axiom::DType::Float32).gpu();
+    auto b = axiom::Tensor::arange(6).reshape({2, 3}).astype(axiom::DType::Float32).gpu();
+    auto c = axiom::ops::equal(a, b);
+    
+    ASSERT(c.device() == axiom::Device::GPU, "Result should be on GPU");
+    ASSERT(c.dtype() == axiom::DType::Bool, "Result should be bool");
+    std::vector<bool> expected(6, true);
+    assert_tensor_equals_cpu<bool>(c, expected);
+}
+
+void test_not_equal_gpu() {
+    auto a = axiom::Tensor::arange(4).astype(axiom::DType::Float32).gpu();
+    auto b = axiom::Tensor::full({4}, 2.0f).gpu();
+    auto c = axiom::ops::not_equal(a, b);
+    
+    ASSERT(c.device() == axiom::Device::GPU, "Result should be on GPU");
+    ASSERT(c.dtype() == axiom::DType::Bool, "Result should be bool");
+    assert_tensor_equals_cpu<bool>(c, {true, true, false, true});
+}
+
+void test_less_gpu() {
+    auto a = axiom::Tensor::arange(5).astype(axiom::DType::Float32).gpu();
+    auto b = axiom::Tensor::full({5}, 2.0f).gpu();
+    auto c = axiom::ops::less(a, b);
+    
+    ASSERT(c.device() == axiom::Device::GPU, "Result should be on GPU");
+    ASSERT(c.dtype() == axiom::DType::Bool, "Result should be bool");
+    assert_tensor_equals_cpu<bool>(c, {true, true, false, false, false});
+}
+
+void test_less_equal_gpu() {
+    auto a = axiom::Tensor::arange(5).astype(axiom::DType::Float32).gpu();
+    auto b = axiom::Tensor::full({5}, 2.0f).gpu();
+    auto c = axiom::ops::less_equal(a, b);
+    
+    ASSERT(c.device() == axiom::Device::GPU, "Result should be on GPU");
+    ASSERT(c.dtype() == axiom::DType::Bool, "Result should be bool");
+    assert_tensor_equals_cpu<bool>(c, {true, true, true, false, false});
+}
+
+void test_greater_gpu() {
+    auto a = axiom::Tensor::arange(5).astype(axiom::DType::Float32).gpu();
+    auto b = axiom::Tensor::full({5}, 2.0f).gpu();
+    auto c = axiom::ops::greater(a, b);
+    
+    ASSERT(c.device() == axiom::Device::GPU, "Result should be on GPU");
+    ASSERT(c.dtype() == axiom::DType::Bool, "Result should be bool");
+    assert_tensor_equals_cpu<bool>(c, {false, false, false, true, true});
+}
+
+void test_greater_equal_gpu() {
+    auto a = axiom::Tensor::arange(5).astype(axiom::DType::Float32).gpu();
+    auto b = axiom::Tensor::full({5}, 2.0f).gpu();
+    auto c = axiom::ops::greater_equal(a, b);
+    
+    ASSERT(c.device() == axiom::Device::GPU, "Result should be on GPU");
+    ASSERT(c.dtype() == axiom::DType::Bool, "Result should be bool");
+    assert_tensor_equals_cpu<bool>(c, {false, false, true, true, true});
+}
+
+void test_comparison_broadcasting_gpu() {
+    // Shape (3, 1) vs (4) should broadcast to (3, 4)
+    auto a = axiom::Tensor::arange(3).reshape({3, 1}).astype(axiom::DType::Float32).gpu();
+    auto b = axiom::Tensor::arange(4).astype(axiom::DType::Float32).gpu();
+    auto c = axiom::ops::less(a, b);
+    
+    ASSERT(c.device() == axiom::Device::GPU, "Result should be on GPU");
+    ASSERT(c.shape() == axiom::Shape({3, 4}), "Broadcasting failed");
+    ASSERT(c.dtype() == axiom::DType::Bool, "Result should be bool");
+}
+
 int main() {
     axiom::ops::OperationRegistry::initialize_builtin_operations();
     
@@ -191,6 +267,23 @@ int main() {
     RUN_TEST(test_greater_equal);
     RUN_TEST(test_greater_equal_with_operator);
     RUN_TEST(test_comparison_broadcasting);
+    
+    // GPU tests (if Metal is available)
+    if (axiom::system::is_metal_available()) {
+        std::cout << "\n========================================" << std::endl;
+        std::cout << "Running GPU Tests" << std::endl;
+        std::cout << "========================================\n" << std::endl;
+        
+        RUN_TEST(test_equal_gpu);
+        RUN_TEST(test_not_equal_gpu);
+        RUN_TEST(test_less_gpu);
+        RUN_TEST(test_less_equal_gpu);
+        RUN_TEST(test_greater_gpu);
+        RUN_TEST(test_greater_equal_gpu);
+        RUN_TEST(test_comparison_broadcasting_gpu);
+    } else {
+        std::cout << "\nSkipping GPU tests (Metal not available)" << std::endl;
+    }
     
     std::cout << "\n========================================" << std::endl;
     std::cout << "Test Suite Summary:" << std::endl;

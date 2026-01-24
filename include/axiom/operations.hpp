@@ -62,6 +62,7 @@ enum class OpType {
   LogicalAnd,
   LogicalOr,
   LogicalXor,
+  LogicalNot,
   
   // Bitwise operations
   BitwiseAnd,
