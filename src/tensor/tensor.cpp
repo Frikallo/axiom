@@ -4,11 +4,12 @@
 #include <cmath>
 #include <cstring>
 #include <sstream>
-#include <stdexcept>
 #include <iostream>
 
 #include "axiom/einops.hpp"
+#include "axiom/error.hpp"
 #include "axiom/io.hpp"
+#include "axiom/numeric.hpp"
 #include "axiom/operations.hpp"
 #include "axiom/random.hpp"
 #include "axiom/system.hpp"
@@ -1194,25 +1195,24 @@ bool Tensor::has_inf() const {
 
 Tensor& Tensor::nan_guard() {
   if (has_nan()) {
-    throw std::runtime_error("NaN detected in tensor " + repr());
+    throw ValueError::nan_detected(repr());
   }
   return *this;
 }
 
 Tensor& Tensor::assert_finite() {
   if (has_nan()) {
-    throw std::runtime_error("NaN detected in tensor " + repr());
+    throw ValueError::nan_detected(repr());
   }
   if (has_inf()) {
-    throw std::runtime_error("Inf detected in tensor " + repr());
+    throw ValueError::inf_detected(repr());
   }
   return *this;
 }
 
 Tensor& Tensor::assert_shape(const Shape& expected) {
   if (shape_ != expected) {
-    throw std::runtime_error("Shape mismatch: expected " + 
-        vec_to_string(expected) + " but got " + vec_to_string(shape_));
+    throw ShapeError::mismatch(expected, shape_);
   }
   return *this;
 }
@@ -1226,7 +1226,7 @@ Tensor& Tensor::assert_shape(const std::string& pattern) {
   }
 
   if (tokens.size() != ndim()) {
-    throw std::runtime_error("Shape pattern '" + pattern + "' has " + 
+    throw ShapeError("pattern '" + pattern + "' has " + 
         std::to_string(tokens.size()) + " dimensions but tensor has " + 
         std::to_string(ndim()));
   }
@@ -1235,8 +1235,8 @@ Tensor& Tensor::assert_shape(const std::string& pattern) {
     try {
       size_t expected = std::stoull(tokens[i]);
       if (shape_[i] != expected) {
-        throw std::runtime_error("Shape mismatch at dim " + std::to_string(i) + 
-            ": expected " + std::to_string(expected) + " but got " + 
+        throw ShapeError("dimension " + std::to_string(i) + 
+            " expected " + std::to_string(expected) + " but got " + 
             std::to_string(shape_[i]));
       }
     } catch (const std::invalid_argument&) {

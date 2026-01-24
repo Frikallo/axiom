@@ -479,3 +479,132 @@ auto c = a.matmul(b);
 auto& last = axiom::profile::last_op();
 std::cout << "Op: " << last.name << ", Duration: " << last.duration.count() << "ns\n";
 ```
+
+---
+
+## Error Handling
+
+Axiom provides a rich hierarchy of error types for precise exception handling.
+
+### Error Hierarchy
+
+```
+AxiomError (base)
+├── ShapeError      - Shape mismatches, invalid axes, broadcast failures
+├── TypeError       - Unsupported dtypes, type mismatches
+├── DeviceError     - Device unavailable, CPU/GPU mismatches
+├── ValueError      - NaN/Inf detection, out-of-range values
+├── IndexError      - Out-of-bounds indexing, invalid slices
+├── MemoryError     - Allocation failures, non-contiguous requirements
+└── RuntimeError    - Internal errors, unimplemented features
+```
+
+### Usage
+
+```cpp
+#include "axiom/error.hpp"
+
+try {
+    tensor.assert_shape({32, 3, 224, 224});
+} catch (const ShapeError& e) {
+    // Handle shape-specific error
+} catch (const AxiomError& e) {
+    // Catch any Axiom error
+}
+```
+
+### Factory Methods
+
+```cpp
+// ShapeError
+throw ShapeError::mismatch(expected_shape, actual_shape);
+throw ShapeError::invalid_axis(axis, ndim);
+throw ShapeError::broadcast_incompatible("(3,4) and (5,)");
+
+// TypeError
+throw TypeError::unsupported_dtype("complex128", "matmul");
+throw TypeError::dtype_mismatch("float32", "int64");
+
+// ValueError
+throw ValueError::nan_detected("layer_output");
+throw ValueError::inf_detected("gradients");
+throw ValueError::out_of_range("learning_rate", 0.0, 1.0, 2.5);
+
+// DeviceError
+throw DeviceError::not_available("Metal GPU");
+throw DeviceError::cpu_only("direct data access");
+
+// IndexError
+throw IndexError::out_of_bounds(10, 5, /*dim=*/0);
+throw IndexError::invalid_slice("step cannot be zero");
+```
+
+---
+
+## Numeric Utilities
+
+Axiom provides utilities for handling special floating-point values.
+
+### Constants
+
+```cpp
+#include "axiom/numeric.hpp"
+
+// NaN constants
+float nan_f = axiom::numeric::nan<float>();
+double nan_d = axiom::numeric::nan_d;
+
+// Infinity constants
+float inf_f = axiom::numeric::inf<float>();
+float neg_inf_f = axiom::numeric::neg_inf<float>();
+
+// Machine epsilon
+float eps = axiom::numeric::epsilon<float>();
+```
+
+### Value Classification
+
+```cpp
+axiom::is_nan(value);      // Check for NaN
+axiom::is_inf(value);      // Check for +/- infinity
+axiom::is_finite(value);   // Check for normal finite value
+
+axiom::numeric::is_pos_inf(value);  // Positive infinity only
+axiom::numeric::is_neg_inf(value);  // Negative infinity only
+axiom::numeric::is_normal(value);   // Not zero, subnormal, inf, or nan
+```
+
+### String Formatting
+
+```cpp
+// Automatic NaN/Inf handling
+axiom::numeric::to_string(NAN);        // "nan"
+axiom::numeric::to_string(INFINITY);   // "inf"
+axiom::numeric::to_string(-INFINITY);  // "-inf"
+axiom::numeric::to_string(3.14159f);   // "3.1416"
+
+// Tensor display automatically uses this formatting
+std::cout << tensor;  // NaN shows as "nan", Inf as "inf"
+```
+
+### Safe Operations
+
+Operations that return NaN/Inf instead of throwing:
+
+```cpp
+axiom::numeric::safe_div(1.0, 0.0);   // Returns inf
+axiom::numeric::safe_div(0.0, 0.0);   // Returns nan
+axiom::numeric::safe_log(-1.0);       // Returns nan
+axiom::numeric::safe_sqrt(-1.0);      // Returns nan
+```
+
+### Approximate Equality
+
+```cpp
+// For floating-point comparison with tolerance
+axiom::numeric::approx_equal(a, b);  // Uses default tolerances
+axiom::numeric::approx_equal(a, b, rel_tol, abs_tol);
+
+// NaN != NaN (IEEE semantics preserved)
+axiom::numeric::approx_equal(NAN, NAN);  // false
+```

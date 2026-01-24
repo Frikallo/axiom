@@ -1,10 +1,14 @@
 #include "axiom/io.hpp"
 
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <map>
 #include <iomanip>
 #include <sstream>
+
+#include "axiom/numeric.hpp"
+#include "axiom/error.hpp"
 
 namespace axiom {
 namespace io {
@@ -100,12 +104,35 @@ Tensor ensure_cpu_tensor(const Tensor& tensor) {
 // Helper to convert a single element to string based on dtype
 template<typename T>
 std::string element_to_string(const void* data, size_t index) {
-    std::stringstream ss;
+    T value = static_cast<const T*>(data)[index];
+    
     if constexpr (std::is_floating_point_v<T>) {
-        ss << std::fixed << std::setprecision(4) << static_cast<const T*>(data)[index];
+        // Handle special floating-point values
+        if (std::isnan(value)) {
+            return "nan";
+        }
+        if (std::isinf(value)) {
+            return value > 0 ? "inf" : "-inf";
+        }
+        std::stringstream ss;
+        ss << std::fixed << std::setprecision(4) << value;
+        return ss.str();
+    } else if constexpr (std::is_same_v<T, bool>) {
+        return value ? "true" : "false";
     } else {
-        ss << static_cast<const T*>(data)[index];
+        std::stringstream ss;
+        ss << value;
+        return ss.str();
     }
+}
+
+// Special handling for half-precision since it's not a native C++ type
+std::string half_element_to_string(const void* data, size_t index) {
+    float value = static_cast<float>(static_cast<const half_float::half*>(data)[index]);
+    if (std::isnan(value)) return "nan";
+    if (std::isinf(value)) return value > 0 ? "inf" : "-inf";
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(4) << value;
     return ss.str();
 }
 
@@ -114,17 +141,17 @@ std::string dispatch_element_to_string(const Tensor& t, size_t index) {
     switch (t.dtype()) {
         case DType::Float32:  return element_to_string<float>(data, index);
         case DType::Float64:  return element_to_string<double>(data, index);
-        case DType::Float16:  return element_to_string<half_float::half>(data, index);
-        case DType::Int8:     return std::to_string(static_cast<const int8_t*>(data)[index]);
+        case DType::Float16:  return half_element_to_string(data, index);
+        case DType::Int8:     return element_to_string<int8_t>(data, index);
         case DType::Int16:    return element_to_string<int16_t>(data, index);
         case DType::Int32:    return element_to_string<int32_t>(data, index);
         case DType::Int64:    return element_to_string<int64_t>(data, index);
-        case DType::UInt8:    return std::to_string(static_cast<const uint8_t*>(data)[index]);
+        case DType::UInt8:    return element_to_string<uint8_t>(data, index);
         case DType::UInt16:   return element_to_string<uint16_t>(data, index);
         case DType::UInt32:   return element_to_string<uint32_t>(data, index);
         case DType::UInt64:   return element_to_string<uint64_t>(data, index);
-        case DType::Bool:     return static_cast<const bool*>(data)[index] ? "true" : "false";
-        default: throw std::runtime_error("Unsupported dtype for printing");
+        case DType::Bool:     return element_to_string<bool>(data, index);
+        default: throw TypeError::unsupported_dtype(dtype_name(t.dtype()), "printing");
     }
 }
 

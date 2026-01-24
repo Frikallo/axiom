@@ -5,6 +5,8 @@
 
 #include "axiom/debug.hpp"
 #include "axiom/dtype.hpp"
+#include "axiom/error.hpp"
+#include "axiom/numeric.hpp"
 #include "axiom/shape.hpp"
 #include "axiom/storage.hpp"
 #include "axiom/tensor.hpp"
