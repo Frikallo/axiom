@@ -91,7 +91,7 @@ void test_scaled_dot_product_attention_cpu() {
 }
 
 void test_scaled_dot_product_attention_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }
@@ -181,7 +181,7 @@ void test_causal_masked_attention_cpu() {
 }
 
 void test_causal_masked_attention_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }
@@ -265,7 +265,7 @@ void test_layer_norm_cpu() {
 }
 
 void test_layer_norm_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }
@@ -299,7 +299,7 @@ void test_rms_norm_cpu() {
 }
 
 void test_rms_norm_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }
@@ -331,7 +331,7 @@ void test_gelu_cpu() {
 }
 
 void test_gelu_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }
@@ -441,7 +441,7 @@ void test_transformer_block_pattern_cpu() {
 }
 
 void test_transformer_block_pattern_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }

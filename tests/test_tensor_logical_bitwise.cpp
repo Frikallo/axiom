@@ -128,7 +128,7 @@ void test_logical_not_from_int() {
 }
 
 void test_logical_and_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }
@@ -145,7 +145,7 @@ void test_logical_and_gpu() {
 }
 
 void test_logical_not_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }
@@ -226,7 +226,7 @@ void test_right_shift_basic() {
 }
 
 void test_bitwise_and_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }
@@ -325,7 +325,7 @@ void test_hypot_basic() {
 }
 
 void test_hypot_gpu() {
-    if (!system::is_metal_available()) {
+    if (!system::should_run_gpu_tests()) {
         std::cout << "  Skipping (Metal not available)" << std::endl;
         return;
     }

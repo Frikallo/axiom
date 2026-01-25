@@ -196,6 +196,11 @@ void test_rms_norm_2d() {
 // ============================================================================
 
 void test_layer_norm_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+    
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
     auto t = Tensor::from_data(data.data(), {4}).gpu();
     auto weight = Tensor::ones({4}).gpu();
@@ -214,6 +219,11 @@ void test_layer_norm_gpu() {
 }
 
 void test_rms_norm_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+    
     std::vector<float> data = {3.0f, 4.0f};
     auto t = Tensor::from_data(data.data(), {2}).gpu();
     auto weight = Tensor::ones({2}).gpu();

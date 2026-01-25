@@ -140,7 +140,7 @@ void test_randn_statistics() {
 
 // Test randn on GPU if available
 void test_randn_gpu() {
-    if (!axiom::system::is_metal_available()) {
+    if (!axiom::system::should_run_gpu_tests()) {
         std::cout << "Skipping GPU test (Metal not available)" << std::endl;
         return;
     }

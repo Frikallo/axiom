@@ -174,8 +174,8 @@ bool tensors_equal(const Tensor &cpu, const Tensor &gpu,
 // ==================================
 
 void test_add_parity() {
-    if (!system::is_metal_available()) {
-        std::cout << "  Skipping (Metal not available)" << std::endl;
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
         return;
     }
 
@@ -189,7 +189,7 @@ void test_add_parity() {
 }
 
 void test_subtract_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -202,7 +202,7 @@ void test_subtract_parity() {
 }
 
 void test_multiply_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -215,7 +215,7 @@ void test_multiply_parity() {
 }
 
 void test_divide_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -230,7 +230,7 @@ void test_divide_parity() {
 }
 
 void test_maximum_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -243,7 +243,7 @@ void test_maximum_parity() {
 }
 
 void test_minimum_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -256,7 +256,7 @@ void test_minimum_parity() {
 }
 
 void test_hypot_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -275,7 +275,7 @@ void test_hypot_parity() {
 // ==================================
 
 void test_equal_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -288,7 +288,7 @@ void test_equal_parity() {
 }
 
 void test_less_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -301,7 +301,7 @@ void test_less_parity() {
 }
 
 void test_greater_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -320,7 +320,7 @@ void test_greater_parity() {
 // ==================================
 
 void test_logical_and_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -333,7 +333,7 @@ void test_logical_and_parity() {
 }
 
 void test_logical_or_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -346,7 +346,7 @@ void test_logical_or_parity() {
 }
 
 void test_logical_not_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -364,7 +364,7 @@ void test_logical_not_parity() {
 // ==================================
 
 void test_negate_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -376,7 +376,7 @@ void test_negate_parity() {
 }
 
 void test_abs_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -388,7 +388,7 @@ void test_abs_parity() {
 }
 
 void test_sqrt_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     // Use positive values for sqrt
@@ -402,7 +402,7 @@ void test_sqrt_parity() {
 }
 
 void test_exp_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     // Use small values to avoid overflow
@@ -416,7 +416,7 @@ void test_exp_parity() {
 }
 
 void test_log_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     // Use positive values for log
@@ -430,7 +430,7 @@ void test_log_parity() {
 }
 
 void test_sin_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -442,7 +442,7 @@ void test_sin_parity() {
 }
 
 void test_cos_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -460,7 +460,7 @@ void test_cos_parity() {
 // ==================================
 
 void test_sum_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5, 3}, DType::Float32, Device::CPU);
@@ -485,7 +485,7 @@ void test_sum_parity() {
 }
 
 void test_mean_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5, 3}, DType::Float32, Device::CPU);
@@ -497,7 +497,7 @@ void test_mean_parity() {
 }
 
 void test_max_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5, 3}, DType::Float32, Device::CPU);
@@ -509,7 +509,7 @@ void test_max_parity() {
 }
 
 void test_min_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5, 3}, DType::Float32, Device::CPU);
@@ -521,7 +521,7 @@ void test_min_parity() {
 }
 
 void test_argmax_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -533,7 +533,7 @@ void test_argmax_parity() {
 }
 
 void test_argmin_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -551,7 +551,7 @@ void test_argmin_parity() {
 // ==================================
 
 void test_matmul_2d_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -565,7 +565,7 @@ void test_matmul_2d_parity() {
 }
 
 void test_matmul_batched_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({2, 4, 5}, DType::Float32, Device::CPU);
@@ -585,7 +585,7 @@ void test_matmul_batched_parity() {
 // ==================================
 
 void test_where_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -601,7 +601,7 @@ void test_where_parity() {
 }
 
 void test_softmax_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -614,7 +614,7 @@ void test_softmax_parity() {
 }
 
 void test_gather_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto input = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -630,7 +630,7 @@ void test_gather_parity() {
 }
 
 void test_index_select_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto input = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -650,7 +650,7 @@ void test_index_select_parity() {
 // ==================================
 
 void test_broadcast_add_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5, 3}, DType::Float32, Device::CPU);
@@ -664,7 +664,7 @@ void test_broadcast_add_parity() {
 }
 
 void test_broadcast_multiply_parity() {
-    if (!system::is_metal_available())
+    if (!system::should_run_gpu_tests())
         return;
 
     auto a = Tensor::randn({4, 5}, DType::Float32, Device::CPU);
@@ -688,8 +688,8 @@ int main() {
 
     std::cout << "=== CPU/GPU Parity Tests ===" << std::endl << std::endl;
 
-    if (!system::is_metal_available()) {
-        std::cout << "Metal is not available, skipping GPU tests" << std::endl;
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "GPU tests disabled or Metal not available, skipping" << std::endl;
         return 0;
     }
 

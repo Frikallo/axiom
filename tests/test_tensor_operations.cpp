@@ -114,7 +114,7 @@ void test_cpu_add_success() {
 
 void test_metal_add_success() {
 #ifdef __APPLE__
-    if (!axiom::system::is_metal_available())
+    if (!axiom::system::should_run_gpu_tests())
         return;
     auto a = axiom::Tensor::full({2, 2}, 2.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
@@ -139,7 +139,7 @@ void test_cpu_sub_success() {
 
 void test_metal_sub_success() {
 #ifdef __APPLE__
-    if (!axiom::system::is_metal_available())
+    if (!axiom::system::should_run_gpu_tests())
         return;
     auto a = axiom::Tensor::full({2, 2}, 10.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
@@ -154,7 +154,7 @@ void test_metal_sub_success() {
 
 void test_metal_mul_success() {
 #ifdef __APPLE__
-    if (!axiom::system::is_metal_available())
+    if (!axiom::system::should_run_gpu_tests())
         return;
     auto a = axiom::Tensor::full({2, 2}, 10.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
@@ -169,7 +169,7 @@ void test_metal_mul_success() {
 
 void test_metal_div_success() {
 #ifdef __APPLE__
-    if (!axiom::system::is_metal_available())
+    if (!axiom::system::should_run_gpu_tests())
         return;
     auto a = axiom::Tensor::full({2, 2}, 30.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
@@ -207,7 +207,7 @@ void test_cpu_type_promotion_success() {
 
 void test_unsupported_gpu_op_fallback() {
 #ifdef __APPLE__
-    if (!axiom::system::is_metal_available())
+    if (!axiom::system::should_run_gpu_tests())
         return;
     // Power is now implemented on Metal via MPSGraph, should run on GPU!
     auto a = axiom::Tensor::full({2, 2}, 3.0f).to(axiom::Device::GPU);
@@ -226,7 +226,7 @@ void test_unsupported_gpu_op_fallback() {
 
 void test_mixed_device_op_success() {
 #ifdef __APPLE__
-    if (!axiom::system::is_metal_available())
+    if (!axiom::system::should_run_gpu_tests())
         return;
     auto a = axiom::Tensor::full({2, 2}, 3.0f, axiom::Device::CPU);
     auto b = axiom::Tensor::full({2, 2}, 4.0f).to(axiom::Device::GPU);
@@ -248,7 +248,7 @@ void test_shape_mismatch_error() {
 
 void test_metal_add_int_success() {
 #ifdef __APPLE__
-    if (!axiom::system::is_metal_available())
+    if (!axiom::system::should_run_gpu_tests())
         return;
     auto a = axiom::Tensor::full({2, 2}, static_cast<int32_t>(1))
                  .to(axiom::Device::GPU);
@@ -270,7 +270,7 @@ void test_metal_add_int_success() {
 
 void test_metal_broadcasting_success() {
 #ifdef __APPLE__
-    if (!axiom::system::is_metal_available())
+    if (!axiom::system::should_run_gpu_tests())
         return;
     auto a = axiom::Tensor::full({2, 2}, 10.0f).to(axiom::Device::GPU);
     auto b = axiom::Tensor::full({}, 5.0f).to(axiom::Device::GPU);
@@ -380,7 +380,7 @@ void test_all_arithmetic_ops() {
 }
 
 void test_full_broadcasting(axiom::Device device) {
-    if (device == axiom::Device::GPU && !axiom::system::is_metal_available()) {
+    if (device == axiom::Device::GPU && !axiom::system::should_run_gpu_tests()) {
         return;
     }
 

@@ -49,13 +49,9 @@ void run_test(const std::function<void()> &test_func,
 // ==================================
 
 bool is_gpu_available() {
-    // A simple check. In a real scenario, this might involve
-    // more robust checking of Metal availability.
-#ifdef __APPLE__
-    return true;
-#else
-    return false;
-#endif
+    // Use the system function which checks both Metal availability
+    // and the AXIOM_SKIP_GPU_TESTS environment variable
+    return axiom::system::should_run_gpu_tests();
 }
 
 // ==================================

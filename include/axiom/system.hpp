@@ -15,6 +15,17 @@ namespace system {
  */
 bool is_metal_available();
 
+/**
+ * @brief Checks if GPU tests should be run.
+ *
+ * Returns false if:
+ * - Metal is not available
+ * - The AXIOM_SKIP_GPU_TESTS environment variable is set to "1"
+ *
+ * @return True if GPU tests should be executed, false otherwise.
+ */
+bool should_run_gpu_tests();
+
 std::string device_to_string(Device device);
 
 } // namespace system

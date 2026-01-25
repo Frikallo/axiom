@@ -180,6 +180,11 @@ void test_scatter_2d_dim0() {
 // ============================================================================
 
 void test_gather_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+    
     std::vector<float> x_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
     auto x = Tensor::from_data(x_data.data(), {5}).gpu();
 
@@ -193,6 +198,11 @@ void test_gather_gpu() {
 }
 
 void test_index_select_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+    
     std::vector<float> x_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
     auto x = Tensor::from_data(x_data.data(), {3, 2}).gpu();
 
@@ -206,6 +216,11 @@ void test_index_select_gpu() {
 }
 
 void test_scatter_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+    
     auto x = Tensor::zeros({5}).gpu();
 
     std::vector<int64_t> indices_data = {0, 2, 4};

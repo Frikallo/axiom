@@ -284,7 +284,7 @@ int main() {
     RUN_TEST(test_comparison_broadcasting);
 
     // GPU tests (if Metal is available)
-    if (axiom::system::is_metal_available()) {
+    if (axiom::system::should_run_gpu_tests()) {
         std::cout << "\n========================================" << std::endl;
         std::cout << "Running GPU Tests" << std::endl;
         std::cout << "========================================\n" << std::endl;

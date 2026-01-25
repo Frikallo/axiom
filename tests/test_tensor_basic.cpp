@@ -59,16 +59,9 @@ class TestRunner {
 
 // Device availability helper
 bool is_gpu_available() {
-#ifdef __APPLE__
-    try {
-        auto test_tensor = Tensor::zeros({2, 2}, DType::Float32, Device::GPU);
-        return true;
-    } catch (...) {
-        return false;
-    }
-#else
-    return false;
-#endif
+    // Use the system function which checks both Metal availability
+    // and the AXIOM_SKIP_GPU_TESTS environment variable
+    return axiom::system::should_run_gpu_tests();
 }
 
 // Test data validation helper

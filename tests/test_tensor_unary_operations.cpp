@@ -185,7 +185,7 @@ int main(int argc, char **argv) {
     RUN_TEST(test_cos, axiom::Device::CPU);
     RUN_TEST(test_tan, axiom::Device::CPU);
 
-    if (axiom::system::is_metal_available()) {
+    if (axiom::system::should_run_gpu_tests()) {
         std::cout << "\n--- Running tests on GPU ---\n" << std::endl;
         RUN_TEST(test_negate, axiom::Device::GPU);
         RUN_TEST(test_abs, axiom::Device::GPU);

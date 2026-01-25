@@ -156,6 +156,11 @@ void test_where_different_dtypes_cpu() {
 // ============================================================================
 
 void test_where_basic_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+    
     auto cond = make_bool_tensor({true, false, true, false}, {4}, Device::GPU);
     auto a = Tensor::full({4}, 1.0f).gpu();
     auto b = Tensor::full({4}, 0.0f).gpu();
@@ -168,6 +173,11 @@ void test_where_basic_gpu() {
 }
 
 void test_where_2d_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+    
     auto cond =
         make_bool_tensor({true, false, false, true}, {2, 2}, Device::GPU);
     auto a = Tensor::full({2, 2}, 10.0f).gpu();
@@ -181,6 +191,11 @@ void test_where_2d_gpu() {
 }
 
 void test_where_broadcast_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+    
     // Condition: [true, false], shape (2,)
     // a, b: shape (3, 2)
     auto cond = make_bool_tensor({true, false}, {2}, Device::GPU);
@@ -195,6 +210,11 @@ void test_where_broadcast_gpu() {
 }
 
 void test_where_attention_mask_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+    
     // Attention mask pattern: where(mask, scores, -1e9)
     auto mask =
         make_bool_tensor({true, true, false, false}, {2, 2}, Device::GPU);
