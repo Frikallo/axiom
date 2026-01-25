@@ -21,10 +21,10 @@ namespace ops {
 // Operations allowed for complex types
 static const std::set<OpType> complex_allowed_ops = {
     OpType::Add,    OpType::Subtract, OpType::Multiply, OpType::Divide,
-    OpType::Negate, OpType::Exp,      OpType::Log,      OpType::Sqrt,
-    OpType::Sin,    OpType::Cos,      OpType::Tan,      OpType::Sum,
-    OpType::Mean,   OpType::MatMul,   OpType::Conj,     OpType::Real,
-    OpType::Imag};
+    OpType::Negate, OpType::Abs,      OpType::Exp,      OpType::Log,
+    OpType::Sqrt,   OpType::Sin,      OpType::Cos,      OpType::Tan,
+    OpType::Sum,    OpType::Mean,     OpType::MatMul,   OpType::Conj,
+    OpType::Real,   OpType::Imag,     OpType::Where};
 
 static std::string op_type_name(OpType op) {
     switch (op) {
@@ -417,10 +417,121 @@ void Operation::execute_binary_inplace(Tensor &lhs, const Tensor &rhs) const {
 }
 
 // ============================================================================
+// Helper function for complex unary operations
+// ============================================================================
+static Tensor execute_complex_unary(OpType op_type, const Tensor &input) {
+    // Complex unary ops: Negate, Abs, Sqrt, Exp, Log, Sin, Cos, Tan, Conj
+    Tensor input_cpu = input.cpu();
+    DType dtype = input.dtype();
+
+    // Abs returns real type
+    if (op_type == OpType::Abs) {
+        DType result_dtype =
+            (dtype == DType::Complex64) ? DType::Float32 : DType::Float64;
+        Tensor result(input.shape(), result_dtype, Device::CPU);
+
+        if (dtype == DType::Complex64) {
+            const complex64_t *in = input_cpu.typed_data<complex64_t>();
+            float *out = result.typed_data<float>();
+            for (size_t i = 0; i < input.size(); ++i)
+                out[i] = std::abs(in[i]);
+        } else {
+            const complex128_t *in = input_cpu.typed_data<complex128_t>();
+            double *out = result.typed_data<double>();
+            for (size_t i = 0; i < input.size(); ++i)
+                out[i] = std::abs(in[i]);
+        }
+        return result;
+    }
+
+    // All other ops return complex
+    Tensor result(input.shape(), dtype, Device::CPU);
+
+    if (dtype == DType::Complex64) {
+        const complex64_t *in = input_cpu.typed_data<complex64_t>();
+        complex64_t *out = result.typed_data<complex64_t>();
+
+        for (size_t i = 0; i < input.size(); ++i) {
+            switch (op_type) {
+            case OpType::Negate:
+                out[i] = -in[i];
+                break;
+            case OpType::Sqrt:
+                out[i] = std::sqrt(in[i]);
+                break;
+            case OpType::Exp:
+                out[i] = std::exp(in[i]);
+                break;
+            case OpType::Log:
+                out[i] = std::log(in[i]);
+                break;
+            case OpType::Sin:
+                out[i] = std::sin(in[i]);
+                break;
+            case OpType::Cos:
+                out[i] = std::cos(in[i]);
+                break;
+            case OpType::Tan:
+                out[i] = std::tan(in[i]);
+                break;
+            case OpType::Conj:
+                out[i] = std::conj(in[i]);
+                break;
+            default:
+                throw TypeError("Unary operation " + op_type_name(op_type) +
+                                " not supported for complex types");
+            }
+        }
+    } else { // Complex128
+        const complex128_t *in = input_cpu.typed_data<complex128_t>();
+        complex128_t *out = result.typed_data<complex128_t>();
+
+        for (size_t i = 0; i < input.size(); ++i) {
+            switch (op_type) {
+            case OpType::Negate:
+                out[i] = -in[i];
+                break;
+            case OpType::Sqrt:
+                out[i] = std::sqrt(in[i]);
+                break;
+            case OpType::Exp:
+                out[i] = std::exp(in[i]);
+                break;
+            case OpType::Log:
+                out[i] = std::log(in[i]);
+                break;
+            case OpType::Sin:
+                out[i] = std::sin(in[i]);
+                break;
+            case OpType::Cos:
+                out[i] = std::cos(in[i]);
+                break;
+            case OpType::Tan:
+                out[i] = std::tan(in[i]);
+                break;
+            case OpType::Conj:
+                out[i] = std::conj(in[i]);
+                break;
+            default:
+                throw TypeError("Unary operation " + op_type_name(op_type) +
+                                " not supported for complex types");
+            }
+        }
+    }
+
+    return result;
+}
+
 // Helper function for executing unary operations
 // ============================================================================
 
 static Tensor execute_unary_operation(OpType op_type, const Tensor &input) {
+    // Handle complex types directly
+    if (is_complex_dtype(input.dtype())) {
+        assert_complex_legal(op_type, input.dtype());
+        return execute_complex_unary(op_type, input);
+    }
+
     Device target_device = input.device();
 
     const Operation *op =
@@ -431,7 +542,181 @@ static Tensor execute_unary_operation(OpType op_type, const Tensor &input) {
                           axiom::system::device_to_string(target_device));
     }
 
-    return op->execute_unary(input);
+    // Move tensor to target device if needed
+    Tensor input_target =
+        (input.device() == target_device) ? input : input.to(target_device);
+
+    return op->execute_unary(input_target);
+}
+
+// ============================================================================
+// Helper for complex reductions (Sum and Mean only)
+// ============================================================================
+static Tensor execute_complex_reduction(OpType op_type, const Tensor &input,
+                                        const std::vector<int> &axes,
+                                        bool keep_dims) {
+    // Only Sum and Mean are valid for complex types
+    if (op_type != OpType::Sum && op_type != OpType::Mean) {
+        throw TypeError("Reduction '" + op_type_name(op_type) +
+                        "' not supported for complex types (no total ordering)");
+    }
+
+    Tensor input_cpu = input.cpu();
+    std::vector<int> norm_axes = axes;
+    if (norm_axes.empty()) {
+        for (size_t i = 0; i < input.ndim(); ++i)
+            norm_axes.push_back(static_cast<int>(i));
+    }
+
+    // Normalize negative axes
+    for (int &ax : norm_axes) {
+        if (ax < 0)
+            ax += static_cast<int>(input.ndim());
+    }
+
+    // Calculate result shape
+    Shape result_shape;
+    for (size_t i = 0; i < input.shape().size(); ++i) {
+        bool is_reduced = false;
+        for (int ax : norm_axes) {
+            if (i == static_cast<size_t>(ax)) {
+                is_reduced = true;
+                break;
+            }
+        }
+        if (is_reduced) {
+            if (keep_dims)
+                result_shape.push_back(1);
+        } else {
+            result_shape.push_back(input.shape()[i]);
+        }
+    }
+    if (result_shape.empty())
+        result_shape.push_back(1);
+
+    DType dtype = input.dtype();
+    Tensor result(result_shape, dtype, Device::CPU);
+
+    size_t reduction_size = 1;
+    for (int ax : norm_axes) {
+        reduction_size *= input.shape()[ax];
+    }
+
+    if (dtype == DType::Complex64) {
+        complex64_t *out = result.typed_data<complex64_t>();
+        // Initialize to zero
+        for (size_t i = 0; i < result.size(); ++i)
+            out[i] = complex64_t(0, 0);
+
+        // Simple full reduction case
+        if (norm_axes.size() == input.ndim()) {
+            complex64_t sum(0, 0);
+            std::vector<size_t> coords(input.ndim(), 0);
+            for (size_t i = 0; i < input.size(); ++i) {
+                sum += input_cpu.item<complex64_t>(coords);
+                for (int j = input.ndim() - 1; j >= 0; --j) {
+                    if (++coords[j] < input.shape()[j])
+                        break;
+                    coords[j] = 0;
+                }
+            }
+            if (op_type == OpType::Mean)
+                sum /= static_cast<float>(input.size());
+            out[0] = sum;
+        } else {
+            // Partial reduction - iterate over output positions
+            std::vector<size_t> out_coords(result_shape.size(), 0);
+            for (size_t out_i = 0; out_i < result.size(); ++out_i) {
+                complex64_t sum(0, 0);
+                // For each output position, sum over reduction dims
+                std::vector<size_t> in_coords(input.ndim(), 0);
+                size_t out_dim_idx = 0;
+                for (size_t d = 0; d < input.ndim(); ++d) {
+                    bool is_reduced = false;
+                    for (int ax : norm_axes)
+                        if (d == static_cast<size_t>(ax))
+                            is_reduced = true;
+                    if (!is_reduced) {
+                        in_coords[d] = out_coords[out_dim_idx++];
+                    }
+                }
+                // Sum over all combinations of reduction dimensions
+                for (size_t r = 0; r < reduction_size; ++r) {
+                    sum += input_cpu.item<complex64_t>(in_coords);
+                    // Increment reduction coordinates
+                    for (int ax_i = norm_axes.size() - 1; ax_i >= 0; --ax_i) {
+                        size_t d = norm_axes[ax_i];
+                        if (++in_coords[d] < input.shape()[d])
+                            break;
+                        in_coords[d] = 0;
+                    }
+                }
+                if (op_type == OpType::Mean)
+                    sum /= static_cast<float>(reduction_size);
+                out[out_i] = sum;
+                // Increment output coordinates
+                for (int j = result_shape.size() - 1; j >= 0; --j) {
+                    if (++out_coords[j] < result_shape[j])
+                        break;
+                    out_coords[j] = 0;
+                }
+            }
+        }
+    } else { // Complex128
+        complex128_t *out = result.typed_data<complex128_t>();
+        for (size_t i = 0; i < result.size(); ++i)
+            out[i] = complex128_t(0, 0);
+
+        if (norm_axes.size() == input.ndim()) {
+            complex128_t sum(0, 0);
+            std::vector<size_t> coords(input.ndim(), 0);
+            for (size_t i = 0; i < input.size(); ++i) {
+                sum += input_cpu.item<complex128_t>(coords);
+                for (int j = input.ndim() - 1; j >= 0; --j) {
+                    if (++coords[j] < input.shape()[j])
+                        break;
+                    coords[j] = 0;
+                }
+            }
+            if (op_type == OpType::Mean)
+                sum /= static_cast<double>(input.size());
+            out[0] = sum;
+        } else {
+            std::vector<size_t> out_coords(result_shape.size(), 0);
+            for (size_t out_i = 0; out_i < result.size(); ++out_i) {
+                complex128_t sum(0, 0);
+                std::vector<size_t> in_coords(input.ndim(), 0);
+                size_t out_dim_idx = 0;
+                for (size_t d = 0; d < input.ndim(); ++d) {
+                    bool is_reduced = false;
+                    for (int ax : norm_axes)
+                        if (d == static_cast<size_t>(ax))
+                            is_reduced = true;
+                    if (!is_reduced)
+                        in_coords[d] = out_coords[out_dim_idx++];
+                }
+                for (size_t r = 0; r < reduction_size; ++r) {
+                    sum += input_cpu.item<complex128_t>(in_coords);
+                    for (int ax_i = norm_axes.size() - 1; ax_i >= 0; --ax_i) {
+                        size_t d = norm_axes[ax_i];
+                        if (++in_coords[d] < input.shape()[d])
+                            break;
+                        in_coords[d] = 0;
+                    }
+                }
+                if (op_type == OpType::Mean)
+                    sum /= static_cast<double>(reduction_size);
+                out[out_i] = sum;
+                for (int j = result_shape.size() - 1; j >= 0; --j) {
+                    if (++out_coords[j] < result_shape[j])
+                        break;
+                    out_coords[j] = 0;
+                }
+            }
+        }
+    }
+
+    return result;
 }
 
 // ============================================================================
@@ -440,6 +725,12 @@ static Tensor execute_unary_operation(OpType op_type, const Tensor &input) {
 static Tensor execute_reduction_operation(OpType op_type, const Tensor &input,
                                           const std::vector<int> &axis,
                                           bool keep_dims) {
+    // Handle complex types directly
+    if (is_complex_dtype(input.dtype())) {
+        assert_complex_legal(op_type, input.dtype());
+        return execute_complex_reduction(op_type, input, axis, keep_dims);
+    }
+
     Device target_device = input.device();
 
     const auto *op = OperationRegistry::get_operation(op_type, target_device);
@@ -448,7 +739,11 @@ static Tensor execute_reduction_operation(OpType op_type, const Tensor &input,
                           axiom::system::device_to_string(target_device));
     }
 
-    return op->execute_reduction(input, axis, keep_dims);
+    // Move tensor to target device if needed
+    Tensor input_target =
+        (input.device() == target_device) ? input : input.to(target_device);
+
+    return op->execute_reduction(input_target, axis, keep_dims);
 }
 
 // ============================================================================
@@ -460,6 +755,12 @@ static Tensor execute_matmul_operation(const Tensor &a, const Tensor &b,
     Device target_device =
         (a.device() == Device::GPU || b.device() == Device::GPU) ? Device::GPU
                                                                  : Device::CPU;
+
+    // Force CPU for complex types (GPU complex support is limited/unstable)
+    DType promoted_dtype = promote_types(a.dtype(), b.dtype());
+    if (is_complex_dtype(promoted_dtype)) {
+        target_device = Device::CPU;
+    }
 
     const Operation *op =
         OperationRegistry::get_operation(OpType::MatMul, target_device);
@@ -485,6 +786,136 @@ static Tensor execute_matmul_operation(const Tensor &a, const Tensor &b,
 // Helper function for executing binary operations
 // ============================================================================
 
+// Helper for complex binary arithmetic
+static Tensor execute_complex_binary(OpType op_type, const Tensor &lhs,
+                                     const Tensor &rhs) {
+    auto broadcast_info = compute_broadcast_info(lhs.shape(), rhs.shape());
+    DType result_dtype = result_type(lhs, rhs);
+
+    Tensor lhs_cpu = lhs.cpu().astype(result_dtype);
+    Tensor rhs_cpu = rhs.cpu().astype(result_dtype);
+    Tensor result(broadcast_info.result_shape, result_dtype, Device::CPU);
+
+    size_t total = ShapeUtils::size(broadcast_info.result_shape);
+
+    if (result_dtype == DType::Complex64) {
+        const complex64_t *l = lhs_cpu.typed_data<complex64_t>();
+        const complex64_t *r = rhs_cpu.typed_data<complex64_t>();
+        complex64_t *out = result.typed_data<complex64_t>();
+
+        // Simple case: same shape, contiguous
+        if (lhs_cpu.shape() == rhs_cpu.shape() &&
+            lhs_cpu.is_contiguous() && rhs_cpu.is_contiguous()) {
+            for (size_t i = 0; i < total; ++i) {
+                switch (op_type) {
+                case OpType::Add:
+                    out[i] = l[i] + r[i];
+                    break;
+                case OpType::Subtract:
+                    out[i] = l[i] - r[i];
+                    break;
+                case OpType::Multiply:
+                    out[i] = l[i] * r[i];
+                    break;
+                case OpType::Divide:
+                    out[i] = l[i] / r[i];
+                    break;
+                default:
+                    throw TypeError("Operation " + op_type_name(op_type) +
+                                    " not supported for complex types");
+                }
+            }
+        } else {
+            // Broadcasting case - use item() for proper indexing
+            std::vector<size_t> coords(broadcast_info.result_shape.size(), 0);
+            for (size_t i = 0; i < total; ++i) {
+                complex64_t lv = lhs_cpu.item<complex64_t>(coords);
+                complex64_t rv = rhs_cpu.item<complex64_t>(coords);
+                switch (op_type) {
+                case OpType::Add:
+                    out[i] = lv + rv;
+                    break;
+                case OpType::Subtract:
+                    out[i] = lv - rv;
+                    break;
+                case OpType::Multiply:
+                    out[i] = lv * rv;
+                    break;
+                case OpType::Divide:
+                    out[i] = lv / rv;
+                    break;
+                default:
+                    throw TypeError("Operation " + op_type_name(op_type) +
+                                    " not supported for complex types");
+                }
+                // Increment coordinates
+                for (int j = coords.size() - 1; j >= 0; --j) {
+                    if (++coords[j] < broadcast_info.result_shape[j])
+                        break;
+                    coords[j] = 0;
+                }
+            }
+        }
+    } else { // Complex128
+        const complex128_t *l = lhs_cpu.typed_data<complex128_t>();
+        const complex128_t *r = rhs_cpu.typed_data<complex128_t>();
+        complex128_t *out = result.typed_data<complex128_t>();
+
+        if (lhs_cpu.shape() == rhs_cpu.shape() &&
+            lhs_cpu.is_contiguous() && rhs_cpu.is_contiguous()) {
+            for (size_t i = 0; i < total; ++i) {
+                switch (op_type) {
+                case OpType::Add:
+                    out[i] = l[i] + r[i];
+                    break;
+                case OpType::Subtract:
+                    out[i] = l[i] - r[i];
+                    break;
+                case OpType::Multiply:
+                    out[i] = l[i] * r[i];
+                    break;
+                case OpType::Divide:
+                    out[i] = l[i] / r[i];
+                    break;
+                default:
+                    throw TypeError("Operation " + op_type_name(op_type) +
+                                    " not supported for complex types");
+                }
+            }
+        } else {
+            std::vector<size_t> coords(broadcast_info.result_shape.size(), 0);
+            for (size_t i = 0; i < total; ++i) {
+                complex128_t lv = lhs_cpu.item<complex128_t>(coords);
+                complex128_t rv = rhs_cpu.item<complex128_t>(coords);
+                switch (op_type) {
+                case OpType::Add:
+                    out[i] = lv + rv;
+                    break;
+                case OpType::Subtract:
+                    out[i] = lv - rv;
+                    break;
+                case OpType::Multiply:
+                    out[i] = lv * rv;
+                    break;
+                case OpType::Divide:
+                    out[i] = lv / rv;
+                    break;
+                default:
+                    throw TypeError("Operation " + op_type_name(op_type) +
+                                    " not supported for complex types");
+                }
+                for (int j = coords.size() - 1; j >= 0; --j) {
+                    if (++coords[j] < broadcast_info.result_shape[j])
+                        break;
+                    coords[j] = 0;
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
 static Tensor execute_binary_operation(OpType op_type, const Tensor &lhs,
                                        const Tensor &rhs) {
     // Check if tensors are broadcastable
@@ -492,6 +923,13 @@ static Tensor execute_binary_operation(OpType op_type, const Tensor &lhs,
         throw ShapeError::broadcast_incompatible(
             "shapes " + vec_to_string(lhs.shape()) + " and " +
             vec_to_string(rhs.shape()));
+    }
+
+    // Check for complex types - handle directly
+    DType promoted_dtype = promote_types(lhs.dtype(), rhs.dtype());
+    if (is_complex_dtype(promoted_dtype)) {
+        assert_complex_legal(op_type, promoted_dtype);
+        return execute_complex_binary(op_type, lhs, rhs);
     }
 
     // Determine the target device (prefer GPU if available)
@@ -592,24 +1030,52 @@ Tensor logical_xor(const Tensor &lhs, const Tensor &rhs) {
     return execute_binary_operation(OpType::LogicalXor, lhs, rhs);
 }
 
-// Bitwise operations
+Tensor logical_not(const Tensor &input) {
+    return execute_unary_operation(OpType::LogicalNot, input);
+}
+
+// Bitwise operations - require integer types
+static void assert_bitwise_types(const Tensor &lhs, const Tensor &rhs,
+                                  const std::string &op_name) {
+    auto check_integral = [&](DType dtype) {
+        return dtype == DType::Int8 || dtype == DType::Int16 ||
+               dtype == DType::Int32 || dtype == DType::Int64 ||
+               dtype == DType::UInt8 || dtype == DType::UInt16 ||
+               dtype == DType::UInt32 || dtype == DType::UInt64 ||
+               dtype == DType::Bool;
+    };
+    if (!check_integral(lhs.dtype())) {
+        throw TypeError(op_name + " requires integer types, got " +
+                        dtype_name(lhs.dtype()));
+    }
+    if (!check_integral(rhs.dtype())) {
+        throw TypeError(op_name + " requires integer types, got " +
+                        dtype_name(rhs.dtype()));
+    }
+}
+
 Tensor bitwise_and(const Tensor &lhs, const Tensor &rhs) {
+    assert_bitwise_types(lhs, rhs, "bitwise_and");
     return execute_binary_operation(OpType::BitwiseAnd, lhs, rhs);
 }
 
 Tensor bitwise_or(const Tensor &lhs, const Tensor &rhs) {
+    assert_bitwise_types(lhs, rhs, "bitwise_or");
     return execute_binary_operation(OpType::BitwiseOr, lhs, rhs);
 }
 
 Tensor bitwise_xor(const Tensor &lhs, const Tensor &rhs) {
+    assert_bitwise_types(lhs, rhs, "bitwise_xor");
     return execute_binary_operation(OpType::BitwiseXor, lhs, rhs);
 }
 
 Tensor left_shift(const Tensor &lhs, const Tensor &rhs) {
+    assert_bitwise_types(lhs, rhs, "left_shift");
     return execute_binary_operation(OpType::LeftShift, lhs, rhs);
 }
 
 Tensor right_shift(const Tensor &lhs, const Tensor &rhs) {
+    assert_bitwise_types(lhs, rhs, "right_shift");
     return execute_binary_operation(OpType::RightShift, lhs, rhs);
 }
 

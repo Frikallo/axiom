@@ -220,6 +220,57 @@ void test_scatter_gpu() {
     assert_tensor_near<float>(result, {1.0f, 0.0f, 2.0f, 0.0f, 3.0f});
 }
 
+// ============================================================================
+// Negative Index Tests (PyTorch parity)
+// ============================================================================
+
+void test_gather_negative_indices() {
+    // Test that negative indices work like PyTorch
+    std::vector<float> x_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+    auto x = Tensor::from_data(x_data.data(), {5});
+
+    // -1 should mean index 4, -2 means index 3
+    std::vector<int64_t> indices_data = {-1, -2, 0};
+    auto indices = Tensor::from_data(indices_data.data(), {3});
+
+    auto result = x.gather(0, indices);
+
+    ASSERT(result.shape() == Shape({3}), "Shape mismatch");
+    assert_tensor_near<float>(result, {5.0f, 4.0f, 1.0f});
+}
+
+void test_index_select_negative_indices() {
+    std::vector<float> x_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    auto x = Tensor::from_data(x_data.data(), {3, 2});
+
+    // -1 should mean row 2, -3 means row 0
+    std::vector<int64_t> indices_data = {-1, -3};
+    auto indices = Tensor::from_data(indices_data.data(), {2});
+
+    auto result = x.index_select(0, indices);
+
+    ASSERT(result.shape() == Shape({2, 2}), "Shape mismatch");
+    // Row -1 (2) is [5, 6], Row -3 (0) is [1, 2]
+    assert_tensor_near<float>(result, {5.0f, 6.0f, 1.0f, 2.0f});
+}
+
+void test_scatter_negative_indices() {
+    auto x = Tensor::zeros({5});
+
+    // -1 means index 4, -3 means index 2
+    std::vector<int64_t> indices_data = {-1, -3, 0};
+    auto indices = Tensor::from_data(indices_data.data(), {3});
+
+    std::vector<float> src_data = {10.0f, 20.0f, 30.0f};
+    auto src = Tensor::from_data(src_data.data(), {3});
+
+    auto result = x.scatter(0, indices, src);
+
+    ASSERT(result.shape() == Shape({5}), "Shape mismatch");
+    // Position 0 gets 30, position 2 gets 20, position 4 gets 10
+    assert_tensor_near<float>(result, {30.0f, 0.0f, 20.0f, 0.0f, 10.0f});
+}
+
 int main() {
     ops::OperationRegistry::initialize_builtin_operations();
 
@@ -247,6 +298,12 @@ int main() {
     RUN_TEST(test_gather_gpu);
     RUN_TEST(test_index_select_gpu);
     RUN_TEST(test_scatter_gpu);
+
+    // Negative index tests
+    std::cout << "--- Negative Index Tests ---" << std::endl;
+    RUN_TEST(test_gather_negative_indices);
+    RUN_TEST(test_index_select_negative_indices);
+    RUN_TEST(test_scatter_negative_indices);
 
     std::cout << "=== Results ===" << std::endl;
     std::cout << "Passed: " << tests_passed << "/" << tests_run << std::endl;

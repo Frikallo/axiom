@@ -38,6 +38,21 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor &lhs,
         result_dtype = DType::Bool;
     }
 
+    // Check for bitwise operations - they only work on integer types
+    bool is_bitwise_op = (op_type_ == ops::OpType::BitwiseAnd ||
+                          op_type_ == ops::OpType::BitwiseOr ||
+                          op_type_ == ops::OpType::BitwiseXor ||
+                          op_type_ == ops::OpType::LeftShift ||
+                          op_type_ == ops::OpType::RightShift);
+    if (is_bitwise_op) {
+        if (result_dtype == DType::Float16 || result_dtype == DType::Float32 ||
+            result_dtype == DType::Float64 || result_dtype == DType::Complex64 ||
+            result_dtype == DType::Complex128) {
+            throw TypeError("Bitwise operations only support integer types, got " +
+                            dtype_name(result_dtype));
+        }
+    }
+
     // Create result tensor
     Tensor result(broadcast_info.result_shape, result_dtype, Device::CPU);
 
@@ -47,9 +62,19 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor &lhs,
         break;
 
     switch (result_dtype) {
-        DISPATCH_CPU_BINARY_OP(DType::Float32, float)
-        DISPATCH_CPU_BINARY_OP(DType::Float64, double)
-        DISPATCH_CPU_BINARY_OP(DType::Float16, float16_t)
+    case DType::Float32:
+    case DType::Float64:
+    case DType::Float16:
+        // Skip float types for bitwise ops - we throw above
+        if (!is_bitwise_op) {
+            if (result_dtype == DType::Float32)
+                execute_binary_typed<float>(lhs, rhs, result);
+            else if (result_dtype == DType::Float64)
+                execute_binary_typed<double>(lhs, rhs, result);
+            else
+                execute_binary_typed<float16_t>(lhs, rhs, result);
+        }
+        break;
         DISPATCH_CPU_BINARY_OP(DType::Int8, int8_t)
         DISPATCH_CPU_BINARY_OP(DType::Int16, int16_t)
         DISPATCH_CPU_BINARY_OP(DType::Int32, int32_t)
@@ -61,10 +86,12 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor &lhs,
     case DType::Bool:
         execute_binary_typed<bool>(lhs, rhs, result);
         break;
-    case DType::Complex64: // Fallthrough
+    case DType::Complex64:
     case DType::Complex128:
+        // Complex types are handled separately - only arithmetic ops are allowed
+        // The operation registry and operations.cpp should enforce this before we get here
         throw TypeError::unsupported_dtype(dtype_name(result_dtype),
-                                           "CPU binary operations");
+                                           "CPU binary operations (complex types require special handling)");
     default:
         throw TypeError::unsupported_dtype(dtype_name(result_dtype),
                                            "CPU binary operations");
@@ -330,6 +357,118 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(
 }
 
 // ============================================================================
+// CPU Complex Binary Operation Implementation
+// ============================================================================
+
+Tensor CPUComplexBinaryOperation::execute_binary(const Tensor &lhs,
+                                                  const Tensor &rhs) const {
+    if (lhs.device() != Device::CPU || rhs.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU complex binary operations");
+    }
+
+    auto broadcast_info = ops::compute_broadcast_info(lhs.shape(), rhs.shape());
+    DType result_dtype = ops::result_type(lhs, rhs);
+
+    if (!is_complex_dtype(result_dtype)) {
+        throw TypeError("CPUComplexBinaryOperation requires complex input types");
+    }
+
+    Tensor result(broadcast_info.result_shape, result_dtype, Device::CPU);
+
+    if (result_dtype == DType::Complex64) {
+        execute_complex_typed<complex64_t>(lhs, rhs, result);
+    } else {
+        execute_complex_typed<complex128_t>(lhs, rhs, result);
+    }
+
+    return result;
+}
+
+template <typename T>
+void CPUComplexBinaryOperation::execute_complex_typed(const Tensor &lhs,
+                                                       const Tensor &rhs,
+                                                       Tensor &result) const {
+    Tensor lhs_conv = lhs.astype(result.dtype());
+    Tensor rhs_conv = rhs.astype(result.dtype());
+
+    const T *lhs_data = lhs_conv.typed_data<T>();
+    const T *rhs_data = rhs_conv.typed_data<T>();
+    T *result_data = result.typed_data<T>();
+
+    auto broadcast_info = ops::compute_broadcast_info(lhs.shape(), rhs.shape());
+    const Shape &result_shape = broadcast_info.result_shape;
+    size_t total_elements = ShapeUtils::size(result_shape);
+    size_t ndim = result_shape.size();
+
+    // Prepare broadcasted strides
+    Strides lhs_bcast_strides(ndim, 0);
+    Strides rhs_bcast_strides(ndim, 0);
+
+    size_t lhs_dim_offset = ndim - lhs.shape().size();
+    for (size_t i = 0; i < lhs.shape().size(); ++i) {
+        if (lhs.shape()[i] != 1) {
+            lhs_bcast_strides[i + lhs_dim_offset] = lhs_conv.strides()[i];
+        }
+    }
+
+    size_t rhs_dim_offset = ndim - rhs.shape().size();
+    for (size_t i = 0; i < rhs.shape().size(); ++i) {
+        if (rhs.shape()[i] != 1) {
+            rhs_bcast_strides[i + rhs_dim_offset] = rhs_conv.strides()[i];
+        }
+    }
+
+    std::vector<size_t> result_coords(ndim, 0);
+
+    for (size_t i = 0; i < total_elements; ++i) {
+        size_t lhs_byte_offset = 0;
+        size_t rhs_byte_offset = 0;
+
+        for (size_t j = 0; j < ndim; ++j) {
+            lhs_byte_offset += result_coords[j] * lhs_bcast_strides[j];
+            rhs_byte_offset += result_coords[j] * rhs_bcast_strides[j];
+        }
+
+        const T &lhs_val = *reinterpret_cast<const T *>(
+            reinterpret_cast<const uint8_t *>(lhs_data) + lhs_byte_offset);
+        const T &rhs_val = *reinterpret_cast<const T *>(
+            reinterpret_cast<const uint8_t *>(rhs_data) + rhs_byte_offset);
+
+        // Apply operation based on op_type_
+        switch (op_type_) {
+        case ops::OpType::Add:
+            result_data[i] = lhs_val + rhs_val;
+            break;
+        case ops::OpType::Subtract:
+            result_data[i] = lhs_val - rhs_val;
+            break;
+        case ops::OpType::Multiply:
+            result_data[i] = lhs_val * rhs_val;
+            break;
+        case ops::OpType::Divide:
+            result_data[i] = lhs_val / rhs_val;
+            break;
+        default:
+            throw TypeError("Unsupported operation for complex types: " + name());
+        }
+
+        // Increment coordinates
+        for (int j = ndim - 1; j >= 0; --j) {
+            if (++result_coords[j] < result_shape[j]) {
+                break;
+            }
+            result_coords[j] = 0;
+        }
+    }
+}
+
+// Explicit template instantiations
+template void CPUComplexBinaryOperation::execute_complex_typed<complex64_t>(
+    const Tensor &, const Tensor &, Tensor &) const;
+template void CPUComplexBinaryOperation::execute_complex_typed<complex128_t>(
+    const Tensor &, const Tensor &, Tensor &) const;
+
+// ============================================================================
 // CPU Unary Operation Implementation
 // ============================================================================
 
@@ -339,11 +478,74 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
         throw DeviceError::cpu_only("CPU unary operations");
     }
 
-    // Unary ops usually return the same dtype as input, except for some
-    // functions which might promote it (e.g., if we had a function that always
-    // returns float)
+    // Check if this is an abs operation - complex abs returns real type
+    bool is_abs_op = (op_type_ == ops::OpType::Abs);
+    bool is_logical_not = (op_type_ == ops::OpType::LogicalNot);
+
+    // Unary ops usually return the same dtype as input, except:
+    // - abs on complex returns the corresponding real type
+    // - logical_not always returns Bool
     DType result_dtype = input.dtype();
+    if (is_abs_op && is_complex_dtype(input.dtype())) {
+        result_dtype =
+            (input.dtype() == DType::Complex64) ? DType::Float32 : DType::Float64;
+    }
+    if (is_logical_not) {
+        result_dtype = DType::Bool;
+    }
+
     Tensor result(input.shape(), result_dtype, Device::CPU);
+
+    // Special handling for logical_not - always outputs Bool
+    if (is_logical_not) {
+        bool *out_data = result.typed_data<bool>();
+        // Handle different input dtypes
+        switch (input.dtype()) {
+#define DISPATCH_LOGICAL_NOT(DTYPE, CTYPE)                                     \
+    case DTYPE: {                                                              \
+        const CTYPE *in_data = input.typed_data<CTYPE>();                      \
+        for (size_t i = 0; i < input.size(); ++i) {                            \
+            out_data[i] = !static_cast<bool>(in_data[i]);                      \
+        }                                                                      \
+        break;                                                                 \
+    }
+            DISPATCH_LOGICAL_NOT(DType::Bool, bool)
+            DISPATCH_LOGICAL_NOT(DType::Int8, int8_t)
+            DISPATCH_LOGICAL_NOT(DType::Int16, int16_t)
+            DISPATCH_LOGICAL_NOT(DType::Int32, int32_t)
+            DISPATCH_LOGICAL_NOT(DType::Int64, int64_t)
+            DISPATCH_LOGICAL_NOT(DType::UInt8, uint8_t)
+            DISPATCH_LOGICAL_NOT(DType::UInt16, uint16_t)
+            DISPATCH_LOGICAL_NOT(DType::UInt32, uint32_t)
+            DISPATCH_LOGICAL_NOT(DType::UInt64, uint64_t)
+            DISPATCH_LOGICAL_NOT(DType::Float16, float16_t)
+            DISPATCH_LOGICAL_NOT(DType::Float32, float)
+            DISPATCH_LOGICAL_NOT(DType::Float64, double)
+#undef DISPATCH_LOGICAL_NOT
+        default:
+            throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                               "logical_not");
+        }
+        return result;
+    }
+
+    // Special handling for complex abs - returns magnitude as float
+    if (is_abs_op && input.dtype() == DType::Complex64) {
+        const complex64_t *in_data = input.typed_data<complex64_t>();
+        float *out_data = result.typed_data<float>();
+        for (size_t i = 0; i < input.size(); ++i) {
+            out_data[i] = std::abs(in_data[i]);
+        }
+        return result;
+    }
+    if (is_abs_op && input.dtype() == DType::Complex128) {
+        const complex128_t *in_data = input.typed_data<complex128_t>();
+        double *out_data = result.typed_data<double>();
+        for (size_t i = 0; i < input.size(); ++i) {
+            out_data[i] = std::abs(in_data[i]);
+        }
+        return result;
+    }
 
 #define DISPATCH_CPU_UNARY_OP(TYPE_ENUM, TYPE)                                 \
     case TYPE_ENUM:                                                            \
@@ -363,10 +565,12 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
         DISPATCH_CPU_UNARY_OP(DType::UInt32, uint32_t)
         DISPATCH_CPU_UNARY_OP(DType::UInt64, uint64_t)
         DISPATCH_CPU_UNARY_OP(DType::Bool, bool)
-    case DType::Complex64: // Fallthrough
+    case DType::Complex64:
     case DType::Complex128:
+        // Complex unary operations should be handled at the higher level in operations.cpp
+        // except for abs which is already handled above
         throw TypeError::unsupported_dtype(dtype_name(result_dtype),
-                                           "CPU unary operations");
+                                           name() + " (use higher-level dispatch)");
     default:
         throw TypeError::unsupported_dtype(dtype_name(result_dtype),
                                            "CPU unary operations");
@@ -426,11 +630,49 @@ Tensor CPUReductionOperation<Func>::execute_reduction(
         throw DeviceError::cpu_only("CPU reduction operations");
     }
 
-    // For now, we only support float32 for reductions
-    // TODO: Support more types in the future
-    (void)input.dtype(); // Suppress unused warning until multi-type support
-
-    return execute_reduction_typed<float>(input, axis, keep_dims);
+    // Dispatch based on input dtype
+    switch (input.dtype()) {
+    case DType::Float16:
+        // Use Float32 accumulation for numerical stability, convert result back
+        return execute_reduction_typed<float16_t>(input, axis, keep_dims);
+    case DType::Float32:
+        return execute_reduction_typed<float>(input, axis, keep_dims);
+    case DType::Float64:
+        return execute_reduction_typed<double>(input, axis, keep_dims);
+    case DType::Int32:
+        return execute_reduction_typed<int32_t>(input, axis, keep_dims);
+    case DType::Int64:
+        return execute_reduction_typed<int64_t>(input, axis, keep_dims);
+    case DType::Int16:
+        return execute_reduction_typed<int16_t>(input, axis, keep_dims);
+    case DType::Int8:
+        return execute_reduction_typed<int8_t>(input, axis, keep_dims);
+    case DType::UInt8:
+        return execute_reduction_typed<uint8_t>(input, axis, keep_dims);
+    case DType::UInt16:
+        return execute_reduction_typed<uint16_t>(input, axis, keep_dims);
+    case DType::UInt32:
+        return execute_reduction_typed<uint32_t>(input, axis, keep_dims);
+    case DType::UInt64:
+        return execute_reduction_typed<uint64_t>(input, axis, keep_dims);
+    case DType::Bool:
+        return execute_reduction_typed<bool>(input, axis, keep_dims);
+    case DType::Complex64:
+    case DType::Complex128:
+        // Complex types only support Sum and Mean reductions
+        // Max, Min, Any, All, ArgMax, ArgMin don't have a total ordering on complex
+        if (op_type_ != ops::OpType::Sum && op_type_ != ops::OpType::Mean) {
+            throw TypeError("Reduction '" + name() +
+                            "' not supported for complex types (no total ordering)");
+        }
+        // Fall back to direct implementation instead of template
+        // This avoids template instantiation issues with SumFunc identity
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           name() + " (use higher-level reduction)");
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "CPU reduction operations");
+    }
 }
 
 template <typename Func>
@@ -490,17 +732,20 @@ template <typename Func>
 template <typename T>
 Tensor CPUReductionOperation<Func>::execute_reduction_typed(
     const Tensor &input, const std::vector<int> &axes, bool keep_dims) const {
-    // Only convert if necessary - avoid unnecessary copies
-    const Tensor &input_typed = (input.dtype() == DType::Float32)
-                                    ? input
-                                    : input.astype(DType::Float32);
+    // For Float16, use Float32 accumulation for numerical stability
+    constexpr bool use_float32_accum = std::is_same_v<T, float16_t>;
+    using AccumT = std::conditional_t<use_float32_accum, float, T>;
 
     Shape result_shape =
         calculate_reduction_shape(input.shape(), axes, keep_dims);
 
-    // Create result tensor initialized with identity value
-    Tensor result(result_shape, DType::Float32, Device::CPU);
-    result.fill(Func::template identity<T>());
+    // Create result tensor with the appropriate dtype
+    DType result_dtype = dtype_of_v<T>;
+    DType accum_dtype = dtype_of_v<AccumT>;
+
+    // For accumulation, use Float32 if needed
+    Tensor result(result_shape, accum_dtype, Device::CPU);
+    result.fill(Func::template identity<AccumT>());
 
     std::vector<int> norm_axes = axes;
     if (norm_axes.empty()) {
@@ -508,9 +753,17 @@ Tensor CPUReductionOperation<Func>::execute_reduction_typed(
             norm_axes.push_back(static_cast<int>(i));
     }
 
-    std::vector<size_t> current_coords(input.ndim(), 0);
-    reduction_recursive_helper<T>(input_typed, result, norm_axes,
-                                  current_coords, 0, func_, keep_dims);
+    // If using float32 accumulation for float16, we need to convert input
+    if constexpr (use_float32_accum) {
+        Tensor input_f32 = input.astype(DType::Float32);
+        std::vector<size_t> current_coords(input.ndim(), 0);
+        reduction_recursive_helper<AccumT>(input_f32, result, norm_axes,
+                                           current_coords, 0, func_, keep_dims);
+    } else {
+        std::vector<size_t> current_coords(input.ndim(), 0);
+        reduction_recursive_helper<AccumT>(input, result, norm_axes,
+                                           current_coords, 0, func_, keep_dims);
+    }
 
     if (op_type_ == ops::OpType::Mean) {
         size_t reduction_size = 1;
@@ -518,13 +771,18 @@ Tensor CPUReductionOperation<Func>::execute_reduction_typed(
             reduction_size *= input.shape()[axis];
         }
 
-        T *result_data = result.template typed_data<T>();
+        AccumT *result_data = result.template typed_data<AccumT>();
         for (size_t i = 0; i < result.size(); ++i) {
-            result_data[i] /= static_cast<T>(reduction_size);
+            result_data[i] /= static_cast<AccumT>(reduction_size);
         }
     }
 
-    return result;
+    // Convert back to original dtype if we used float32 accumulation
+    if constexpr (use_float32_accum) {
+        return result.astype(result_dtype);
+    } else {
+        return result;
+    }
 }
 
 // ============================================================================
@@ -801,6 +1059,8 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
         DISPATCH_MATMUL(DType::Float64, double)
         DISPATCH_MATMUL(DType::Int32, int32_t)
         DISPATCH_MATMUL(DType::Int64, int64_t)
+        DISPATCH_MATMUL(DType::Complex64, complex64_t)
+        DISPATCH_MATMUL(DType::Complex128, complex128_t)
     default:
         throw TypeError::unsupported_dtype(dtype_name(result_dtype), "MatMul");
     }
@@ -1872,6 +2132,32 @@ void register_cpu_operations() {
         std::make_unique<CPUBinaryOperation<LogicalXorFunc>>(
             OpType::LogicalXor, "logical_xor", LogicalXorFunc{}));
 
+    // Register bitwise operations
+    OperationRegistry::register_operation(
+        OpType::BitwiseAnd, Device::CPU,
+        std::make_unique<CPUBinaryOperation<BitwiseAndFunc>>(
+            OpType::BitwiseAnd, "bitwise_and", BitwiseAndFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::BitwiseOr, Device::CPU,
+        std::make_unique<CPUBinaryOperation<BitwiseOrFunc>>(
+            OpType::BitwiseOr, "bitwise_or", BitwiseOrFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::BitwiseXor, Device::CPU,
+        std::make_unique<CPUBinaryOperation<BitwiseXorFunc>>(
+            OpType::BitwiseXor, "bitwise_xor", BitwiseXorFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::LeftShift, Device::CPU,
+        std::make_unique<CPUBinaryOperation<LeftShiftFunc>>(
+            OpType::LeftShift, "left_shift", LeftShiftFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::RightShift, Device::CPU,
+        std::make_unique<CPUBinaryOperation<RightShiftFunc>>(
+            OpType::RightShift, "right_shift", RightShiftFunc{}));
+
     // Register math operations
     OperationRegistry::register_operation(
         OpType::Maximum, Device::CPU,
@@ -1938,6 +2224,10 @@ void register_cpu_operations() {
         OpType::Conj, Device::CPU,
         std::make_unique<CPUUnaryOperation<ConjFunc>>(OpType::Conj, "conj",
                                                       ConjFunc{}));
+    OperationRegistry::register_operation(
+        OpType::LogicalNot, Device::CPU,
+        std::make_unique<CPUUnaryOperation<LogicalNotFunc>>(
+            OpType::LogicalNot, "logical_not", LogicalNotFunc{}));
 
     // Register reduction operations
     OperationRegistry::register_operation(

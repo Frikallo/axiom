@@ -67,6 +67,35 @@ template <typename Func> class CPUBinaryOperation : public ops::Operation {
 };
 
 // ============================================================================
+// CPU Complex Binary Operation Class (dedicated for complex arithmetic)
+// ============================================================================
+
+class CPUComplexBinaryOperation : public ops::Operation {
+  private:
+    ops::OpType op_type_;
+    std::string name_;
+
+  public:
+    CPUComplexBinaryOperation(ops::OpType op_type, const std::string &name)
+        : op_type_(op_type), name_(name) {}
+
+    ops::OpType type() const override { return op_type_; }
+    std::string name() const override { return name_; }
+    Device device() const override { return Device::CPU; }
+
+    bool supports_binary(const Tensor &lhs, const Tensor &rhs) const override {
+        return ops::are_broadcastable(lhs.shape(), rhs.shape());
+    }
+
+    Tensor execute_binary(const Tensor &lhs, const Tensor &rhs) const override;
+
+  private:
+    template <typename T>
+    void execute_complex_typed(const Tensor &lhs, const Tensor &rhs,
+                               Tensor &result) const;
+};
+
+// ============================================================================
 // CPU Unary Operation Base Class
 // ============================================================================
 
@@ -256,43 +285,55 @@ struct LogicalXorFunc {
 };
 
 // Bitwise operations (only for integer types)
+// Use if constexpr to avoid compile errors when instantiated for non-integer types
+// (runtime checks in execute_binary prevent non-integer types from reaching here)
 struct BitwiseAndFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
-        static_assert(std::is_integral_v<T>,
-                      "Bitwise operations only supported for integer types");
-        return a & b;
+        if constexpr (std::is_integral_v<T>) {
+            return a & b;
+        } else {
+            return T{}; // Never reached at runtime
+        }
     }
 };
 
 struct BitwiseOrFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
-        static_assert(std::is_integral_v<T>,
-                      "Bitwise operations only supported for integer types");
-        return a | b;
+        if constexpr (std::is_integral_v<T>) {
+            return a | b;
+        } else {
+            return T{};
+        }
     }
 };
 
 struct BitwiseXorFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
-        static_assert(std::is_integral_v<T>,
-                      "Bitwise operations only supported for integer types");
-        return a ^ b;
+        if constexpr (std::is_integral_v<T>) {
+            return a ^ b;
+        } else {
+            return T{};
+        }
     }
 };
 
 struct LeftShiftFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
-        static_assert(std::is_integral_v<T>,
-                      "Shift operations only supported for integer types");
-        return a << b;
+        if constexpr (std::is_integral_v<T>) {
+            return a << b;
+        } else {
+            return T{};
+        }
     }
 };
 
 struct RightShiftFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
-        static_assert(std::is_integral_v<T>,
-                      "Shift operations only supported for integer types");
-        return a >> b;
+        if constexpr (std::is_integral_v<T>) {
+            return a >> b;
+        } else {
+            return T{};
+        }
     }
 };
 
@@ -337,17 +378,29 @@ struct NegateFunc {
         if constexpr (std::is_same_v<T, bool>) {
             return !a;
         } else {
-            return -a;
+            return -a; // Works for complex types too
         }
     }
 };
 
+struct LogicalNotFunc {
+    // LogicalNot always returns bool: !static_cast<bool>(a)
+    template <typename T> bool operator()(const T &a) const {
+        return !static_cast<bool>(a);
+    }
+};
+
 struct AbsFunc {
-    template <typename T> T operator()(const T &a) const {
+    template <typename T> auto operator()(const T &a) const {
         if constexpr (std::is_unsigned_v<T> && std::is_integral_v<T>) {
             return a;
         } else if constexpr (std::is_same_v<T, half_float::half>) {
             return static_cast<T>(std::abs(static_cast<float>(a)));
+        } else if constexpr (std::is_same_v<T, std::complex<float>>) {
+            // For complex, abs returns the magnitude as float
+            return std::abs(a);
+        } else if constexpr (std::is_same_v<T, std::complex<double>>) {
+            return std::abs(a);
         } else {
             return std::abs(a);
         }
@@ -357,6 +410,9 @@ struct AbsFunc {
 struct SqrtFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
+            return std::sqrt(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
             return std::sqrt(a);
         } else {
             return static_cast<T>(std::sqrt(static_cast<double>(a)));
@@ -368,6 +424,9 @@ struct ExpFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::exp(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
+            return std::exp(a);
         } else {
             return static_cast<T>(std::exp(static_cast<double>(a)));
         }
@@ -377,6 +436,9 @@ struct ExpFunc {
 struct LogFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
+            return std::log(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
             return std::log(a);
         } else {
             return static_cast<T>(std::log(static_cast<double>(a)));
@@ -388,6 +450,9 @@ struct SinFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::sin(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
+            return std::sin(a);
         } else {
             return static_cast<T>(std::sin(static_cast<double>(a)));
         }
@@ -398,6 +463,9 @@ struct CosFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::cos(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
+            return std::cos(a);
         } else {
             return static_cast<T>(std::cos(static_cast<double>(a)));
         }
@@ -407,6 +475,9 @@ struct CosFunc {
 struct TanFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
+            return std::tan(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
             return std::tan(a);
         } else {
             return static_cast<T>(std::tan(static_cast<double>(a)));

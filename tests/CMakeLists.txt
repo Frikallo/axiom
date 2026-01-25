@@ -430,3 +430,78 @@ set_tests_properties(einops_reduce
     PROPERTIES
         TIMEOUT 30
 )
+
+# CPU/GPU parity tests
+add_executable(test_cpu_gpu_parity
+    test_cpu_gpu_parity.cpp
+)
+
+target_link_libraries(test_cpu_gpu_parity
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_cpu_gpu_parity
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME cpu_gpu_parity
+    COMMAND test_cpu_gpu_parity
+)
+
+set_tests_properties(cpu_gpu_parity
+    PROPERTIES
+        TIMEOUT 60
+)
+
+# Transformer operations tests
+add_executable(test_transformer_ops
+    test_transformer_ops.cpp
+)
+
+target_link_libraries(test_transformer_ops
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_transformer_ops
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME transformer_ops
+    COMMAND test_transformer_ops
+)
+
+set_tests_properties(transformer_ops
+    PROPERTIES
+        TIMEOUT 60
+)
+
+# Logical/Bitwise/Math operations tests
+add_executable(test_tensor_logical_bitwise
+    test_tensor_logical_bitwise.cpp
+)
+
+target_link_libraries(test_tensor_logical_bitwise
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_logical_bitwise
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_logical_bitwise
+    COMMAND test_tensor_logical_bitwise
+)
+
+set_tests_properties(tensor_logical_bitwise
+    PROPERTIES
+        TIMEOUT 30
+)

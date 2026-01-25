@@ -248,6 +248,7 @@ Tensor greater_equal(const Tensor &lhs, const Tensor &rhs);
 Tensor logical_and(const Tensor &lhs, const Tensor &rhs);
 Tensor logical_or(const Tensor &lhs, const Tensor &rhs);
 Tensor logical_xor(const Tensor &lhs, const Tensor &rhs);
+Tensor logical_not(const Tensor &input);
 
 // Bitwise operations
 Tensor bitwise_and(const Tensor &lhs, const Tensor &rhs);

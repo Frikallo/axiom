@@ -514,8 +514,12 @@ static MPSGraphTensor* logical_xor_op(MPSGraph* graph, MPSGraphTensor* a, MPSGra
     return [graph logicalXORWithPrimaryTensor:a_bool secondaryTensor:b_bool name:nil];
 }
 
-// Note: LogicalNot is defined as a unary op but registered through the unary op path
-// using the negate_op pattern with notWithTensor if needed in the future
+// Unary logical operation
+static MPSGraphTensor* logical_not_op(MPSGraph* graph, MPSGraphTensor* a) {
+    // Cast to bool first, then negate
+    MPSGraphTensor* a_bool = [graph castTensor:a toType:MPSDataTypeBool name:nil];
+    return [graph notWithTensor:a_bool name:nil];
+}
 
 // Math binary operations
 static MPSGraphTensor* maximum_op(MPSGraph* graph, MPSGraphTensor* a, MPSGraphTensor* b) {
@@ -1770,6 +1774,10 @@ void register_mpsgraph_operations() {
     // GELU operation
     OperationRegistry::register_operation(OpType::GELU, Device::GPU,
         std::make_unique<MPSGraphUnaryOperation>(OpType::GELU, "gelu", gelu_op));
+
+    // LogicalNot operation
+    OperationRegistry::register_operation(OpType::LogicalNot, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::LogicalNot, "logical_not", logical_not_op));
 }
 
 } // namespace metal

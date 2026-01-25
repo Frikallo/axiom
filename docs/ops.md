@@ -128,7 +128,7 @@ Integer types only.
 | `ops::maximum(a, b)` | ✓ | ✓ |
 | `ops::minimum(a, b)` | ✓ | ✓ |
 | `ops::atan2(y, x)` | ✓ | ✓ |
-| `ops::hypot(a, b)` | ✓ | ✗ |
+| `ops::hypot(a, b)` | ✓ | ✓ |
 
 ## Unary Operations
 
@@ -146,11 +146,23 @@ Integer types only.
 
 ## Complex Operations
 
+Complex64 (`std::complex<float>`) and Complex128 (`std::complex<double>`) are fully supported on CPU. GPU operations automatically fall back to CPU for stability.
+
 | Function | Description | CPU | GPU |
 |----------|-------------|-----|-----|
-| `ops::conj(a)` | Complex conjugate | ✓ | ✓ |
-| `ops::real(a)` | Real part | ✓ | ✓ |
-| `ops::imag(a)` | Imaginary part | ✓ | ✓ |
+| `ops::conj(a)` | Complex conjugate | ✓ | (CPU) |
+| `ops::real(a)` | Real part (view) | ✓ | ✓ |
+| `ops::imag(a)` | Imaginary part (view) | ✓ | ✓ |
+
+**Complex arithmetic:** `add`, `subtract`, `multiply`, `divide` work on Complex64/Complex128.
+
+**Complex math functions:** `abs` (returns magnitude as float), `exp`, `log`, `sqrt`, `sin`, `cos`, `tan`.
+
+**Complex reductions:** `sum`, `mean` work on complex types. `max`, `min`, `argmax`, `argmin` throw TypeError.
+
+**Complex matmul:** Full support for complex matrix multiplication.
+
+**Illegal operations:** Ordering comparisons (`<`, `>`, `<=`, `>=`) and bitwise operations throw TypeError on complex types.
 
 ## Activation Functions
 
@@ -289,6 +301,8 @@ Returns `std::pair<Tensor, Tensor>` containing (output, mask). Scale factor `1/(
 | `Float16` | `float16_t` | 2 |
 | `Float32` | `float` | 4 |
 | `Float64` | `double` | 8 |
+| `Complex64` | `std::complex<float>` | 8 |
+| `Complex128` | `std::complex<double>` | 16 |
 
 ## File I/O
 
@@ -321,21 +335,23 @@ Returns `std::pair<Tensor, Tensor>` containing (output, mask). Scale factor `1/(
 
 All operations use MPSGraph on Metal GPU for automatic kernel fusion and Apple Silicon optimization.
 
-| Category | CPU | GPU |
-|----------|-----|-----|
-| Binary Arithmetic | ✓ | ✓ |
-| Comparison | ✓ | ✓ |
-| Logical | ✓ | ✓ |
-| Bitwise | ✓ | ✓ |
-| Math | ✓ | ✓ (except hypot) |
-| Unary | ✓ | ✓ |
-| Complex | ✓ | ✓ |
-| Activations | ✓ | ✓ |
-| Reductions | ✓ | ✓ |
-| MatMul | ✓ | ✓ |
-| Where | ✓ | ✓ |
-| Masking | ✓ | ✓ |
-| Indexing (gather/scatter) | ✓ | ✓ |
-| Einops | ✓ | ✓ |
-| Normalization | ✓ | ✓ |
-| Dropout | ✓ | ✓ |
+| Category | CPU | GPU | Notes |
+|----------|-----|-----|-------|
+| Binary Arithmetic | ✓ | ✓ | |
+| Comparison | ✓ | ✓ | |
+| Logical | ✓ | ✓ | |
+| Bitwise | ✓ | ✓ | Integer types only |
+| Math | ✓ | ✓ | |
+| Unary | ✓ | ✓ | |
+| Complex | ✓ | (CPU) | GPU falls back to CPU |
+| Activations | ✓ | ✓ | |
+| Reductions | ✓ | ✓ | All dtypes supported |
+| MatMul | ✓ | ✓ | Including batched |
+| Where | ✓ | ✓ | |
+| Masking | ✓ | ✓ | |
+| Indexing | ✓ | ✓ | Supports negative indices |
+| Einops | ✓ | ✓ | |
+| Normalization | ✓ | ✓ | LayerNorm, RMSNorm |
+| Dropout | ✓ | ✓ | With reproducible masks |
+
+**NaN/Inf Detection:** `has_nan()` and `has_inf()` work on Float16, Float32, Float64, Complex64, and Complex128.

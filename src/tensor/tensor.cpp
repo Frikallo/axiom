@@ -1295,7 +1295,8 @@ bool Tensor::has_nan() const {
         return cpu().has_nan();
     }
 
-    if (!is_floating_dtype(dtype_))
+    // Check floating point types for NaN
+    if (!is_floating_dtype(dtype_) && !is_complex_dtype(dtype_))
         return false;
 
     auto check_nan = [this]<typename T>() {
@@ -1307,11 +1308,27 @@ bool Tensor::has_nan() const {
         return false;
     };
 
+    // Complex types need to check both real and imaginary parts
+    auto check_nan_complex = [this]<typename T>() {
+        const T *data = typed_data<T>();
+        for (size_t i = 0; i < size(); ++i) {
+            if (std::isnan(data[i].real()) || std::isnan(data[i].imag()))
+                return true;
+        }
+        return false;
+    };
+
     switch (dtype_) {
+    case DType::Float16:
+        return check_nan.template operator()<float16_t>();
     case DType::Float32:
         return check_nan.template operator()<float>();
     case DType::Float64:
         return check_nan.template operator()<double>();
+    case DType::Complex64:
+        return check_nan_complex.template operator()<complex64_t>();
+    case DType::Complex128:
+        return check_nan_complex.template operator()<complex128_t>();
     default:
         return false;
     }
@@ -1322,7 +1339,8 @@ bool Tensor::has_inf() const {
         return cpu().has_inf();
     }
 
-    if (!is_floating_dtype(dtype_))
+    // Check floating point types for Inf
+    if (!is_floating_dtype(dtype_) && !is_complex_dtype(dtype_))
         return false;
 
     auto check_inf = [this]<typename T>() {
@@ -1334,11 +1352,27 @@ bool Tensor::has_inf() const {
         return false;
     };
 
+    // Complex types need to check both real and imaginary parts
+    auto check_inf_complex = [this]<typename T>() {
+        const T *data = typed_data<T>();
+        for (size_t i = 0; i < size(); ++i) {
+            if (std::isinf(data[i].real()) || std::isinf(data[i].imag()))
+                return true;
+        }
+        return false;
+    };
+
     switch (dtype_) {
+    case DType::Float16:
+        return check_inf.template operator()<float16_t>();
     case DType::Float32:
         return check_inf.template operator()<float>();
     case DType::Float64:
         return check_inf.template operator()<double>();
+    case DType::Complex64:
+        return check_inf_complex.template operator()<complex64_t>();
+    case DType::Complex128:
+        return check_inf_complex.template operator()<complex128_t>();
     default:
         return false;
     }
