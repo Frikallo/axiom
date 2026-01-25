@@ -380,7 +380,8 @@ void test_all_arithmetic_ops() {
 }
 
 void test_full_broadcasting(axiom::Device device) {
-    if (device == axiom::Device::GPU && !axiom::system::should_run_gpu_tests()) {
+    if (device == axiom::Device::GPU &&
+        !axiom::system::should_run_gpu_tests()) {
         return;
     }
 

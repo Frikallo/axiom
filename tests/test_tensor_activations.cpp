@@ -126,7 +126,7 @@ void test_softmax_gpu() {
         std::cout << "  Skipping (GPU tests disabled)" << std::endl;
         return;
     }
-    
+
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
     auto t = Tensor::from_data(data.data(), {4}).gpu();
 
@@ -175,7 +175,7 @@ void test_gelu_gpu() {
         std::cout << "  Skipping (GPU tests disabled)" << std::endl;
         return;
     }
-    
+
     std::vector<float> data = {0.0f, 1.0f, 2.0f};
     auto t = Tensor::from_data(data.data(), {3}).gpu();
 
@@ -217,7 +217,7 @@ void test_erf_gpu() {
         std::cout << "  Skipping (GPU tests disabled)" << std::endl;
         return;
     }
-    
+
     std::vector<float> data = {0.0f, 1.0f};
     auto t = Tensor::from_data(data.data(), {2}).gpu();
 

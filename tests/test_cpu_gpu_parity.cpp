@@ -689,7 +689,8 @@ int main() {
     std::cout << "=== CPU/GPU Parity Tests ===" << std::endl << std::endl;
 
     if (!system::should_run_gpu_tests()) {
-        std::cout << "GPU tests disabled or Metal not available, skipping" << std::endl;
+        std::cout << "GPU tests disabled or Metal not available, skipping"
+                  << std::endl;
         return 0;
     }
 

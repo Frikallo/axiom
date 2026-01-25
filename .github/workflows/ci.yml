@@ -53,39 +53,6 @@ jobs:
         name: test-results-macos
         path: build/Testing/
 
-  # Build on macOS Intel (compatibility check)
-  build-macos-intel:
-    name: Build & Test (macOS Intel)
-    runs-on: macos-13  # Intel runner
-    
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      
-    - name: Setup Xcode
-      uses: maxim-lobanov/setup-xcode@v1
-      with:
-        xcode-version: latest-stable
-        
-    - name: Install Dependencies
-      run: |
-        brew install cmake ninja
-        
-    - name: Configure CMake
-      run: |
-        cmake -B build \
-          -G Ninja \
-          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-          -DAXIOM_BUILD_TESTS=ON \
-          -DAXIOM_BUILD_EXAMPLES=OFF
-          
-    - name: Build
-      run: cmake --build build --config ${{ env.BUILD_TYPE }}
-      
-    - name: Run Tests
-      working-directory: build
-      run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure
-
   # Code quality checks
   code-quality:
     name: Code Quality
@@ -102,7 +69,9 @@ jobs:
         
     - name: Install Dependencies
       run: |
-        brew install cmake ninja
+        brew install cmake ninja llvm
+        # Add LLVM tools to PATH (for recent clang-format)
+        echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
         
     - name: Configure CMake (for compile_commands.json)
       run: |
@@ -114,25 +83,27 @@ jobs:
     - name: Check Formatting
       run: |
         echo "Checking code formatting with clang-format..."
+        echo "clang-format version: $(clang-format --version)"
+        echo ""
+        
         UNFORMATTED_FILES=()
         
         # Check all C++ files in include/ and src/
         while IFS= read -r -d '' file; do
-          if ! clang-format --dry-run --Werror "$file" 2>/dev/null; then
+          # Compare file against formatted version using project's .clang-format
+          if ! diff -q "$file" <(clang-format --style=file "$file") > /dev/null 2>&1; then
             UNFORMATTED_FILES+=("$file")
           fi
         done < <(find include src -type f \( -name '*.hpp' -o -name '*.cpp' \) -print0)
         
         # Report results
         if [ ${#UNFORMATTED_FILES[@]} -gt 0 ]; then
-          echo ""
           echo "::error::The following ${#UNFORMATTED_FILES[@]} file(s) need formatting:"
           for file in "${UNFORMATTED_FILES[@]}"; do
             echo "  - $file"
-            echo "::warning file=$file::Needs clang-format"
           done
           echo ""
-          echo "Run 'clang-format -i <file>' to fix, or 'make format' to format all files."
+          echo "Run 'make format' to format all files."
           exit 1
         else
           echo "All files are properly formatted!"

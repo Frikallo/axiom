@@ -19,11 +19,11 @@ bool is_metal_available() {
 
 bool should_run_gpu_tests() {
     // Check environment variable first
-    const char* skip_env = std::getenv("AXIOM_SKIP_GPU_TESTS");
+    const char *skip_env = std::getenv("AXIOM_SKIP_GPU_TESTS");
     if (skip_env && std::string(skip_env) == "1") {
         return false;
     }
-    
+
     // Then check if Metal is available
     return is_metal_available();
 }
