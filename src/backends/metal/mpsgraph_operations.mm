@@ -337,11 +337,14 @@ static Tensor executeMPSGraphTernaryOp(const Tensor& cond_raw, const Tensor& a_r
         MPSGraphTensor* a_placeholder = createPlaceholder(graph, a);
         MPSGraphTensor* b_placeholder = createPlaceholder(graph, b);
         
-        // Cast condition to Bool in graph if needed
-        MPSGraphTensor* cond_bool = cond_placeholder;
-        if (cond.dtype() != DType::Bool) {
-            cond_bool = [graph castTensor:cond_placeholder toType:MPSDataTypeBool name:nil];
-        }
+        // Always use comparison to zero for reliable Bool semantics
+        // MPSGraph's Bool handling is inconsistent with Axiom's 1-byte Bool,
+        // so we compare != 0 which works correctly for all input dtypes
+        MPSGraphTensor* zero = [graph constantWithScalar:0.0
+                                                dataType:getMPSDataType(cond.dtype())];
+        MPSGraphTensor* cond_bool = [graph notEqualWithPrimaryTensor:cond_placeholder
+                                                    secondaryTensor:zero
+                                                               name:nil];
         
         // Type promotion for a and b
         DType common_dtype = ops::promote_types(a.dtype(), b.dtype());
@@ -531,6 +534,14 @@ static MPSGraphTensor* power_op(MPSGraph* graph, MPSGraphTensor* a, MPSGraphTens
     return [graph powerWithPrimaryTensor:a secondaryTensor:b name:nil];
 }
 
+static MPSGraphTensor* hypot_op(MPSGraph* graph, MPSGraphTensor* a, MPSGraphTensor* b) {
+    // hypot(a,b) = sqrt(a² + b²)
+    MPSGraphTensor* a_sq = [graph multiplicationWithPrimaryTensor:a secondaryTensor:a name:nil];
+    MPSGraphTensor* b_sq = [graph multiplicationWithPrimaryTensor:b secondaryTensor:b name:nil];
+    MPSGraphTensor* sum_sq = [graph additionWithPrimaryTensor:a_sq secondaryTensor:b_sq name:nil];
+    return [graph squareRootWithTensor:sum_sq name:nil];
+}
+
 static MPSGraphTensor* modulo_op(MPSGraph* graph, MPSGraphTensor* a, MPSGraphTensor* b) {
     return [graph moduloWithPrimaryTensor:a secondaryTensor:b name:nil];
 }
@@ -648,6 +659,36 @@ static Tensor executeReduction(const Tensor& input_raw, const std::vector<int>& 
             case ops::OpType::Min:
                 result_tensor = [graph reductionMinimumWithTensor:input_tensor axes:mps_axes name:nil];
                 break;
+            case ops::OpType::Any: {
+                // any = max > 0 (cast to numeric first if bool)
+                MPSGraphTensor* numeric_tensor = input_tensor;
+                if (input.dtype() == DType::Bool) {
+                    numeric_tensor = [graph castTensor:input_tensor toType:MPSDataTypeInt32 name:nil];
+                }
+                result_tensor = [graph reductionMaximumWithTensor:numeric_tensor axes:mps_axes name:nil];
+                // Convert to bool: > 0
+                MPSGraphTensor* zero = [graph constantWithScalar:0.0
+                                                        dataType:result_tensor.dataType];
+                result_tensor = [graph greaterThanWithPrimaryTensor:result_tensor
+                                                   secondaryTensor:zero
+                                                              name:nil];
+                break;
+            }
+            case ops::OpType::All: {
+                // all = min > 0 (cast to numeric first if bool)
+                MPSGraphTensor* numeric_tensor = input_tensor;
+                if (input.dtype() == DType::Bool) {
+                    numeric_tensor = [graph castTensor:input_tensor toType:MPSDataTypeInt32 name:nil];
+                }
+                result_tensor = [graph reductionMinimumWithTensor:numeric_tensor axes:mps_axes name:nil];
+                // Convert to bool: > 0
+                MPSGraphTensor* zero = [graph constantWithScalar:0.0
+                                                        dataType:result_tensor.dataType];
+                result_tensor = [graph greaterThanWithPrimaryTensor:result_tensor
+                                                   secondaryTensor:zero
+                                                              name:nil];
+                break;
+            }
             default:
                 throw RuntimeError::not_implemented("Reduction operation");
         }
@@ -1152,6 +1193,110 @@ public:
 };
 
 // ============================================================================
+// Softmax/LogSoftmax Operations (MPSGraph)
+// ============================================================================
+
+class MPSGraphSoftmaxOperation : public ops::Operation {
+    bool is_log_;
+public:
+    MPSGraphSoftmaxOperation(bool is_log) : is_log_(is_log) {}
+
+    ops::OpType type() const override { return is_log_ ? ops::OpType::LogSoftmax : ops::OpType::Softmax; }
+    std::string name() const override { return is_log_ ? "log_softmax" : "softmax"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+        (void)lhs; (void)rhs;
+        throw RuntimeError::internal("execute_binary called on Softmax operation");
+    }
+
+    Tensor execute_unary(const Tensor& input) const override {
+        (void)input;
+        throw RuntimeError::internal("Use execute_reduction for Softmax operations");
+    }
+
+    Tensor execute_reduction(const Tensor& input, const std::vector<int>& axes, bool keep_dims) const override {
+        (void)keep_dims;  // Softmax preserves shape
+        if (input.device() != Device::GPU) {
+            throw DeviceError("MPSGraph Softmax requires GPU tensor");
+        }
+
+        int axis = axes.empty() ? -1 : axes[0];
+        return executeSoftmax(input, axis);
+    }
+
+private:
+    Tensor executeSoftmax(const Tensor& input_raw, int axis) const {
+        @autoreleasepool {
+            Tensor input = ensureContiguous(input_raw);
+
+            // Normalize axis
+            int norm_axis = axis;
+            if (norm_axis < 0) {
+                norm_axis += static_cast<int>(input.ndim());
+            }
+
+            MPSGraph* graph = [[MPSGraph alloc] init];
+
+            // Create input placeholder
+            MPSGraphTensor* x = createPlaceholder(graph, input);
+
+            // MPSGraph has built-in numerically stable softmax
+            MPSGraphTensor* result_tensor = [graph softMaxWithTensor:x axis:norm_axis name:nil];
+
+            if (is_log_) {
+                result_tensor = [graph logarithmWithTensor:result_tensor name:nil];
+            }
+
+            // Create output tensor (same shape as input)
+            Tensor result(input.shape(), input.dtype(), Device::GPU);
+
+            // Create tensor data
+            MPSGraphTensorData* input_data = createTensorData(input);
+            MPSGraphTensorData* result_data = createTensorData(result);
+
+            // Create feeds and targets
+            NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
+                x: input_data
+            };
+
+            NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
+                result_tensor: result_data
+            };
+
+            // Execute the graph
+            [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
+                                    feeds:feeds
+                         targetOperations:nil
+                        resultsDictionary:targets];
+
+            return result;
+        }
+    }
+};
+
+// ============================================================================
+// Erf and GELU Operations (MPSGraph)
+// ============================================================================
+
+static MPSGraphTensor* erf_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph erfWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* gelu_op(MPSGraph* graph, MPSGraphTensor* x) {
+    // GELU(x) = 0.5 * x * (1 + erf(x / sqrt(2)))
+    MPSGraphTensor* sqrt2 = [graph constantWithScalar:M_SQRT2 dataType:x.dataType];
+    MPSGraphTensor* half = [graph constantWithScalar:0.5 dataType:x.dataType];
+    MPSGraphTensor* one = [graph constantWithScalar:1.0 dataType:x.dataType];
+
+    MPSGraphTensor* x_scaled = [graph divisionWithPrimaryTensor:x secondaryTensor:sqrt2 name:nil];
+    MPSGraphTensor* erf_val = [graph erfWithTensor:x_scaled name:nil];
+    MPSGraphTensor* inner = [graph additionWithPrimaryTensor:one secondaryTensor:erf_val name:nil];
+    MPSGraphTensor* half_x = [graph multiplicationWithPrimaryTensor:half secondaryTensor:x name:nil];
+    return [graph multiplicationWithPrimaryTensor:half_x secondaryTensor:inner name:nil];
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 
@@ -1215,6 +1360,9 @@ void register_mpsgraph_operations() {
     
     OperationRegistry::register_operation(OpType::Modulo, Device::GPU,
         std::make_unique<MPSGraphBinaryOperation>(OpType::Modulo, "modulo", modulo_op));
+
+    OperationRegistry::register_operation(OpType::Hypot, Device::GPU,
+        std::make_unique<MPSGraphBinaryOperation>(OpType::Hypot, "hypot", hypot_op));
     
     // Bitwise operations
     OperationRegistry::register_operation(OpType::BitwiseAnd, Device::GPU,
@@ -1269,6 +1417,12 @@ void register_mpsgraph_operations() {
     
     OperationRegistry::register_operation(OpType::Min, Device::GPU,
         std::make_unique<MPSGraphReductionOperation>(OpType::Min, "min"));
+
+    OperationRegistry::register_operation(OpType::Any, Device::GPU,
+        std::make_unique<MPSGraphReductionOperation>(OpType::Any, "any"));
+
+    OperationRegistry::register_operation(OpType::All, Device::GPU,
+        std::make_unique<MPSGraphReductionOperation>(OpType::All, "all"));
     
     // Matrix Multiplication (migrated from custom Metal kernels to MPSGraph)
     OperationRegistry::register_operation(OpType::MatMul, Device::GPU,
@@ -1284,6 +1438,21 @@ void register_mpsgraph_operations() {
     // Where (conditional selection) operation
     OperationRegistry::register_operation(OpType::Where, Device::GPU,
         std::make_unique<MPSGraphTernaryOperation>(OpType::Where, "where", where_op));
+
+    // Softmax operations
+    OperationRegistry::register_operation(OpType::Softmax, Device::GPU,
+        std::make_unique<MPSGraphSoftmaxOperation>(false));
+
+    OperationRegistry::register_operation(OpType::LogSoftmax, Device::GPU,
+        std::make_unique<MPSGraphSoftmaxOperation>(true));
+
+    // Erf operation
+    OperationRegistry::register_operation(OpType::Erf, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Erf, "erf", erf_op));
+
+    // GELU operation
+    OperationRegistry::register_operation(OpType::GELU, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::GELU, "gelu", gelu_op));
 }
 
 } // namespace metal

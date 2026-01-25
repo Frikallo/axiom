@@ -305,3 +305,78 @@ set_tests_properties(tensor_where
     PROPERTIES
         TIMEOUT 30
 )
+
+# Activation functions tests
+add_executable(test_tensor_activations
+    test_tensor_activations.cpp
+)
+
+target_link_libraries(test_tensor_activations
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_activations
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_activations
+    COMMAND test_tensor_activations
+)
+
+set_tests_properties(tensor_activations
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Complex operations tests
+add_executable(test_tensor_complex
+    test_tensor_complex.cpp
+)
+
+target_link_libraries(test_tensor_complex
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_complex
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_complex
+    COMMAND test_tensor_complex
+)
+
+set_tests_properties(tensor_complex
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Normalization operations tests
+add_executable(test_tensor_normalization
+    test_tensor_normalization.cpp
+)
+
+target_link_libraries(test_tensor_normalization
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_normalization
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_normalization
+    COMMAND test_tensor_normalization
+)
+
+set_tests_properties(tensor_normalization
+    PROPERTIES
+        TIMEOUT 30
+)

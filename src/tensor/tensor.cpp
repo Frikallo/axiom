@@ -1275,4 +1275,49 @@ std::string Tensor::debug_info() const {
   return oss.str();
 }
 
+// ============================================================================
+// Complex number operations
+// ============================================================================
+
+Tensor Tensor::real() const {
+  if (!is_complex_dtype(dtype_)) {
+    throw TypeError("real() requires complex tensor, got " + dtype_name());
+  }
+
+  // Complex64 (8 bytes) -> Float32 (4 bytes)
+  // Complex128 (16 bytes) -> Float64 (8 bytes)
+  DType base_dtype = (dtype_ == DType::Complex64) ? DType::Float32 : DType::Float64;
+
+  // Strides stay the same - we still step between complex elements,
+  // just interpreting the real part (first half) of each
+  // Layout: [real0][imag0][real1][imag1]... stride moves us to next complex
+  // Real part is at the same offset (complex is laid out as [real, imag])
+  return Tensor(storage_, shape_, strides_, base_dtype, offset_, memory_order_);
+}
+
+Tensor Tensor::imag() const {
+  if (!is_complex_dtype(dtype_)) {
+    throw TypeError("imag() requires complex tensor, got " + dtype_name());
+  }
+
+  // Complex64 (8 bytes) -> Float32 (4 bytes)
+  // Complex128 (16 bytes) -> Float64 (8 bytes)
+  DType base_dtype = (dtype_ == DType::Complex64) ? DType::Float32 : DType::Float64;
+  size_t base_size = dtype_size(base_dtype);
+
+  // Strides stay the same - we still step between complex elements,
+  // just interpreting the imag part (second half) of each
+  // Layout: [real0][imag0][real1][imag1]... stride moves us to next complex
+  // Imag part is offset by the size of the base type (to skip the real part)
+  return Tensor(storage_, shape_, strides_, base_dtype, offset_ + base_size, memory_order_);
+}
+
+Tensor Tensor::conj() const {
+  if (!is_complex_dtype(dtype_)) {
+    throw TypeError("conj() requires complex tensor, got " + dtype_name());
+  }
+
+  return ops::conj(*this);
+}
+
 }  // namespace axiom

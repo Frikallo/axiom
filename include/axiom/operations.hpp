@@ -6,6 +6,7 @@
 #include <functional>
 #include <type_traits>
 #include <map>
+#include <utility>
 
 #include "dtype.hpp"
 #include "shape.hpp"
@@ -77,7 +78,7 @@ enum class OpType {
   Atan2,
   Hypot,
   
-  // Future unary operations
+  // Unary operations
   Negate,
   Abs,
   Sqrt,
@@ -86,6 +87,17 @@ enum class OpType {
   Sin,
   Cos,
   Tan,
+  Erf,
+
+  // Complex operations
+  Conj,
+  Real,
+  Imag,
+
+  // Activation operations
+  GELU,
+  Softmax,
+  LogSoftmax,
 
   // Reduction operations
   Sum,
@@ -94,13 +106,22 @@ enum class OpType {
   Min,
   ArgMax,
   ArgMin,
+  Any,
+  All,
 
   // Matrix operations
   MatMul,
   BatchMatMul,
   
   // Conditional operations
-  Where
+  Where,
+
+  // Normalization operations
+  LayerNorm,
+  RMSNorm,
+
+  // Dropout
+  Dropout
 };
 
 class Operation {
@@ -210,6 +231,17 @@ Tensor log(const Tensor& input);
 Tensor sin(const Tensor& input);
 Tensor cos(const Tensor& input);
 Tensor tan(const Tensor& input);
+Tensor erf(const Tensor& input);
+
+// Complex operations
+Tensor conj(const Tensor& input);
+Tensor real(const Tensor& input);
+Tensor imag(const Tensor& input);
+
+// Activation operations
+Tensor gelu(const Tensor& input);
+Tensor softmax(const Tensor& input, int axis = -1);
+Tensor log_softmax(const Tensor& input, int axis = -1);
 
 // Reduction operations
 Tensor sum(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
@@ -221,6 +253,12 @@ Tensor min(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dim
 // Returns Int64 tensor with indices
 Tensor argmax(const Tensor& input, int axis = -1, bool keep_dims = false);
 Tensor argmin(const Tensor& input, int axis = -1, bool keep_dims = false);
+
+// Boolean reductions - returns Bool tensor
+// any: True if any element is non-zero along axis
+// all: True if all elements are non-zero along axis
+Tensor any(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
+Tensor all(const Tensor& input, const std::vector<int>& axis = {}, bool keep_dims = false);
 
 // Matrix multiplication operations
 // matmul: General matrix multiplication with broadcasting of batch dimensions
@@ -239,6 +277,18 @@ Tensor matmul(const Tensor& a, const Tensor& b,
 // Equivalent to numpy.where(condition, a, b)
 // All inputs are broadcast together
 Tensor where(const Tensor& condition, const Tensor& a, const Tensor& b);
+
+// Normalization operations
+// layer_norm: (x - mean) / sqrt(var + eps) * weight + bias
+Tensor layer_norm(const Tensor& input, const Tensor& weight, const Tensor& bias,
+                  int axis = -1, float eps = 1e-5f);
+// rms_norm: x / sqrt(mean(x²) + eps) * weight
+Tensor rms_norm(const Tensor& input, const Tensor& weight, int axis = -1, float eps = 1e-5f);
+
+// Dropout operation
+// Returns pair of (output, mask) where mask is Bool tensor of kept values
+// Scale factor 1/(1-p) is applied when training=true
+std::pair<Tensor, Tensor> dropout(const Tensor& input, float p = 0.5f, bool training = true);
 
 // In-place operations
 void add_inplace(Tensor& lhs, const Tensor& rhs);

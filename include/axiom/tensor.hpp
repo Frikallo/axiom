@@ -240,6 +240,14 @@ class Tensor {
   Tensor to_complex() const { return astype(DType::Complex64); }
   Tensor to_complex128() const { return astype(DType::Complex128); }
 
+  // Complex number operations
+  // real(): Zero-copy view of real components (requires complex input)
+  Tensor real() const;
+  // imag(): Zero-copy view of imaginary components (requires complex input)
+  Tensor imag() const;
+  // conj(): Complex conjugate
+  Tensor conj() const;
+
   // Utility methods
   std::string repr() const;
   std::string str() const;

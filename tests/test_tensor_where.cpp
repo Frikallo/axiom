@@ -147,14 +147,58 @@ void test_where_different_dtypes_cpu() {
 }
 
 // ============================================================================
-// GPU Tests  
-// NOTE: GPU where tests are currently skipped due to MPSGraph Bool tensor
-// handling issues. The CPU implementation works correctly, and users can
-// use CPU conditions with GPU data (the operation will run on CPU).
+// GPU Tests
 // ============================================================================
 
-void test_where_gpu_skipped() {
-    std::cout << "  GPU where tests skipped - use CPU for now" << std::endl;
+void test_where_basic_gpu() {
+    auto cond = make_bool_tensor({true, false, true, false}, {4}, Device::GPU);
+    auto a = Tensor::full({4}, 1.0f).gpu();
+    auto b = Tensor::full({4}, 0.0f).gpu();
+
+    auto result = ops::where(cond, a, b);
+
+    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
+    ASSERT(result.shape() == Shape{4}, "Shape mismatch");
+    assert_tensor_near<float>(result, {1.0f, 0.0f, 1.0f, 0.0f});
+}
+
+void test_where_2d_gpu() {
+    auto cond = make_bool_tensor({true, false, false, true}, {2, 2}, Device::GPU);
+    auto a = Tensor::full({2, 2}, 10.0f).gpu();
+    auto b = Tensor::full({2, 2}, -10.0f).gpu();
+
+    auto result = ops::where(cond, a, b);
+
+    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
+    ASSERT(result.shape() == Shape({2, 2}), "Shape mismatch");
+    assert_tensor_near<float>(result, {10.0f, -10.0f, -10.0f, 10.0f});
+}
+
+void test_where_broadcast_gpu() {
+    // Condition: [true, false], shape (2,)
+    // a, b: shape (3, 2)
+    auto cond = make_bool_tensor({true, false}, {2}, Device::GPU);
+    auto a = Tensor::ones({3, 2}).gpu();
+    auto b = Tensor::zeros({3, 2}).gpu();
+
+    auto result = ops::where(cond, a, b);
+
+    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
+    ASSERT(result.shape() == Shape({3, 2}), "Shape mismatch");
+    assert_tensor_near<float>(result, {1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f});
+}
+
+void test_where_attention_mask_gpu() {
+    // Attention mask pattern: where(mask, scores, -1e9)
+    auto mask = make_bool_tensor({true, true, false, false}, {2, 2}, Device::GPU);
+    std::vector<float> scores_data = {0.5f, 0.3f, 0.2f, 0.1f};
+    auto scores = Tensor::from_data(scores_data.data(), {2, 2}).gpu();
+    auto neg_inf = Tensor::full({2, 2}, -1e9f).gpu();
+
+    auto result = ops::where(mask, scores, neg_inf);
+
+    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
+    assert_tensor_near<float>(result, {0.5f, 0.3f, -1e9f, -1e9f}, 1.0f);
 }
 
 void test_where_with_comparison_result() {
@@ -199,9 +243,12 @@ int main() {
     RUN_TEST(test_where_int_condition_cpu);
     RUN_TEST(test_where_different_dtypes_cpu);
     
-    // GPU tests (currently skipped)
+    // GPU tests
     std::cout << "--- GPU Tests ---" << std::endl;
-    RUN_TEST(test_where_gpu_skipped);
+    RUN_TEST(test_where_basic_gpu);
+    RUN_TEST(test_where_2d_gpu);
+    RUN_TEST(test_where_broadcast_gpu);
+    RUN_TEST(test_where_attention_mask_gpu);
     
     // Integration tests
     std::cout << "--- Integration Tests ---" << std::endl;

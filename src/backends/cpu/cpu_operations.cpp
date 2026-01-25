@@ -1138,6 +1138,88 @@ Tensor CPUWhereOperation::execute_where(const Tensor& condition, const Tensor& a
 }
 
 // ============================================================================
+// CPU Softmax/LogSoftmax Implementation
+// ============================================================================
+
+template<typename T>
+Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor& input, int axis) const {
+    // Normalize axis
+    int norm_axis = axis;
+    if (norm_axis < 0) {
+        norm_axis += static_cast<int>(input.ndim());
+    }
+
+    // Create output tensor
+    Tensor result(input.shape(), input.dtype(), Device::CPU);
+
+    size_t outer_size = 1;
+    for (int i = 0; i < norm_axis; ++i) outer_size *= input.shape()[i];
+
+    size_t axis_size = input.shape()[norm_axis];
+
+    size_t inner_size = 1;
+    for (size_t i = norm_axis + 1; i < input.ndim(); ++i) inner_size *= input.shape()[i];
+
+    const T* input_data = input.typed_data<T>();
+    T* result_data = result.typed_data<T>();
+
+    // Process each softmax independently
+    for (size_t outer = 0; outer < outer_size; ++outer) {
+        for (size_t inner = 0; inner < inner_size; ++inner) {
+            // Find max for numerical stability
+            T max_val = std::numeric_limits<T>::lowest();
+            for (size_t k = 0; k < axis_size; ++k) {
+                size_t idx = (outer * axis_size + k) * inner_size + inner;
+                max_val = std::max(max_val, input_data[idx]);
+            }
+
+            // Compute exp(x - max) and sum
+            T sum_exp = T(0);
+            for (size_t k = 0; k < axis_size; ++k) {
+                size_t idx = (outer * axis_size + k) * inner_size + inner;
+                T exp_val = std::exp(input_data[idx] - max_val);
+                result_data[idx] = exp_val;
+                sum_exp += exp_val;
+            }
+
+            // Normalize
+            if (is_log_) {
+                // log_softmax = x - max - log(sum_exp)
+                T log_sum = std::log(sum_exp);
+                for (size_t k = 0; k < axis_size; ++k) {
+                    size_t idx = (outer * axis_size + k) * inner_size + inner;
+                    result_data[idx] = input_data[idx] - max_val - log_sum;
+                }
+            } else {
+                // softmax = exp(x - max) / sum_exp
+                for (size_t k = 0; k < axis_size; ++k) {
+                    size_t idx = (outer * axis_size + k) * inner_size + inner;
+                    result_data[idx] /= sum_exp;
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+Tensor CPUSoftmaxOperation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
+    (void)keep_dims;  // Softmax preserves shape
+    if (input.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU Softmax");
+    }
+
+    int ax = axis.empty() ? -1 : axis[0];
+
+    switch (input.dtype()) {
+        case DType::Float32: return execute_softmax_typed<float>(input, ax);
+        case DType::Float64: return execute_softmax_typed<double>(input, ax);
+        default:
+            throw TypeError::unsupported_dtype(dtype_name(input.dtype()), name());
+    }
+}
+
+// ============================================================================
 // Factory functions
 // ============================================================================
 
@@ -1233,12 +1315,17 @@ void register_cpu_operations() {
   OperationRegistry::register_operation(OpType::Sin, Device::CPU, std::make_unique<CPUUnaryOperation<SinFunc>>(OpType::Sin, "sin", SinFunc{}));
   OperationRegistry::register_operation(OpType::Cos, Device::CPU, std::make_unique<CPUUnaryOperation<CosFunc>>(OpType::Cos, "cos", CosFunc{}));
   OperationRegistry::register_operation(OpType::Tan, Device::CPU, std::make_unique<CPUUnaryOperation<TanFunc>>(OpType::Tan, "tan", TanFunc{}));
+  OperationRegistry::register_operation(OpType::Erf, Device::CPU, std::make_unique<CPUUnaryOperation<ErfFunc>>(OpType::Erf, "erf", ErfFunc{}));
+  OperationRegistry::register_operation(OpType::GELU, Device::CPU, std::make_unique<CPUUnaryOperation<GELUFunc>>(OpType::GELU, "gelu", GELUFunc{}));
+  OperationRegistry::register_operation(OpType::Conj, Device::CPU, std::make_unique<CPUUnaryOperation<ConjFunc>>(OpType::Conj, "conj", ConjFunc{}));
 
   // Register reduction operations
   OperationRegistry::register_operation(OpType::Sum, Device::CPU, std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Sum, "sum", SumFunc{}));
   OperationRegistry::register_operation(OpType::Mean, Device::CPU, std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Mean, "mean", SumFunc{}));
   OperationRegistry::register_operation(OpType::Max, Device::CPU, std::make_unique<CPUReductionOperation<MaxFunc>>(OpType::Max, "max", MaxFunc{}));
   OperationRegistry::register_operation(OpType::Min, Device::CPU, std::make_unique<CPUReductionOperation<MinFunc>>(OpType::Min, "min", MinFunc{}));
+  OperationRegistry::register_operation(OpType::Any, Device::CPU, std::make_unique<CPUReductionOperation<AnyFunc>>(OpType::Any, "any", AnyFunc{}));
+  OperationRegistry::register_operation(OpType::All, Device::CPU, std::make_unique<CPUReductionOperation<AllFunc>>(OpType::All, "all", AllFunc{}));
 
   // Register argmax/argmin operations
   OperationRegistry::register_operation(OpType::ArgMax, Device::CPU, std::make_unique<CPUArgMaxOperation>());
@@ -1249,6 +1336,10 @@ void register_cpu_operations() {
 
   // Register where (conditional selection) operation
   OperationRegistry::register_operation(OpType::Where, Device::CPU, std::make_unique<CPUWhereOperation>());
+
+  // Register softmax operations
+  OperationRegistry::register_operation(OpType::Softmax, Device::CPU, std::make_unique<CPUSoftmaxOperation>(false));
+  OperationRegistry::register_operation(OpType::LogSoftmax, Device::CPU, std::make_unique<CPUSoftmaxOperation>(true));
 }
 
 }  // namespace cpu

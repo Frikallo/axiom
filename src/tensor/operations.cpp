@@ -7,9 +7,84 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <set>
 
 namespace axiom {
 namespace ops {
+
+// ============================================================================
+// Complex type legality enforcement
+// ============================================================================
+
+// Operations allowed for complex types
+static const std::set<OpType> complex_allowed_ops = {
+    OpType::Add, OpType::Subtract, OpType::Multiply, OpType::Divide,
+    OpType::Negate, OpType::Exp, OpType::Log, OpType::Sqrt,
+    OpType::Sin, OpType::Cos, OpType::Tan,
+    OpType::Sum, OpType::Mean, OpType::MatMul,
+    OpType::Conj, OpType::Real, OpType::Imag
+};
+
+static std::string op_type_name(OpType op) {
+    switch (op) {
+        case OpType::Add: return "add";
+        case OpType::Subtract: return "subtract";
+        case OpType::Multiply: return "multiply";
+        case OpType::Divide: return "divide";
+        case OpType::Power: return "power";
+        case OpType::Modulo: return "modulo";
+        case OpType::Equal: return "equal";
+        case OpType::NotEqual: return "not_equal";
+        case OpType::Less: return "less";
+        case OpType::LessEqual: return "less_equal";
+        case OpType::Greater: return "greater";
+        case OpType::GreaterEqual: return "greater_equal";
+        case OpType::LogicalAnd: return "logical_and";
+        case OpType::LogicalOr: return "logical_or";
+        case OpType::LogicalXor: return "logical_xor";
+        case OpType::LogicalNot: return "logical_not";
+        case OpType::Maximum: return "maximum";
+        case OpType::Minimum: return "minimum";
+        case OpType::Atan2: return "atan2";
+        case OpType::Hypot: return "hypot";
+        case OpType::Negate: return "negate";
+        case OpType::Abs: return "abs";
+        case OpType::Sqrt: return "sqrt";
+        case OpType::Exp: return "exp";
+        case OpType::Log: return "log";
+        case OpType::Sin: return "sin";
+        case OpType::Cos: return "cos";
+        case OpType::Tan: return "tan";
+        case OpType::Erf: return "erf";
+        case OpType::Conj: return "conj";
+        case OpType::Real: return "real";
+        case OpType::Imag: return "imag";
+        case OpType::GELU: return "gelu";
+        case OpType::Softmax: return "softmax";
+        case OpType::LogSoftmax: return "log_softmax";
+        case OpType::Sum: return "sum";
+        case OpType::Mean: return "mean";
+        case OpType::Max: return "max";
+        case OpType::Min: return "min";
+        case OpType::ArgMax: return "argmax";
+        case OpType::ArgMin: return "argmin";
+        case OpType::Any: return "any";
+        case OpType::All: return "all";
+        case OpType::MatMul: return "matmul";
+        case OpType::BatchMatMul: return "batch_matmul";
+        case OpType::Where: return "where";
+        case OpType::LayerNorm: return "layer_norm";
+        case OpType::RMSNorm: return "rms_norm";
+        case OpType::Dropout: return "dropout";
+        default: return "unknown";
+    }
+}
+
+static void assert_complex_legal(OpType op, DType dtype) {
+    if (is_complex_dtype(dtype) && complex_allowed_ops.find(op) == complex_allowed_ops.end()) {
+        throw TypeError("Operation '" + op_type_name(op) + "' not supported for complex types");
+    }
+}
 
 // Helper function to convert vector to string
 template<typename T>
@@ -442,6 +517,56 @@ Tensor tan(const Tensor& input) {
   return execute_unary_operation(OpType::Tan, input);
 }
 
+Tensor erf(const Tensor& input) {
+  return execute_unary_operation(OpType::Erf, input);
+}
+
+// Complex operations
+Tensor conj(const Tensor& input) {
+  if (!is_complex_dtype(input.dtype())) {
+    throw TypeError("conj() requires complex tensor, got " + input.dtype_name());
+  }
+  return execute_unary_operation(OpType::Conj, input);
+}
+
+Tensor real(const Tensor& input) {
+  return input.real();
+}
+
+Tensor imag(const Tensor& input) {
+  return input.imag();
+}
+
+// Activation operations
+Tensor gelu(const Tensor& input) {
+  return execute_unary_operation(OpType::GELU, input);
+}
+
+Tensor softmax(const Tensor& input, int axis) {
+  Device target_device = input.device();
+
+  const Operation* op = OperationRegistry::get_operation(OpType::Softmax, target_device);
+
+  if (!op) {
+    throw DeviceError("Softmax operation not available for device: " + axiom::system::device_to_string(target_device));
+  }
+
+  // Softmax uses execute_reduction with a single axis
+  return op->execute_reduction(input, {axis}, false);
+}
+
+Tensor log_softmax(const Tensor& input, int axis) {
+  Device target_device = input.device();
+
+  const Operation* op = OperationRegistry::get_operation(OpType::LogSoftmax, target_device);
+
+  if (!op) {
+    throw DeviceError("LogSoftmax operation not available for device: " + axiom::system::device_to_string(target_device));
+  }
+
+  return op->execute_reduction(input, {axis}, false);
+}
+
 // Reduction operations
 Tensor sum(const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
     return execute_reduction_operation(OpType::Sum, input, axis, keep_dims);
@@ -465,6 +590,14 @@ Tensor argmax(const Tensor& input, int axis, bool keep_dims) {
 
 Tensor argmin(const Tensor& input, int axis, bool keep_dims) {
     return execute_reduction_operation(OpType::ArgMin, input, {axis}, keep_dims);
+}
+
+Tensor any(const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
+    return execute_reduction_operation(OpType::Any, input, axis, keep_dims);
+}
+
+Tensor all(const Tensor& input, const std::vector<int>& axis, bool keep_dims) {
+    return execute_reduction_operation(OpType::All, input, axis, keep_dims);
 }
 
 void execute_binary_inplace(OpType op_type, Tensor& lhs, const Tensor& rhs) {
@@ -509,5 +642,120 @@ Tensor where(const Tensor& condition, const Tensor& a, const Tensor& b) {
     return op->execute_where(cond_on_device, a_on_device, b_on_device);
 }
 
+// Normalization operations
+Tensor layer_norm(const Tensor& input, const Tensor& weight, const Tensor& bias,
+                  int axis, float eps) {
+    // Determine device
+    Device device = Device::CPU;
+    if (input.device() == Device::GPU || weight.device() == Device::GPU || bias.device() == Device::GPU) {
+        device = Device::GPU;
+    }
+
+    // Move tensors to target device if needed
+    Tensor input_on_device = (input.device() == device) ? input : input.to(device);
+    Tensor weight_on_device = (weight.device() == device) ? weight : weight.to(device);
+    Tensor bias_on_device = (bias.device() == device) ? bias : bias.to(device);
+
+    // Normalize axis
+    int norm_axis = axis;
+    if (norm_axis < 0) {
+        norm_axis += static_cast<int>(input.ndim());
+    }
+
+    // Compute mean and variance along axis
+    auto input_mean = mean(input_on_device, {norm_axis}, true);
+    auto x_centered = subtract(input_on_device, input_mean);
+    auto x_sq = multiply(x_centered, x_centered);
+    auto variance = mean(x_sq, {norm_axis}, true);
+
+    // Normalize: (x - mean) / sqrt(var + eps)
+    auto eps_tensor = Tensor::full({1}, eps, device);
+    auto var_eps = add(variance, eps_tensor);
+    auto std_dev = ops::sqrt(var_eps);
+    auto normalized = divide(x_centered, std_dev);
+
+    // Apply weight and bias
+    auto scaled = multiply(normalized, weight_on_device);
+    return add(scaled, bias_on_device);
+}
+
+Tensor rms_norm(const Tensor& input, const Tensor& weight, int axis, float eps) {
+    // Determine device
+    Device device = Device::CPU;
+    if (input.device() == Device::GPU || weight.device() == Device::GPU) {
+        device = Device::GPU;
+    }
+
+    // Move tensors to target device if needed
+    Tensor input_on_device = (input.device() == device) ? input : input.to(device);
+    Tensor weight_on_device = (weight.device() == device) ? weight : weight.to(device);
+
+    // Normalize axis
+    int norm_axis = axis;
+    if (norm_axis < 0) {
+        norm_axis += static_cast<int>(input.ndim());
+    }
+
+    // Compute RMS: sqrt(mean(x²) + eps)
+    auto x_sq = multiply(input_on_device, input_on_device);
+    auto mean_x_sq = mean(x_sq, {norm_axis}, true);
+    auto eps_tensor = Tensor::full({1}, eps, device);
+    auto mean_eps = add(mean_x_sq, eps_tensor);
+    auto rms = ops::sqrt(mean_eps);
+
+    // Normalize: x / rms * weight
+    auto normalized = divide(input_on_device, rms);
+    return multiply(normalized, weight_on_device);
+}
+
+// Dropout operation
+std::pair<Tensor, Tensor> dropout(const Tensor& input, float p, bool training) {
+    if (!training || p == 0.0f) {
+        // No dropout during inference or when p=0
+        return {input, Tensor::ones(input.shape(), DType::Bool, input.device())};
+    }
+
+    if (p < 0.0f || p >= 1.0f) {
+        throw ValueError("Dropout probability must be in [0, 1), got " + std::to_string(p));
+    }
+
+    Device device = input.device();
+
+    // Generate random mask on CPU, then move to device
+    auto rand_tensor = Tensor::randn(input.shape(), DType::Float32, Device::CPU);
+
+    // Create mask: keep with probability (1-p)
+    // We use comparison: random > p to get True for values to keep
+    auto threshold = Tensor::full(input.shape(), p, Device::CPU);
+    auto rand_uniform = Tensor(input.shape(), DType::Float32, Device::CPU);
+
+    // Generate uniform random values using Box-Muller transform result
+    // For simplicity, use abs of randn and scale to [0,1)
+    float* rand_data = rand_tensor.typed_data<float>();
+    float* uniform_data = rand_uniform.typed_data<float>();
+    for (size_t i = 0; i < input.size(); ++i) {
+        // Simple hash to uniform - this is a quick approximation
+        uniform_data[i] = std::fmod(std::abs(rand_data[i] * 0.3989422804014327f + 0.5f), 1.0f);
+    }
+
+    auto mask = greater(rand_uniform, threshold);
+
+    // Move to device if needed
+    if (device != Device::CPU) {
+        mask = mask.to(device);
+    }
+
+    // Scale factor: 1 / (1 - p)
+    float scale = 1.0f / (1.0f - p);
+    auto scale_tensor = Tensor::full(input.shape(), scale, device);
+
+    // Apply mask and scale
+    auto mask_float = mask.astype(input.dtype());
+    auto masked = multiply(input, mask_float);
+    auto scaled = multiply(masked, scale_tensor);
+
+    return {scaled, mask};
+}
+
 }  // namespace ops
-}  // namespace axiom 
+}  // namespace axiom

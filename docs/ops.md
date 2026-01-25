@@ -108,6 +108,23 @@ Integer types only.
 | `ops::sin(a)` | - | ✓ | ✓ |
 | `ops::cos(a)` | - | ✓ | ✓ |
 | `ops::tan(a)` | - | ✓ | ✓ |
+| `ops::erf(a)` | - | ✓ | ✓ |
+
+## Complex Operations
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `ops::conj(a)` | Complex conjugate | ✓ | ✓ |
+| `ops::real(a)` | Real part | ✓ | ✓ |
+| `ops::imag(a)` | Imaginary part | ✓ | ✓ |
+
+## Activation Functions
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `ops::gelu(a)` | Gaussian Error Linear Unit | ✓ | ✓ |
+| `ops::softmax(a, axis)` | Softmax (default axis=-1) | ✓ | ✓ |
+| `ops::log_softmax(a, axis)` | Log-softmax (default axis=-1) | ✓ | ✓ |
 
 ## Reduction Operations
 
@@ -119,8 +136,12 @@ Integer types only.
 | `ops::min(a, axis, keep_dims)` | ✓ | ✓ |
 | `ops::argmax(a, axis, keep_dims)` | ✓ | ✓ |
 | `ops::argmin(a, axis, keep_dims)` | ✓ | ✓ |
+| `ops::any(a, axis, keep_dims)` | ✓ | ✓ |
+| `ops::all(a, axis, keep_dims)` | ✓ | ✓ |
 
 Member functions: `tensor.sum()`, `tensor.mean()`, `tensor.max()`, `tensor.min()`, `tensor.argmax()`, `tensor.argmin()`
+
+**Boolean reductions:** `any` returns true if any element is non-zero; `all` returns true if all elements are non-zero.
 
 ## Matrix Multiplication
 
@@ -139,11 +160,28 @@ Supported shapes:
 
 | Function | CPU | GPU |
 |----------|-----|-----|
-| `ops::where(condition, a, b)` | ✓ | ✗* |
+| `ops::where(condition, a, b)` | ✓ | ✓ |
 
 Returns elements from `a` where condition is true, `b` otherwise. All inputs broadcast together.
 
-*GPU where has a known issue with Bool tensor handling. Use CPU for now.
+## Normalization Operations
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `ops::layer_norm(x, weight, bias, axis, eps)` | Layer normalization | ✓ | ✓ |
+| `ops::rms_norm(x, weight, axis, eps)` | RMS normalization | ✓ | ✓ |
+
+- `layer_norm`: Computes `(x - mean) / sqrt(var + eps) * weight + bias`
+- `rms_norm`: Computes `x / sqrt(mean(x²) + eps) * weight`
+- Default `axis=-1`, `eps=1e-5`
+
+## Dropout
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `ops::dropout(x, p, training)` | Dropout regularization | ✓ | ✓ |
+
+Returns `std::pair<Tensor, Tensor>` containing (output, mask). Scale factor `1/(1-p)` is applied when `training=true`. Default `p=0.5`.
 
 ## Data Types
 
@@ -197,8 +235,10 @@ All operations use MPSGraph on Metal GPU for automatic kernel fusion and Apple S
 | Bitwise | ✓ | ✓ |
 | Math | ✓ | ✓ (except hypot) |
 | Unary | ✓ | ✓ |
+| Complex | ✓ | ✓ |
+| Activations | ✓ | ✓ |
 | Reductions | ✓ | ✓ |
 | MatMul | ✓ | ✓ |
-| Where | ✓ | ✗* |
-
-*GPU where has a known issue with Bool tensor handling.
+| Where | ✓ | ✓ |
+| Normalization | ✓ | ✓ |
+| Dropout | ✓ | ✓ |

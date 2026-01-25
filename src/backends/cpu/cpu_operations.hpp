@@ -397,6 +397,42 @@ struct TanFunc {
   }
 };
 
+struct ErfFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_floating_point_v<T>) {
+        return std::erf(a);
+    } else {
+        return static_cast<T>(std::erf(static_cast<double>(a)));
+    }
+  }
+};
+
+struct GELUFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    // GELU(x) = 0.5 * x * (1 + erf(x / sqrt(2)))
+    constexpr double sqrt2 = 1.4142135623730951;
+    if constexpr (std::is_floating_point_v<T>) {
+        return static_cast<T>(0.5) * a * (static_cast<T>(1.0) + std::erf(a / static_cast<T>(sqrt2)));
+    } else {
+        double da = static_cast<double>(a);
+        return static_cast<T>(0.5 * da * (1.0 + std::erf(da / sqrt2)));
+    }
+  }
+};
+
+struct ConjFunc {
+  template<typename T>
+  T operator()(const T& a) const {
+    if constexpr (std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>) {
+        return std::conj(a);
+    } else {
+        return a;  // Real types return themselves
+    }
+  }
+};
+
 // Reduction operations
 struct SumFunc {
   template<typename T>
@@ -457,6 +493,21 @@ struct MinFunc {
   T operator()(const T& a, const T& b) const { return std::min(a, b); }
   template<typename T>
   static T identity() { return std::numeric_limits<T>::max(); }
+};
+
+// Boolean reduction functions
+struct AnyFunc {
+  template<typename T>
+  T operator()(const T& a, const T& b) const { return static_cast<bool>(a) || static_cast<bool>(b); }
+  template<typename T>
+  static T identity() { return T(0); }  // false
+};
+
+struct AllFunc {
+  template<typename T>
+  T operator()(const T& a, const T& b) const { return static_cast<bool>(a) && static_cast<bool>(b); }
+  template<typename T>
+  static T identity() { return T(1); }  // true
 };
 
 // ============================================================================
@@ -530,6 +581,30 @@ class CPUWhereOperation : public ops::Operation {
  private:
   template<typename T>
   Tensor execute_where_typed(const Tensor& condition, const Tensor& a, const Tensor& b) const;
+};
+
+// ============================================================================
+// CPU Softmax/LogSoftmax Operations
+// ============================================================================
+
+class CPUSoftmaxOperation : public ops::Operation {
+  bool is_log_;
+ public:
+  CPUSoftmaxOperation(bool is_log) : is_log_(is_log) {}
+  ops::OpType type() const override { return is_log_ ? ops::OpType::LogSoftmax : ops::OpType::Softmax; }
+  std::string name() const override { return is_log_ ? "log_softmax" : "softmax"; }
+  Device device() const override { return Device::CPU; }
+
+  Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    (void)lhs; (void)rhs;
+    throw RuntimeError::internal("execute_binary called on Softmax operation");
+  }
+
+  Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override;
+
+ private:
+  template<typename T>
+  Tensor execute_softmax_typed(const Tensor& input, int axis) const;
 };
 
 // ============================================================================
