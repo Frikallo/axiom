@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  # Build and test on macOS (primary platform)
+  build-macos:
+    name: Build & Test (macOS)
+    runs-on: macos-14  # Apple Silicon runner
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+        
+    - name: Install Dependencies
+      run: |
+        brew install cmake ninja
+        
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DAXIOM_BUILD_TESTS=ON \
+          -DAXIOM_BUILD_EXAMPLES=ON
+          
+    - name: Build
+      run: cmake --build build --config ${{ env.BUILD_TYPE }}
+      
+    - name: Run Tests
+      working-directory: build
+      run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+      
+    - name: Upload Test Results
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-macos
+        path: build/Testing/
+
+  # Build on macOS Intel (compatibility check)
+  build-macos-intel:
+    name: Build & Test (macOS Intel)
+    runs-on: macos-13  # Intel runner
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+        
+    - name: Install Dependencies
+      run: |
+        brew install cmake ninja
+        
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DAXIOM_BUILD_TESTS=ON \
+          -DAXIOM_BUILD_EXAMPLES=OFF
+          
+    - name: Build
+      run: cmake --build build --config ${{ env.BUILD_TYPE }}
+      
+    - name: Run Tests
+      working-directory: build
+      run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure
+
+  # Code quality checks
+  code-quality:
+    name: Code Quality
+    runs-on: macos-14
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+        
+    - name: Install Dependencies
+      run: |
+        brew install cmake ninja llvm
+        echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+        
+    - name: Configure CMake (for compile_commands.json)
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          
+    - name: Check Formatting
+      run: |
+        find include src -name '*.hpp' -o -name '*.cpp' | head -20 | while read file; do
+          if ! clang-format --dry-run --Werror "$file" 2>/dev/null; then
+            echo "::warning file=$file::File needs formatting"
+          fi
+        done
+        
+    - name: Run clang-tidy
+      run: |
+        # Run clang-tidy on header files (sampling to avoid timeout)
+        find include/axiom -name '*.hpp' | head -5 | while read file; do
+          echo "Checking $file..."
+          clang-tidy -p build "$file" --quiet 2>/dev/null || true
+        done

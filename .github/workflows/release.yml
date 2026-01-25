@@ -1,0 +1,191 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  # Create release with artifacts
+  release:
+    name: Create Release
+    runs-on: macos-14
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+        
+    - name: Install Dependencies
+      run: |
+        brew install cmake ninja
+        
+    - name: Get Version
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version $VERSION"
+        
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install \
+          -DAXIOM_BUILD_TESTS=OFF \
+          -DAXIOM_BUILD_EXAMPLES=OFF \
+          -DAXIOM_EMBED_METAL_LIBRARY=ON
+          
+    - name: Build
+      run: cmake --build build --config ${{ env.BUILD_TYPE }}
+      
+    - name: Install
+      run: cmake --install build
+      
+    - name: Create Source Tarball
+      run: |
+        git archive --format=tar.gz --prefix=axiom-${{ steps.version.outputs.version }}/ \
+          -o axiom-${{ steps.version.outputs.version }}.tar.gz HEAD
+          
+    - name: Create Binary Package
+      run: |
+        cd install
+        tar -czvf ../axiom-${{ steps.version.outputs.version }}-macos-arm64.tar.gz .
+        
+    - name: Generate Checksums
+      run: |
+        shasum -a 256 axiom-${{ steps.version.outputs.version }}.tar.gz > checksums.txt
+        shasum -a 256 axiom-${{ steps.version.outputs.version }}-macos-arm64.tar.gz >> checksums.txt
+        cat checksums.txt
+        
+    - name: Generate Release Notes
+      id: release_notes
+      run: |
+        # Get commits since last tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -n "$PREV_TAG" ]; then
+          echo "Changes since $PREV_TAG:" > release_notes.md
+          echo "" >> release_notes.md
+          git log --pretty=format:"- %s" $PREV_TAG..HEAD >> release_notes.md
+        else
+          echo "Initial release" > release_notes.md
+        fi
+        echo "" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "## Installation" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### Homebrew (recommended)" >> release_notes.md
+        echo '```bash' >> release_notes.md
+        echo "brew tap noahkay/axiom" >> release_notes.md
+        echo "brew install axiom" >> release_notes.md
+        echo '```' >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### From Source" >> release_notes.md
+        echo '```bash' >> release_notes.md
+        echo "curl -L https://github.com/noahkay/axiom/archive/refs/tags/v${{ steps.version.outputs.version }}.tar.gz | tar xz" >> release_notes.md
+        echo "cd axiom-${{ steps.version.outputs.version }}" >> release_notes.md
+        echo "cmake -B build -DCMAKE_BUILD_TYPE=Release" >> release_notes.md
+        echo "cmake --build build" >> release_notes.md
+        echo "sudo cmake --install build" >> release_notes.md
+        echo '```' >> release_notes.md
+        
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body_path: release_notes.md
+        files: |
+          axiom-${{ steps.version.outputs.version }}.tar.gz
+          axiom-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
+          checksums.txt
+        draft: false
+        prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build for Intel Mac
+  release-intel:
+    name: Build Intel Binary
+    runs-on: macos-13
+    needs: release
+    permissions:
+      contents: write
+      
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+        
+    - name: Install Dependencies
+      run: |
+        brew install cmake ninja
+        
+    - name: Get Version
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install \
+          -DAXIOM_BUILD_TESTS=OFF \
+          -DAXIOM_BUILD_EXAMPLES=OFF \
+          -DAXIOM_EMBED_METAL_LIBRARY=ON
+          
+    - name: Build
+      run: cmake --build build --config ${{ env.BUILD_TYPE }}
+      
+    - name: Install
+      run: cmake --install build
+      
+    - name: Create Binary Package
+      run: |
+        cd install
+        tar -czvf ../axiom-${{ steps.version.outputs.version }}-macos-x86_64.tar.gz .
+        
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: axiom-${{ steps.version.outputs.version }}-macos-x86_64.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Update Homebrew formula (requires separate tap repo)
+  update-homebrew:
+    name: Update Homebrew
+    runs-on: ubuntu-latest
+    needs: [release, release-intel]
+    if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
+    
+    steps:
+    - name: Get Version
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+    - name: Trigger Homebrew Update
+      run: |
+        echo "To update Homebrew formula, update the homebrew-axiom tap repository"
+        echo "Version: ${{ steps.version.outputs.version }}"
+        # This would typically trigger a workflow in the homebrew-axiom tap repo
+        # For now, just print instructions
