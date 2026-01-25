@@ -238,6 +238,25 @@ Tensor Tensor::operator[](std::initializer_list<Index> indices) const {
                          std::to_string(ndim()) + " dimensions");
     }
 
+    // Check for TensorIndex (boolean mask or integer indices)
+    for (const auto &index : indices) {
+        if (std::holds_alternative<TensorIndex>(index)) {
+            // If we have a TensorIndex, treat it as boolean masking
+            const auto &tensor_idx = std::get<TensorIndex>(index);
+            if (tensor_idx.indices) {
+                // Check if it's a boolean mask or integer indices
+                if (tensor_idx.indices->dtype() == DType::Bool) {
+                    // Boolean masking - return selected elements
+                    return masked_select(*tensor_idx.indices);
+                } else {
+                    // Integer indices - use gather on dimension 0
+                    return gather(0, *tensor_idx.indices);
+                }
+            }
+        }
+    }
+
+    // Regular indexing path
     std::vector<Slice> slice_args;
     std::vector<int> dims_to_squeeze;
 
@@ -258,6 +277,8 @@ Tensor Tensor::operator[](std::initializer_list<Index> indices) const {
                     dims_to_squeeze.push_back(current_dim);
                 } else if constexpr (std::is_same_v<T, Slice>) {
                     slice_args.push_back(arg);
+                } else if constexpr (std::is_same_v<T, TensorIndex>) {
+                    // Already handled above
                 }
             },
             index);
@@ -384,6 +405,11 @@ Tensor
 Tensor::rearrange(const std::string &pattern,
                   const std::map<std::string, size_t> &axis_sizes) const {
     return einops::rearrange(*this, pattern, axis_sizes);
+}
+
+Tensor Tensor::reduce(const std::string &pattern, const std::string &reduction,
+                      const std::map<std::string, size_t> &axis_sizes) const {
+    return einops::reduce(*this, pattern, reduction, axis_sizes);
 }
 
 Tensor Tensor::transpose() const {
@@ -662,6 +688,88 @@ Tensor Tensor::repeat(const std::vector<size_t> &repeats) const {
 Tensor Tensor::matmul(const Tensor &other, bool transpose_self,
                       bool transpose_other) const {
     return ops::matmul(*this, other, transpose_self, transpose_other);
+}
+
+// ============================================================================
+// Conditional and masking operations (fluent API)
+// ============================================================================
+
+Tensor Tensor::where(const Tensor &condition, const Tensor &other) const {
+    return ops::where(condition, *this, other);
+}
+
+Tensor Tensor::where(const Tensor &condition, float other) const {
+    auto other_tensor = Tensor::full(shape_, other, device());
+    return ops::where(condition, *this, other_tensor);
+}
+
+Tensor Tensor::where(const Tensor &condition, double other) const {
+    auto other_tensor =
+        Tensor::full(shape_, static_cast<float>(other), device());
+    return ops::where(condition, *this, other_tensor);
+}
+
+Tensor Tensor::where(const Tensor &condition, int32_t other) const {
+    auto other_tensor =
+        Tensor::full(shape_, static_cast<float>(other), device());
+    return ops::where(condition, *this, other_tensor);
+}
+
+Tensor Tensor::masked_fill(const Tensor &mask, float value) const {
+    return ops::masked_fill(*this, mask, value);
+}
+
+Tensor Tensor::masked_fill(const Tensor &mask, double value) const {
+    return ops::masked_fill(*this, mask, static_cast<float>(value));
+}
+
+Tensor Tensor::masked_fill(const Tensor &mask, int32_t value) const {
+    return ops::masked_fill(*this, mask, static_cast<float>(value));
+}
+
+Tensor Tensor::masked_fill(const Tensor &mask, const Tensor &value) const {
+    return ops::masked_fill(*this, mask, value);
+}
+
+Tensor &Tensor::masked_fill_(const Tensor &mask, float value) {
+    *this = masked_fill(mask, value);
+    return *this;
+}
+
+Tensor &Tensor::masked_fill_(const Tensor &mask, double value) {
+    *this = masked_fill(mask, value);
+    return *this;
+}
+
+Tensor &Tensor::masked_fill_(const Tensor &mask, int32_t value) {
+    *this = masked_fill(mask, value);
+    return *this;
+}
+
+Tensor Tensor::masked_select(const Tensor &mask) const {
+    return ops::masked_select(*this, mask);
+}
+
+// ============================================================================
+// Indexing operations (fluent API)
+// ============================================================================
+
+Tensor Tensor::gather(int dim, const Tensor &indices) const {
+    return ops::gather(*this, dim, indices);
+}
+
+Tensor Tensor::scatter(int dim, const Tensor &indices,
+                       const Tensor &src) const {
+    return ops::scatter(*this, dim, indices, src);
+}
+
+Tensor &Tensor::scatter_(int dim, const Tensor &indices, const Tensor &src) {
+    *this = scatter(dim, indices, src);
+    return *this;
+}
+
+Tensor Tensor::index_select(int dim, const Tensor &indices) const {
+    return ops::index_select(*this, dim, indices);
 }
 
 Tensor Tensor::sum(int axis, bool keep_dims) const {

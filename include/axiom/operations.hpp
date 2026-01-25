@@ -117,6 +117,15 @@ enum class OpType {
     // Conditional operations
     Where,
 
+    // Masking operations
+    MaskedFill,
+    MaskedSelect,
+
+    // Indexing operations
+    Gather,
+    Scatter,
+    IndexSelect,
+
     // Normalization operations
     LayerNorm,
     RMSNorm,
@@ -161,6 +170,32 @@ class Operation {
     // Returns elements from 'a' where condition is true, 'b' otherwise
     virtual Tensor execute_where(const Tensor &condition, const Tensor &a,
                                  const Tensor &b) const;
+
+    // For masked fill operation
+    // Returns tensor with masked positions filled with value
+    virtual Tensor execute_masked_fill(const Tensor &input, const Tensor &mask,
+                                       const Tensor &value) const;
+
+    // For masked select operation
+    // Returns 1D tensor of elements where mask is true
+    virtual Tensor execute_masked_select(const Tensor &input,
+                                         const Tensor &mask) const;
+
+    // For gather operation
+    // Gathers values along an axis according to indices
+    virtual Tensor execute_gather(const Tensor &input, int dim,
+                                  const Tensor &indices) const;
+
+    // For scatter operation
+    // Scatters values along an axis according to indices
+    virtual Tensor execute_scatter(const Tensor &input, int dim,
+                                   const Tensor &indices,
+                                   const Tensor &src) const;
+
+    // For index_select operation
+    // Selects elements along a dimension using indices
+    virtual Tensor execute_index_select(const Tensor &input, int dim,
+                                        const Tensor &indices) const;
 
     // For in-place operations (future extension)
     virtual void execute_binary_inplace(Tensor &lhs, const Tensor &rhs) const;
@@ -288,6 +323,42 @@ Tensor matmul(const Tensor &a, const Tensor &b, bool transpose_a = false,
 // Equivalent to numpy.where(condition, a, b)
 // All inputs are broadcast together
 Tensor where(const Tensor &condition, const Tensor &a, const Tensor &b);
+
+// ============================================================================
+// Masking operations
+// ============================================================================
+
+// masked_fill: Fill elements where mask is true with the given value
+// Returns a new tensor with masked positions filled
+Tensor masked_fill(const Tensor &input, const Tensor &mask, float value);
+Tensor masked_fill(const Tensor &input, const Tensor &mask, double value);
+Tensor masked_fill(const Tensor &input, const Tensor &mask,
+                   const Tensor &value);
+
+// masked_select: Select elements where mask is true
+// Returns a 1D tensor containing the selected elements
+Tensor masked_select(const Tensor &input, const Tensor &mask);
+
+// ============================================================================
+// Indexing operations
+// ============================================================================
+
+// gather: Gather values along an axis according to indices
+// Like PyTorch's torch.gather(input, dim, index)
+// output[i][j][k] = input[index[i][j][k]][j][k]  # if dim == 0
+// output[i][j][k] = input[i][index[i][j][k]][k]  # if dim == 1
+Tensor gather(const Tensor &input, int dim, const Tensor &indices);
+
+// scatter: Scatter values into tensor at indices
+// Like PyTorch's tensor.scatter_(dim, index, src)
+// self[index[i][j][k]][j][k] = src[i][j][k]  # if dim == 0
+Tensor scatter(const Tensor &input, int dim, const Tensor &indices,
+               const Tensor &src);
+
+// index_select: Select elements along a dimension using 1D indices
+// Like PyTorch's torch.index_select(input, dim, index)
+// More efficient than gather when selecting whole slices
+Tensor index_select(const Tensor &input, int dim, const Tensor &indices);
 
 // Normalization operations
 // layer_norm: (x - mean) / sqrt(var + eps) * weight + bias

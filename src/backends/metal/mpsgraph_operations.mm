@@ -1297,6 +1297,306 @@ static MPSGraphTensor* gelu_op(MPSGraph* graph, MPSGraphTensor* x) {
 }
 
 // ============================================================================
+// MPSGraph Masking Operations Implementation
+// ============================================================================
+
+Tensor MPSGraphMaskedFillOperation::execute_masked_fill(const Tensor& input,
+                                                        const Tensor& mask,
+                                                        const Tensor& value) const {
+    @autoreleasepool {
+        // Ensure inputs are contiguous and on GPU
+        Tensor input_cont = ensureContiguous(input);
+        Tensor mask_cont = ensureContiguous(mask);
+        Tensor value_cont = ensureContiguous(value);
+        
+        // Handle broadcasting
+        auto broadcast_info = ops::compute_broadcast_info(input_cont.shape(), mask_cont.shape());
+        const auto& result_shape = broadcast_info.result_shape;
+        
+        // Create the graph
+        MPSGraph* graph = [[MPSGraph alloc] init];
+        
+        // Create placeholders using the tensors
+        MPSGraphTensor* input_placeholder = createPlaceholder(graph, input_cont);
+        MPSGraphTensor* mask_placeholder = createPlaceholder(graph, mask_cont);
+        MPSGraphTensor* value_placeholder = createPlaceholder(graph, value_cont);
+        
+        // Convert mask to bool
+        MPSGraphTensor* mask_bool = [graph castTensor:mask_placeholder toType:MPSDataTypeBool name:nil];
+        
+        // Cast value to input dtype
+        MPSGraphTensor* value_casted = [graph castTensor:value_placeholder 
+                                                  toType:getMPSDataType(input_cont.dtype()) 
+                                                    name:nil];
+        
+        // Broadcast value to result shape
+        NSMutableArray<NSNumber*>* result_ns_shape = [NSMutableArray arrayWithCapacity:result_shape.size()];
+        for (size_t dim : result_shape) {
+            [result_ns_shape addObject:@(dim)];
+        }
+        MPSGraphTensor* value_broadcast = [graph broadcastTensor:value_casted
+                                                         toShape:result_ns_shape
+                                                            name:nil];
+        
+        // Use select: where mask is true, use value; otherwise use input
+        MPSGraphTensor* result_tensor = [graph selectWithPredicateTensor:mask_bool
+                                                     truePredicateTensor:value_broadcast
+                                                    falsePredicateTensor:input_placeholder
+                                                                    name:nil];
+        
+        // Create output tensor
+        Tensor result(result_shape, input_cont.dtype(), Device::GPU);
+        
+        // Create tensor data
+        MPSGraphTensorData* input_data = createTensorData(input_cont);
+        MPSGraphTensorData* mask_data = createTensorData(mask_cont);
+        MPSGraphTensorData* value_data = createTensorData(value_cont);
+        MPSGraphTensorData* result_data = createTensorData(result);
+        
+        // Create feeds and targets
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
+            input_placeholder: input_data,
+            mask_placeholder: mask_data,
+            value_placeholder: value_data
+        };
+        
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
+            result_tensor: result_data
+        };
+        
+        // Execute
+        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
+                                feeds:feeds
+                     targetOperations:nil
+                    resultsDictionary:targets];
+        
+        return result;
+    }
+}
+
+Tensor MPSGraphMaskedSelectOperation::execute_masked_select(const Tensor& input,
+                                                            const Tensor& mask) const {
+    // MaskedSelect is complex for GPU - fallback to CPU for now
+    // A proper GPU implementation would require a two-pass approach:
+    // 1. Count non-zero elements in mask (prefix sum)
+    // 2. Compact elements using scatter
+    
+    // For now, execute on CPU
+    Tensor input_cpu = input.cpu();
+    Tensor mask_cpu = mask.cpu();
+    
+    auto cpu_op = ops::OperationRegistry::get_operation(ops::OpType::MaskedSelect, Device::CPU);
+    if (!cpu_op) {
+        throw DeviceError("MaskedSelect not available on CPU");
+    }
+    
+    Tensor result_cpu = cpu_op->execute_masked_select(input_cpu, mask_cpu);
+    return result_cpu.gpu();
+}
+
+// ============================================================================
+// MPSGraph Indexing Operations Implementation
+// ============================================================================
+
+Tensor MPSGraphGatherOperation::execute_gather(const Tensor& input, int dim,
+                                               const Tensor& indices) const {
+    @autoreleasepool {
+        // Ensure inputs are contiguous and on GPU
+        Tensor input_cont = ensureContiguous(input);
+        Tensor indices_cont = ensureContiguous(indices.astype(DType::Int32)).gpu();
+        
+        // Normalize dim
+        int norm_dim = dim;
+        if (norm_dim < 0) {
+            norm_dim += static_cast<int>(input_cont.ndim());
+        }
+        
+        // Create the graph
+        MPSGraph* graph = [[MPSGraph alloc] init];
+        
+        // Create placeholders using tensors
+        MPSGraphTensor* input_placeholder = createPlaceholder(graph, input_cont);
+        MPSGraphTensor* indices_placeholder = createPlaceholder(graph, indices_cont);
+        
+        // Use gatherAlongAxis
+        MPSGraphTensor* result_tensor = [graph gatherAlongAxis:norm_dim
+                                               withUpdatesTensor:input_placeholder
+                                                   indicesTensor:indices_placeholder
+                                                            name:nil];
+        
+        // Output shape is same as indices
+        Tensor result(indices_cont.shape(), input_cont.dtype(), Device::GPU);
+        
+        // Create tensor data
+        MPSGraphTensorData* input_data = createTensorData(input_cont);
+        MPSGraphTensorData* indices_data = createTensorData(indices_cont);
+        MPSGraphTensorData* result_data = createTensorData(result);
+        
+        // Create feeds and targets
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
+            input_placeholder: input_data,
+            indices_placeholder: indices_data
+        };
+        
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
+            result_tensor: result_data
+        };
+        
+        // Execute
+        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
+                                feeds:feeds
+                     targetOperations:nil
+                    resultsDictionary:targets];
+        
+        return result;
+    }
+}
+
+Tensor MPSGraphScatterOperation::execute_scatter(const Tensor& input, int dim,
+                                                 const Tensor& indices,
+                                                 const Tensor& src) const {
+    @autoreleasepool {
+        // Ensure inputs are contiguous and on GPU
+        Tensor input_cont = ensureContiguous(input);
+        Tensor indices_cont = ensureContiguous(indices.astype(DType::Int32)).gpu();
+        Tensor src_cont = ensureContiguous(src.astype(input.dtype())).gpu();
+        
+        // Normalize dim
+        int norm_dim = dim;
+        if (norm_dim < 0) {
+            norm_dim += static_cast<int>(input_cont.ndim());
+        }
+        
+        // Create the graph
+        MPSGraph* graph = [[MPSGraph alloc] init];
+        
+        // Create placeholders using tensors
+        MPSGraphTensor* input_placeholder = createPlaceholder(graph, input_cont);
+        MPSGraphTensor* indices_placeholder = createPlaceholder(graph, indices_cont);
+        MPSGraphTensor* src_placeholder = createPlaceholder(graph, src_cont);
+        
+        // Use scatterAlongAxis
+        MPSGraphTensor* result_tensor = [graph scatterAlongAxis:norm_dim
+                                                   withDataTensor:input_placeholder
+                                                    updatesTensor:src_placeholder
+                                                    indicesTensor:indices_placeholder
+                                                             mode:MPSGraphScatterModeSet
+                                                             name:nil];
+        
+        // Output shape is same as input
+        Tensor result(input_cont.shape(), input_cont.dtype(), Device::GPU);
+        
+        // Create tensor data
+        MPSGraphTensorData* input_data = createTensorData(input_cont);
+        MPSGraphTensorData* indices_data = createTensorData(indices_cont);
+        MPSGraphTensorData* src_data = createTensorData(src_cont);
+        MPSGraphTensorData* result_data = createTensorData(result);
+        
+        // Create feeds and targets
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
+            input_placeholder: input_data,
+            indices_placeholder: indices_data,
+            src_placeholder: src_data
+        };
+        
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
+            result_tensor: result_data
+        };
+        
+        // Execute
+        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
+                                feeds:feeds
+                     targetOperations:nil
+                    resultsDictionary:targets];
+        
+        return result;
+    }
+}
+
+Tensor MPSGraphIndexSelectOperation::execute_index_select(const Tensor& input, int dim,
+                                                          const Tensor& indices) const {
+    @autoreleasepool {
+        // Ensure inputs are contiguous and on GPU
+        Tensor input_cont = ensureContiguous(input);
+        Tensor indices_cont = ensureContiguous(indices.astype(DType::Int32)).gpu();
+        
+        // Normalize dim
+        int norm_dim = dim;
+        if (norm_dim < 0) {
+            norm_dim += static_cast<int>(input_cont.ndim());
+        }
+        
+        // Compute output shape: replace dim size with num_indices
+        Shape output_shape = input_cont.shape();
+        output_shape[norm_dim] = indices_cont.size();
+        
+        // Create the graph
+        MPSGraph* graph = [[MPSGraph alloc] init];
+        
+        // Create placeholders using tensors
+        MPSGraphTensor* input_placeholder = createPlaceholder(graph, input_cont);
+        MPSGraphTensor* indices_placeholder = createPlaceholder(graph, indices_cont);
+        
+        // Use gatherAlongAxis - for index_select, indices are 1D and we select whole slices
+        // First reshape indices to match expected broadcast shape
+        NSMutableArray<NSNumber*>* indices_reshape = [NSMutableArray arrayWithCapacity:input_cont.ndim()];
+        for (size_t i = 0; i < input_cont.ndim(); ++i) {
+            if (static_cast<int>(i) == norm_dim) {
+                [indices_reshape addObject:@(indices_cont.size())];
+            } else {
+                [indices_reshape addObject:@(1)];
+            }
+        }
+        
+        MPSGraphTensor* indices_reshaped = [graph reshapeTensor:indices_placeholder
+                                                       withShape:indices_reshape
+                                                            name:nil];
+        
+        // Broadcast indices to output shape
+        NSMutableArray<NSNumber*>* output_ns_shape = [NSMutableArray arrayWithCapacity:output_shape.size()];
+        for (size_t d : output_shape) {
+            [output_ns_shape addObject:@(d)];
+        }
+        
+        MPSGraphTensor* indices_broadcast = [graph broadcastTensor:indices_reshaped
+                                                           toShape:output_ns_shape
+                                                              name:nil];
+        
+        // Use gatherAlongAxis
+        MPSGraphTensor* result_tensor = [graph gatherAlongAxis:norm_dim
+                                               withUpdatesTensor:input_placeholder
+                                                   indicesTensor:indices_broadcast
+                                                            name:nil];
+        
+        // Create output tensor
+        Tensor result(output_shape, input_cont.dtype(), Device::GPU);
+        
+        // Create tensor data
+        MPSGraphTensorData* input_data = createTensorData(input_cont);
+        MPSGraphTensorData* indices_data = createTensorData(indices_cont);
+        MPSGraphTensorData* result_data = createTensorData(result);
+        
+        // Create feeds and targets
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
+            input_placeholder: input_data,
+            indices_placeholder: indices_data
+        };
+        
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
+            result_tensor: result_data
+        };
+        
+        // Execute
+        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
+                                feeds:feeds
+                     targetOperations:nil
+                    resultsDictionary:targets];
+        
+        return result;
+    }
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 
@@ -1438,6 +1738,23 @@ void register_mpsgraph_operations() {
     // Where (conditional selection) operation
     OperationRegistry::register_operation(OpType::Where, Device::GPU,
         std::make_unique<MPSGraphTernaryOperation>(OpType::Where, "where", where_op));
+
+    // Masking operations
+    OperationRegistry::register_operation(OpType::MaskedFill, Device::GPU,
+        std::make_unique<MPSGraphMaskedFillOperation>());
+    
+    OperationRegistry::register_operation(OpType::MaskedSelect, Device::GPU,
+        std::make_unique<MPSGraphMaskedSelectOperation>());
+    
+    // Indexing operations
+    OperationRegistry::register_operation(OpType::Gather, Device::GPU,
+        std::make_unique<MPSGraphGatherOperation>());
+    
+    OperationRegistry::register_operation(OpType::Scatter, Device::GPU,
+        std::make_unique<MPSGraphScatterOperation>());
+    
+    OperationRegistry::register_operation(OpType::IndexSelect, Device::GPU,
+        std::make_unique<MPSGraphIndexSelectOperation>());
 
     // Softmax operations
     OperationRegistry::register_operation(OpType::Softmax, Device::GPU,

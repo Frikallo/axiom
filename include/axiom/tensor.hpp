@@ -185,6 +185,9 @@ class Tensor {
     Tensor
     rearrange(const std::string &pattern,
               const std::map<std::string, size_t> &axis_sizes = {}) const;
+    Tensor
+    reduce(const std::string &pattern, const std::string &reduction,
+           const std::map<std::string, size_t> &axis_sizes = {}) const;
     Tensor transpose() const;
     Tensor transpose(const std::vector<int> &axes) const;
     Tensor squeeze(int axis = -1) const;
@@ -215,6 +218,52 @@ class Tensor {
     Tensor dot(const Tensor &other) const {
         return matmul(other);
     } // Alias for vectors
+
+    // =========================================================================
+    // Conditional and masking operations (fluent API)
+    // =========================================================================
+
+    // where: Returns elements from *this where condition is true, other otherwise
+    // Usage: x.where(x > 0, 0.0f) - similar to torch.where but as member function
+    Tensor where(const Tensor &condition, const Tensor &other) const;
+    Tensor where(const Tensor &condition, float other) const;
+    Tensor where(const Tensor &condition, double other) const;
+    Tensor where(const Tensor &condition, int32_t other) const;
+
+    // masked_fill: Fill elements where mask is true with value
+    // Usage: x.masked_fill(x < 0, 0.0f) - zero out negative values
+    Tensor masked_fill(const Tensor &mask, float value) const;
+    Tensor masked_fill(const Tensor &mask, double value) const;
+    Tensor masked_fill(const Tensor &mask, int32_t value) const;
+    Tensor masked_fill(const Tensor &mask, const Tensor &value) const;
+
+    // masked_fill_: In-place version of masked_fill
+    Tensor &masked_fill_(const Tensor &mask, float value);
+    Tensor &masked_fill_(const Tensor &mask, double value);
+    Tensor &masked_fill_(const Tensor &mask, int32_t value);
+
+    // masked_select: Select elements where mask is true
+    // Usage: x.masked_select(x > 0) - get all positive values as 1D tensor
+    Tensor masked_select(const Tensor &mask) const;
+
+    // =========================================================================
+    // Indexing operations (fluent API)
+    // =========================================================================
+
+    // gather: Gather values along an axis according to indices
+    // Usage: x.gather(dim, indices) - like torch.gather
+    Tensor gather(int dim, const Tensor &indices) const;
+
+    // scatter: Scatter values into tensor at indices
+    // Usage: x.scatter(dim, indices, src) - like tensor.scatter_
+    Tensor scatter(int dim, const Tensor &indices, const Tensor &src) const;
+
+    // scatter_: In-place scatter
+    Tensor &scatter_(int dim, const Tensor &indices, const Tensor &src);
+
+    // index_select: Select elements along a dimension using 1D indices
+    // Usage: x.index_select(0, indices) - select rows by indices
+    Tensor index_select(int dim, const Tensor &indices) const;
 
     // Reduction member functions
     Tensor sum(int axis = -1, bool keep_dims = false) const;

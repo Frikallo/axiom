@@ -1,4 +1,5 @@
 #include <axiom/axiom.hpp>
+#include <axiom/tensor_operators.hpp>
 #include <cmath>
 #include <functional>
 #include <iostream>
@@ -235,6 +236,83 @@ void test_where_relu_pattern() {
     assert_tensor_near<float>(result, {1.0f, 0.0f, 3.0f, 0.0f, 0.0f});
 }
 
+// ============================================================================
+// Fluent API Tests
+// ============================================================================
+
+void test_fluent_masked_fill() {
+    // Test masked_fill with scalar comparison
+    std::vector<float> x_data = {1.0f, -2.0f, 3.0f, -4.0f, 0.0f};
+    auto x = Tensor::from_data(x_data.data(), {5});
+
+    // ReLU using masked_fill: zero out negative values
+    auto mask = x < 0.0f;
+    auto result = x.masked_fill(mask, 0.0f);
+
+    assert_tensor_near<float>(result, {1.0f, 0.0f, 3.0f, 0.0f, 0.0f});
+}
+
+void test_fluent_masked_select() {
+    // Test masked_select
+    std::vector<float> x_data = {1.0f, -2.0f, 3.0f, -4.0f, 5.0f};
+    auto x = Tensor::from_data(x_data.data(), {5});
+
+    // Get all positive values
+    auto mask = x > 0.0f;
+    auto positives = x.masked_select(mask);
+
+    ASSERT(positives.ndim() == 1, "Result should be 1D");
+    ASSERT(positives.size() == 3, "Should have 3 positive values");
+    assert_tensor_near<float>(positives, {1.0f, 3.0f, 5.0f});
+}
+
+void test_fluent_where_method() {
+    // Test the fluent where method
+    std::vector<float> x_data = {1.0f, -2.0f, 3.0f, -4.0f};
+    auto x = Tensor::from_data(x_data.data(), {4});
+
+    // ReLU using fluent where
+    auto result = x.where(x > 0.0f, 0.0f);
+
+    assert_tensor_near<float>(result, {1.0f, 0.0f, 3.0f, 0.0f});
+}
+
+void test_scalar_comparison_operators() {
+    // Test scalar comparison operators for clean syntax
+    std::vector<float> x_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+    auto x = Tensor::from_data(x_data.data(), {5});
+
+    // Test x > 3
+    auto gt3 = x > 3.0f;
+    auto gt3_cpu = gt3.cpu();
+    const uint8_t *gt3_data = gt3_cpu.typed_data<uint8_t>();
+    ASSERT(gt3_data[0] == 0 && gt3_data[1] == 0 && gt3_data[2] == 0,
+           "1,2,3 should NOT be > 3");
+    ASSERT(gt3_data[3] == 1 && gt3_data[4] == 1, "4,5 should be > 3");
+
+    // Test x <= 2
+    auto le2 = x <= 2.0f;
+    auto le2_cpu = le2.cpu();
+    const uint8_t *le2_data = le2_cpu.typed_data<uint8_t>();
+    ASSERT(le2_data[0] == 1 && le2_data[1] == 1, "1,2 should be <= 2");
+    ASSERT(le2_data[2] == 0 && le2_data[3] == 0 && le2_data[4] == 0,
+           "3,4,5 should NOT be <= 2");
+}
+
+void test_attention_mask_fluent() {
+    // Attention masking pattern using fluent API
+    std::vector<float> scores_data = {0.5f, 0.3f, 0.2f, 0.1f};
+    auto scores = Tensor::from_data(scores_data.data(), {2, 2});
+
+    // Create causal mask (lower triangular)
+    auto mask = make_bool_tensor({true, false, true, true}, {2, 2});
+
+    // Apply attention mask using fluent API
+    auto masked_scores = scores.masked_fill(!mask, -1e9f);
+
+    assert_tensor_near<float>(masked_scores, {0.5f, -1e9f, 0.2f, 0.1f}, 1.0f);
+}
+
 int main() {
     // Initialize operations registry
     ops::OperationRegistry::initialize_builtin_operations();
@@ -261,6 +339,14 @@ int main() {
     std::cout << "--- Integration Tests ---" << std::endl;
     RUN_TEST(test_where_with_comparison_result);
     RUN_TEST(test_where_relu_pattern);
+
+    // Fluent API tests
+    std::cout << "--- Fluent API Tests ---" << std::endl;
+    RUN_TEST(test_fluent_masked_fill);
+    RUN_TEST(test_fluent_masked_select);
+    RUN_TEST(test_fluent_where_method);
+    RUN_TEST(test_scalar_comparison_operators);
+    RUN_TEST(test_attention_mask_fluent);
 
     std::cout << "=== Results ===" << std::endl;
     std::cout << "Passed: " << tests_passed << "/" << tests_run << std::endl;

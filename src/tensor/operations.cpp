@@ -126,6 +126,16 @@ static std::string op_type_name(OpType op) {
         return "rms_norm";
     case OpType::Dropout:
         return "dropout";
+    case OpType::MaskedFill:
+        return "masked_fill";
+    case OpType::MaskedSelect:
+        return "masked_select";
+    case OpType::Gather:
+        return "gather";
+    case OpType::Scatter:
+        return "scatter";
+    case OpType::IndexSelect:
+        return "index_select";
     default:
         return "unknown";
     }
@@ -357,6 +367,47 @@ Tensor Operation::execute_where(const Tensor &condition, const Tensor &a,
     (void)a;
     (void)b;
     throw RuntimeError::not_implemented("Where operations for " + name());
+}
+
+Tensor Operation::execute_masked_fill(const Tensor &input, const Tensor &mask,
+                                      const Tensor &value) const {
+    (void)input;
+    (void)mask;
+    (void)value;
+    throw RuntimeError::not_implemented("MaskedFill operations for " + name());
+}
+
+Tensor Operation::execute_masked_select(const Tensor &input,
+                                        const Tensor &mask) const {
+    (void)input;
+    (void)mask;
+    throw RuntimeError::not_implemented("MaskedSelect operations for " + name());
+}
+
+Tensor Operation::execute_gather(const Tensor &input, int dim,
+                                 const Tensor &indices) const {
+    (void)input;
+    (void)dim;
+    (void)indices;
+    throw RuntimeError::not_implemented("Gather operations for " + name());
+}
+
+Tensor Operation::execute_scatter(const Tensor &input, int dim,
+                                  const Tensor &indices,
+                                  const Tensor &src) const {
+    (void)input;
+    (void)dim;
+    (void)indices;
+    (void)src;
+    throw RuntimeError::not_implemented("Scatter operations for " + name());
+}
+
+Tensor Operation::execute_index_select(const Tensor &input, int dim,
+                                       const Tensor &indices) const {
+    (void)input;
+    (void)dim;
+    (void)indices;
+    throw RuntimeError::not_implemented("IndexSelect operations for " + name());
 }
 
 void Operation::execute_binary_inplace(Tensor &lhs, const Tensor &rhs) const {
@@ -751,6 +802,173 @@ Tensor where(const Tensor &condition, const Tensor &a, const Tensor &b) {
     Tensor b_on_device = (b.device() == device) ? b : b.to(device);
 
     return op->execute_where(cond_on_device, a_on_device, b_on_device);
+}
+
+// ============================================================================
+// Masking operations
+// ============================================================================
+
+Tensor masked_fill(const Tensor &input, const Tensor &mask, float value) {
+    auto value_tensor = Tensor::full({1}, value, input.device());
+    return masked_fill(input, mask, value_tensor);
+}
+
+Tensor masked_fill(const Tensor &input, const Tensor &mask, double value) {
+    auto value_tensor = Tensor::full({1}, static_cast<float>(value), input.device());
+    return masked_fill(input, mask, value_tensor);
+}
+
+Tensor masked_fill(const Tensor &input, const Tensor &mask,
+                   const Tensor &value) {
+    // Determine device - prefer GPU if any input is on GPU
+    Device device = Device::CPU;
+    if (input.device() == Device::GPU || mask.device() == Device::GPU ||
+        value.device() == Device::GPU) {
+        device = Device::GPU;
+    }
+
+    // Get operation for device
+    auto op = OperationRegistry::get_operation(OpType::MaskedFill, device);
+    if (!op) {
+        // Fallback to CPU
+        device = Device::CPU;
+        op = OperationRegistry::get_operation(OpType::MaskedFill, device);
+    }
+    if (!op) {
+        throw DeviceError("MaskedFill operation not available for device: " +
+                          axiom::system::device_to_string(device));
+    }
+
+    // Move tensors to target device if needed
+    Tensor input_on_device =
+        (input.device() == device) ? input : input.to(device);
+    Tensor mask_on_device =
+        (mask.device() == device) ? mask : mask.to(device);
+    Tensor value_on_device =
+        (value.device() == device) ? value : value.to(device);
+
+    return op->execute_masked_fill(input_on_device, mask_on_device,
+                                   value_on_device);
+}
+
+Tensor masked_select(const Tensor &input, const Tensor &mask) {
+    // Determine device
+    Device device = Device::CPU;
+    if (input.device() == Device::GPU || mask.device() == Device::GPU) {
+        device = Device::GPU;
+    }
+
+    // Get operation for device
+    auto op = OperationRegistry::get_operation(OpType::MaskedSelect, device);
+    if (!op) {
+        // Fallback to CPU
+        device = Device::CPU;
+        op = OperationRegistry::get_operation(OpType::MaskedSelect, device);
+    }
+    if (!op) {
+        throw DeviceError("MaskedSelect operation not available for device: " +
+                          axiom::system::device_to_string(device));
+    }
+
+    // Move tensors to target device if needed
+    Tensor input_on_device =
+        (input.device() == device) ? input : input.to(device);
+    Tensor mask_on_device =
+        (mask.device() == device) ? mask : mask.to(device);
+
+    return op->execute_masked_select(input_on_device, mask_on_device);
+}
+
+// ============================================================================
+// Indexing operations
+// ============================================================================
+
+Tensor gather(const Tensor &input, int dim, const Tensor &indices) {
+    // Determine device
+    Device device = Device::CPU;
+    if (input.device() == Device::GPU || indices.device() == Device::GPU) {
+        device = Device::GPU;
+    }
+
+    // Get operation for device
+    auto op = OperationRegistry::get_operation(OpType::Gather, device);
+    if (!op) {
+        // Fallback to CPU
+        device = Device::CPU;
+        op = OperationRegistry::get_operation(OpType::Gather, device);
+    }
+    if (!op) {
+        throw DeviceError("Gather operation not available for device: " +
+                          axiom::system::device_to_string(device));
+    }
+
+    // Move tensors to target device if needed
+    Tensor input_on_device =
+        (input.device() == device) ? input : input.to(device);
+    Tensor indices_on_device =
+        (indices.device() == device) ? indices : indices.to(device);
+
+    return op->execute_gather(input_on_device, dim, indices_on_device);
+}
+
+Tensor scatter(const Tensor &input, int dim, const Tensor &indices,
+               const Tensor &src) {
+    // Determine device
+    Device device = Device::CPU;
+    if (input.device() == Device::GPU || indices.device() == Device::GPU ||
+        src.device() == Device::GPU) {
+        device = Device::GPU;
+    }
+
+    // Get operation for device
+    auto op = OperationRegistry::get_operation(OpType::Scatter, device);
+    if (!op) {
+        // Fallback to CPU
+        device = Device::CPU;
+        op = OperationRegistry::get_operation(OpType::Scatter, device);
+    }
+    if (!op) {
+        throw DeviceError("Scatter operation not available for device: " +
+                          axiom::system::device_to_string(device));
+    }
+
+    // Move tensors to target device if needed
+    Tensor input_on_device =
+        (input.device() == device) ? input : input.to(device);
+    Tensor indices_on_device =
+        (indices.device() == device) ? indices : indices.to(device);
+    Tensor src_on_device = (src.device() == device) ? src : src.to(device);
+
+    return op->execute_scatter(input_on_device, dim, indices_on_device,
+                               src_on_device);
+}
+
+Tensor index_select(const Tensor &input, int dim, const Tensor &indices) {
+    // Determine device
+    Device device = Device::CPU;
+    if (input.device() == Device::GPU || indices.device() == Device::GPU) {
+        device = Device::GPU;
+    }
+
+    // Get operation for device
+    auto op = OperationRegistry::get_operation(OpType::IndexSelect, device);
+    if (!op) {
+        // Fallback to CPU
+        device = Device::CPU;
+        op = OperationRegistry::get_operation(OpType::IndexSelect, device);
+    }
+    if (!op) {
+        throw DeviceError("IndexSelect operation not available for device: " +
+                          axiom::system::device_to_string(device));
+    }
+
+    // Move tensors to target device if needed
+    Tensor input_on_device =
+        (input.device() == device) ? input : input.to(device);
+    Tensor indices_on_device =
+        (indices.device() == device) ? indices : indices.to(device);
+
+    return op->execute_index_select(input_on_device, dim, indices_on_device);
 }
 
 // Normalization operations

@@ -1,5 +1,7 @@
 #include "axiom/einops.hpp"
+#include "axiom/operations.hpp"
 
+#include <algorithm>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -465,6 +467,157 @@ Tensor rearrange(const Tensor &tensor, const std::string &pattern,
                  const std::map<std::string, size_t> &axis_sizes) {
     EinopsExpression expr(pattern, axis_sizes);
     return expr.apply(tensor);
+}
+
+Tensor reduce(const Tensor &tensor, const std::string &pattern,
+              const std::string &reduction,
+              const std::map<std::string, size_t> &axis_sizes) {
+    // Parse the reduction type
+    enum class ReductionOp { Sum, Mean, Max, Min, Prod };
+    ReductionOp red_op;
+
+    if (reduction == "sum") {
+        red_op = ReductionOp::Sum;
+    } else if (reduction == "mean") {
+        red_op = ReductionOp::Mean;
+    } else if (reduction == "max") {
+        red_op = ReductionOp::Max;
+    } else if (reduction == "min") {
+        red_op = ReductionOp::Min;
+    } else if (reduction == "prod") {
+        throw EinopsError("'prod' reduction not yet implemented");
+    } else {
+        throw EinopsError("Unknown reduction: " + reduction +
+                         ". Use 'sum', 'mean', 'max', 'min', or 'prod'");
+    }
+
+    // Parse the einops expression
+    EinopsExpression expr(pattern, axis_sizes);
+
+    // Get the input and output axes
+    auto input_axes =
+        expr.get_pattern_axes(expr.parse_single_pattern(pattern.substr(0, pattern.find("->"))));
+    auto output_axes =
+        expr.get_pattern_axes(expr.parse_single_pattern(pattern.substr(pattern.find("->") + 2)));
+
+    // First, rearrange if there are any grouped axes to expand
+    Tensor working = tensor;
+
+    // Compute axis sizes from tensor
+    auto sizes = expr.infer_axis_sizes(tensor);
+
+    // Check if input has grouped axes that need expanding
+    size_t arrow_pos = pattern.find("->");
+    std::string input_pattern = pattern.substr(0, arrow_pos);
+    input_pattern.erase(0, input_pattern.find_first_not_of(" \t"));
+    input_pattern.erase(input_pattern.find_last_not_of(" \t") + 1);
+
+    bool has_groups = input_pattern.find('(') != std::string::npos;
+
+    if (has_groups) {
+        // Need to first expand grouped axes
+        // Build an intermediate pattern that expands all groups
+        std::string expanded_input;
+        std::string token;
+        int paren_depth = 0;
+
+        for (char c : input_pattern) {
+            if (c == '(') {
+                paren_depth++;
+                if (paren_depth == 1)
+                    continue; // Skip opening paren
+            } else if (c == ')') {
+                paren_depth--;
+                if (paren_depth == 0)
+                    continue; // Skip closing paren
+            }
+            expanded_input += c;
+        }
+
+        // Rearrange to expanded form
+        std::string expand_pattern = input_pattern + " -> " + expanded_input;
+        working = rearrange(working, expand_pattern, axis_sizes);
+    }
+
+    // Now figure out which axes to reduce
+    // Output axes that are NOT in input axes need to be reduced
+    std::set<std::string> input_set(input_axes.begin(), input_axes.end());
+    std::set<std::string> output_set(output_axes.begin(), output_axes.end());
+
+    // Find axes that are in input but not in output - these get reduced
+    std::vector<int> reduce_axes;
+    for (size_t i = 0; i < input_axes.size(); ++i) {
+        const auto &axis = input_axes[i];
+        if (axis != "__unity__" && axis != "__ellipsis__" &&
+            output_set.find(axis) == output_set.end()) {
+            reduce_axes.push_back(static_cast<int>(i));
+        }
+    }
+
+    // Apply reduction
+    if (!reduce_axes.empty()) {
+        // Sort axes in descending order to reduce from back to front
+        std::sort(reduce_axes.begin(), reduce_axes.end(), std::greater<int>());
+
+        for (int axis : reduce_axes) {
+            switch (red_op) {
+            case ReductionOp::Sum:
+                working = ops::sum(working, {axis}, false);
+                break;
+            case ReductionOp::Mean:
+                working = ops::mean(working, {axis}, false);
+                break;
+            case ReductionOp::Max:
+                working = ops::max(working, {axis}, false);
+                break;
+            case ReductionOp::Min:
+                working = ops::min(working, {axis}, false);
+                break;
+            case ReductionOp::Prod:
+                // Not implemented
+                break;
+            }
+        }
+    }
+
+    // Finally, rearrange to output shape if needed
+    // Build the final output axes list
+    std::vector<std::string> remaining_input;
+    for (const auto &axis : input_axes) {
+        if (axis != "__unity__" && axis != "__ellipsis__" &&
+            output_set.find(axis) != output_set.end()) {
+            remaining_input.push_back(axis);
+        }
+    }
+
+    // Check if we need to reorder
+    bool needs_reorder = false;
+    if (remaining_input.size() == output_axes.size()) {
+        for (size_t i = 0; i < remaining_input.size(); ++i) {
+            if (remaining_input[i] != output_axes[i]) {
+                needs_reorder = true;
+                break;
+            }
+        }
+    }
+
+    if (needs_reorder && working.ndim() > 1) {
+        // Build transpose order
+        std::vector<int> transpose_order;
+        for (const auto &out_axis : output_axes) {
+            for (size_t i = 0; i < remaining_input.size(); ++i) {
+                if (remaining_input[i] == out_axis) {
+                    transpose_order.push_back(static_cast<int>(i));
+                    break;
+                }
+            }
+        }
+        if (transpose_order.size() == working.ndim()) {
+            working = working.transpose(transpose_order);
+        }
+    }
+
+    return working;
 }
 
 } // namespace einops

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <type_traits>
+
 #include "operations.hpp"
 #include "tensor.hpp"
 
@@ -94,7 +96,108 @@ inline Tensor operator>>(const Tensor &lhs, const Tensor &rhs) {
 }
 
 // ============================================================================
-// Scalar operations (convenience overloads)
+// Scalar comparison operators (for cleaner masking syntax)
+// ============================================================================
+
+// tensor > scalar
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator>(const Tensor &tensor, T scalar) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::greater(tensor, scalar_tensor);
+}
+
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator>(T scalar, const Tensor &tensor) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::greater(scalar_tensor, tensor);
+}
+
+// tensor >= scalar
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator>=(const Tensor &tensor, T scalar) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::greater_equal(tensor, scalar_tensor);
+}
+
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator>=(T scalar, const Tensor &tensor) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::greater_equal(scalar_tensor, tensor);
+}
+
+// tensor < scalar
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator<(const Tensor &tensor, T scalar) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::less(tensor, scalar_tensor);
+}
+
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator<(T scalar, const Tensor &tensor) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::less(scalar_tensor, tensor);
+}
+
+// tensor <= scalar
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator<=(const Tensor &tensor, T scalar) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::less_equal(tensor, scalar_tensor);
+}
+
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator<=(T scalar, const Tensor &tensor) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::less_equal(scalar_tensor, tensor);
+}
+
+// tensor == scalar
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator==(const Tensor &tensor, T scalar) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::equal(tensor, scalar_tensor);
+}
+
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator==(T scalar, const Tensor &tensor) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::equal(scalar_tensor, tensor);
+}
+
+// tensor != scalar
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator!=(const Tensor &tensor, T scalar) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::not_equal(tensor, scalar_tensor);
+}
+
+template <typename T,
+          typename = std::enable_if_t<std::is_arithmetic_v<T>>>
+inline Tensor operator!=(T scalar, const Tensor &tensor) {
+    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
+    return ops::not_equal(scalar_tensor, tensor);
+}
+
+// Logical NOT for boolean tensors
+inline Tensor operator!(const Tensor &tensor) {
+    // Create a tensor of ones and XOR with it
+    Tensor ones = Tensor::ones(tensor.shape(), DType::Bool, tensor.device());
+    return ops::logical_xor(tensor.astype(DType::Bool), ones);
+}
+
+// ============================================================================
+// Scalar arithmetic operations (convenience overloads)
 // ============================================================================
 
 template <typename T> inline Tensor operator+(const Tensor &tensor, T scalar) {

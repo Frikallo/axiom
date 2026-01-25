@@ -617,6 +617,138 @@ class CPUWhereOperation : public ops::Operation {
 };
 
 // ============================================================================
+// CPU MaskedFill Operation
+// ============================================================================
+
+class CPUMaskedFillOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::MaskedFill; }
+    std::string name() const override { return "masked_fill"; }
+    Device device() const override { return Device::CPU; }
+
+    Tensor execute_binary(const Tensor &lhs, const Tensor &rhs) const override {
+        (void)lhs;
+        (void)rhs;
+        throw RuntimeError::internal(
+            "execute_binary called on MaskedFill operation");
+    }
+
+    Tensor execute_masked_fill(const Tensor &input, const Tensor &mask,
+                               const Tensor &value) const override;
+
+  private:
+    template <typename T>
+    Tensor execute_masked_fill_typed(const Tensor &input, const Tensor &mask,
+                                     const Tensor &value) const;
+};
+
+// ============================================================================
+// CPU MaskedSelect Operation
+// ============================================================================
+
+class CPUMaskedSelectOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::MaskedSelect; }
+    std::string name() const override { return "masked_select"; }
+    Device device() const override { return Device::CPU; }
+
+    Tensor execute_binary(const Tensor &lhs, const Tensor &rhs) const override {
+        (void)lhs;
+        (void)rhs;
+        throw RuntimeError::internal(
+            "execute_binary called on MaskedSelect operation");
+    }
+
+    Tensor execute_masked_select(const Tensor &input,
+                                 const Tensor &mask) const override;
+
+  private:
+    template <typename T>
+    Tensor execute_masked_select_typed(const Tensor &input,
+                                       const Tensor &mask) const;
+};
+
+// ============================================================================
+// CPU Gather Operation
+// ============================================================================
+
+class CPUGatherOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::Gather; }
+    std::string name() const override { return "gather"; }
+    Device device() const override { return Device::CPU; }
+
+    Tensor execute_binary(const Tensor &lhs, const Tensor &rhs) const override {
+        (void)lhs;
+        (void)rhs;
+        throw RuntimeError::internal(
+            "execute_binary called on Gather operation");
+    }
+
+    Tensor execute_gather(const Tensor &input, int dim,
+                          const Tensor &indices) const override;
+
+  private:
+    template <typename T>
+    Tensor execute_gather_typed(const Tensor &input, int dim,
+                                const Tensor &indices) const;
+};
+
+// ============================================================================
+// CPU Scatter Operation
+// ============================================================================
+
+class CPUScatterOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::Scatter; }
+    std::string name() const override { return "scatter"; }
+    Device device() const override { return Device::CPU; }
+
+    Tensor execute_binary(const Tensor &lhs, const Tensor &rhs) const override {
+        (void)lhs;
+        (void)rhs;
+        throw RuntimeError::internal(
+            "execute_binary called on Scatter operation");
+    }
+
+    Tensor execute_scatter(const Tensor &input, int dim,
+                           const Tensor &indices,
+                           const Tensor &src) const override;
+
+  private:
+    template <typename T>
+    Tensor execute_scatter_typed(const Tensor &input, int dim,
+                                 const Tensor &indices,
+                                 const Tensor &src) const;
+};
+
+// ============================================================================
+// CPU IndexSelect Operation
+// ============================================================================
+
+class CPUIndexSelectOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::IndexSelect; }
+    std::string name() const override { return "index_select"; }
+    Device device() const override { return Device::CPU; }
+
+    Tensor execute_binary(const Tensor &lhs, const Tensor &rhs) const override {
+        (void)lhs;
+        (void)rhs;
+        throw RuntimeError::internal(
+            "execute_binary called on IndexSelect operation");
+    }
+
+    Tensor execute_index_select(const Tensor &input, int dim,
+                                const Tensor &indices) const override;
+
+  private:
+    template <typename T>
+    Tensor execute_index_select_typed(const Tensor &input, int dim,
+                                      const Tensor &indices) const;
+};
+
+// ============================================================================
 // CPU Softmax/LogSoftmax Operations
 // ============================================================================
 

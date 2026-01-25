@@ -158,6 +158,90 @@ class MPSGraphTernaryOperation : public MPSGraphOperation {
 // simple wrapper for the reduction operations.
 
 // ============================================================================
+// MPSGraph Masking Operations
+// ============================================================================
+
+class MPSGraphMaskedFillOperation : public MPSGraphOperation {
+  public:
+    MPSGraphMaskedFillOperation()
+        : MPSGraphOperation(ops::OpType::MaskedFill, "masked_fill") {}
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on masked_fill operation");
+    }
+
+    Tensor execute_masked_fill(const Tensor &input, const Tensor &mask,
+                               const Tensor &value) const override;
+};
+
+class MPSGraphMaskedSelectOperation : public MPSGraphOperation {
+  public:
+    MPSGraphMaskedSelectOperation()
+        : MPSGraphOperation(ops::OpType::MaskedSelect, "masked_select") {}
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on masked_select operation");
+    }
+
+    Tensor execute_masked_select(const Tensor &input,
+                                 const Tensor &mask) const override;
+};
+
+// ============================================================================
+// MPSGraph Indexing Operations
+// ============================================================================
+
+class MPSGraphGatherOperation : public MPSGraphOperation {
+  public:
+    MPSGraphGatherOperation()
+        : MPSGraphOperation(ops::OpType::Gather, "gather") {}
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on gather operation");
+    }
+
+    Tensor execute_gather(const Tensor &input, int dim,
+                          const Tensor &indices) const override;
+};
+
+class MPSGraphScatterOperation : public MPSGraphOperation {
+  public:
+    MPSGraphScatterOperation()
+        : MPSGraphOperation(ops::OpType::Scatter, "scatter") {}
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on scatter operation");
+    }
+
+    Tensor execute_scatter(const Tensor &input, int dim,
+                           const Tensor &indices,
+                           const Tensor &src) const override;
+};
+
+class MPSGraphIndexSelectOperation : public MPSGraphOperation {
+  public:
+    MPSGraphIndexSelectOperation()
+        : MPSGraphOperation(ops::OpType::IndexSelect, "index_select") {}
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on index_select operation");
+    }
+
+    Tensor execute_index_select(const Tensor &input, int dim,
+                                const Tensor &indices) const override;
+};
+
+// ============================================================================
 // Registration Functions
 // ============================================================================
 

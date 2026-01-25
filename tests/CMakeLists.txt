@@ -380,3 +380,53 @@ set_tests_properties(tensor_normalization
     PROPERTIES
         TIMEOUT 30
 )
+
+# Gather/Scatter/IndexSelect tests
+add_executable(test_tensor_gather_scatter
+    test_tensor_gather_scatter.cpp
+)
+
+target_link_libraries(test_tensor_gather_scatter
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_gather_scatter
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_gather_scatter
+    COMMAND test_tensor_gather_scatter
+)
+
+set_tests_properties(tensor_gather_scatter
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Einops reduce tests
+add_executable(test_einops_reduce
+    test_einops_reduce.cpp
+)
+
+target_link_libraries(test_einops_reduce
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_einops_reduce
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME einops_reduce
+    COMMAND test_einops_reduce
+)
+
+set_tests_properties(einops_reduce
+    PROPERTIES
+        TIMEOUT 30
+)

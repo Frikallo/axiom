@@ -29,6 +29,40 @@ Quick reference for all operations in Axiom. All operations support both CPU and
 | `tensor.expand(shape)` | Broadcast expand (zero-copy) |
 | `tensor.repeat(repeats)` | Repeat with data copy |
 | `tensor.rearrange(pattern)` | Einops-style reshape |
+| `tensor.reduce(pattern, reduction)` | Einops-style reduce |
+
+## Einops Operations
+
+Semantic tensor manipulation using the einops pattern syntax.
+
+| Function | Description |
+|----------|-------------|
+| `tensor.rearrange(pattern, axis_sizes)` | Reshape/transpose with pattern |
+| `tensor.reduce(pattern, reduction, axis_sizes)` | Reduce with pattern |
+| `einops::rearrange(tensor, pattern, axis_sizes)` | Functional form |
+| `einops::reduce(tensor, pattern, reduction, axis_sizes)` | Functional form |
+
+**Supported reductions:** `"sum"`, `"mean"`, `"max"`, `"min"`
+
+**Examples:**
+
+```cpp
+// Transpose using rearrange
+auto transposed = x.rearrange("h w c -> c h w");
+
+// Flatten
+auto flat = x.rearrange("b h w c -> b (h w c)");
+
+// Pooling with reduce
+auto pooled = x.reduce("b (h p1) (w p2) c -> b h w c", "mean", 
+                       {{"p1", 2}, {"p2", 2}});
+
+// Global average pooling
+auto gap = features.reduce("b h w c -> b c", "mean");
+
+// Max pooling
+auto maxpooled = x.reduce("b h w c -> b c", "max");
+```
 
 ## Memory Operations
 
@@ -164,6 +198,66 @@ Supported shapes:
 
 Returns elements from `a` where condition is true, `b` otherwise. All inputs broadcast together.
 
+## Masking Operations (Fluent API)
+
+Intuitive masking operations for clean, readable code.
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `tensor.where(cond, other)` | Select from tensor where cond is true, else other | ✓ | ✓ |
+| `tensor.masked_fill(mask, value)` | Fill positions where mask is true | ✓ | ✓ |
+| `tensor.masked_select(mask)` | Return 1D tensor of selected elements | ✓ | ✓ |
+| `ops::masked_fill(input, mask, value)` | Functional form | ✓ | ✓ |
+| `ops::masked_select(input, mask)` | Functional form | ✓ | ✓ |
+
+**Examples:**
+
+```cpp
+// ReLU in one line
+auto relu = x.masked_fill(x < 0, 0.0f);
+
+// Get all positive values
+auto positives = x.masked_select(x > 0);
+
+// Attention masking
+auto masked_scores = scores.masked_fill(!mask, -1e9f);
+```
+
+**Scalar Comparison Operators:**
+
+Tensors can be compared directly with scalars for clean mask creation:
+
+```cpp
+auto mask = x > 0.0f;     // tensor > scalar
+auto mask = x <= 3;       // tensor <= scalar
+auto mask = 5.0f < x;     // scalar < tensor
+auto inverted = !mask;    // logical NOT
+```
+
+## Indexing Operations
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `tensor.gather(dim, indices)` | Gather along dimension | ✓ | ✓ |
+| `tensor.scatter(dim, indices, src)` | Scatter values at indices | ✓ | ✓ |
+| `tensor.index_select(dim, indices)` | Select slices along dimension | ✓ | ✓ |
+| `ops::gather(input, dim, indices)` | Functional form | ✓ | ✓ |
+| `ops::scatter(input, dim, indices, src)` | Functional form | ✓ | ✓ |
+| `ops::index_select(input, dim, indices)` | Functional form | ✓ | ✓ |
+
+**Examples:**
+
+```cpp
+// Select specific rows
+auto selected = x.index_select(0, indices);
+
+// Gather along columns
+auto gathered = x.gather(1, column_indices);
+
+// Scatter values into tensor
+auto result = x.scatter(0, indices, values);
+```
+
 ## Normalization Operations
 
 | Function | Description | CPU | GPU |
@@ -240,5 +334,8 @@ All operations use MPSGraph on Metal GPU for automatic kernel fusion and Apple S
 | Reductions | ✓ | ✓ |
 | MatMul | ✓ | ✓ |
 | Where | ✓ | ✓ |
+| Masking | ✓ | ✓ |
+| Indexing (gather/scatter) | ✓ | ✓ |
+| Einops | ✓ | ✓ |
 | Normalization | ✓ | ✓ |
 | Dropout | ✓ | ✓ |

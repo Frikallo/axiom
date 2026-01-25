@@ -1239,6 +1239,466 @@ Tensor CPUWhereOperation::execute_where(const Tensor &condition,
 }
 
 // ============================================================================
+// CPU MaskedFill Implementation
+// ============================================================================
+
+template <typename T>
+Tensor CPUMaskedFillOperation::execute_masked_fill_typed(
+    const Tensor &input, const Tensor &mask, const Tensor &value) const {
+
+    // Create output tensor (copy of input)
+    Tensor result = input.copy();
+
+    // Get value to fill
+    T fill_value;
+    if (value.dtype() == input.dtype()) {
+        fill_value = value.typed_data<T>()[0];
+    } else {
+        // Convert value to target type
+        Tensor value_converted = value.astype(input.dtype());
+        fill_value = value_converted.typed_data<T>()[0];
+    }
+
+    // Handle broadcasting: mask and input may have different shapes
+    auto broadcast_info = ops::compute_broadcast_info(input.shape(), mask.shape());
+    const auto &result_shape = broadcast_info.result_shape;
+
+    // If shapes match, fast path
+    if (input.shape() == mask.shape() && input.is_contiguous() &&
+        mask.is_contiguous()) {
+        T *result_data = result.typed_data<T>();
+        const uint8_t *mask_data = mask.typed_data<uint8_t>();
+
+        for (size_t i = 0; i < input.size(); ++i) {
+            if (mask_data[i]) {
+                result_data[i] = fill_value;
+            }
+        }
+        return result;
+    }
+
+    // General case with broadcasting
+    Tensor input_expanded = input.broadcast_to(result_shape);
+    Tensor mask_expanded = mask.broadcast_to(result_shape);
+    result = Tensor(result_shape, input.dtype(), Device::CPU);
+
+    T *result_data = result.typed_data<T>();
+    size_t total_size = ShapeUtils::size(result_shape);
+
+    for (size_t i = 0; i < total_size; ++i) {
+        auto coords = ShapeUtils::unravel_index(i, result_shape);
+
+        // Get mask value
+        size_t mask_offset =
+            ShapeUtils::linear_index(coords, mask_expanded.strides());
+        bool mask_val =
+            *reinterpret_cast<const uint8_t *>(
+                static_cast<const uint8_t *>(mask_expanded.data()) +
+                mask_offset) != 0;
+
+        // Get input value
+        size_t input_offset =
+            ShapeUtils::linear_index(coords, input_expanded.strides());
+        T input_val = *reinterpret_cast<const T *>(
+            static_cast<const uint8_t *>(input_expanded.data()) + input_offset);
+
+        result_data[i] = mask_val ? fill_value : input_val;
+    }
+
+    return result;
+}
+
+Tensor CPUMaskedFillOperation::execute_masked_fill(const Tensor &input,
+                                                   const Tensor &mask,
+                                                   const Tensor &value) const {
+    if (input.device() != Device::CPU || mask.device() != Device::CPU ||
+        value.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU MaskedFill");
+    }
+
+#define DISPATCH_MASKED_FILL(DTYPE, CTYPE)                                     \
+    case DTYPE:                                                                \
+        return execute_masked_fill_typed<CTYPE>(input, mask, value);
+
+    switch (input.dtype()) {
+        DISPATCH_MASKED_FILL(DType::Float32, float)
+        DISPATCH_MASKED_FILL(DType::Float64, double)
+        DISPATCH_MASKED_FILL(DType::Int32, int32_t)
+        DISPATCH_MASKED_FILL(DType::Int64, int64_t)
+        DISPATCH_MASKED_FILL(DType::Int16, int16_t)
+        DISPATCH_MASKED_FILL(DType::Int8, int8_t)
+        DISPATCH_MASKED_FILL(DType::UInt8, uint8_t)
+        DISPATCH_MASKED_FILL(DType::UInt16, uint16_t)
+        DISPATCH_MASKED_FILL(DType::UInt32, uint32_t)
+        DISPATCH_MASKED_FILL(DType::UInt64, uint64_t)
+        DISPATCH_MASKED_FILL(DType::Bool, bool)
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "MaskedFill");
+    }
+#undef DISPATCH_MASKED_FILL
+}
+
+// ============================================================================
+// CPU MaskedSelect Implementation
+// ============================================================================
+
+template <typename T>
+Tensor CPUMaskedSelectOperation::execute_masked_select_typed(
+    const Tensor &input, const Tensor &mask) const {
+
+    // Handle broadcasting
+    auto broadcast_info = ops::compute_broadcast_info(input.shape(), mask.shape());
+    const auto &result_shape = broadcast_info.result_shape;
+
+    Tensor input_expanded = input.broadcast_to(result_shape);
+    Tensor mask_expanded = mask.broadcast_to(result_shape);
+
+    // First pass: count selected elements
+    size_t count = 0;
+    size_t total_size = ShapeUtils::size(result_shape);
+
+    for (size_t i = 0; i < total_size; ++i) {
+        auto coords = ShapeUtils::unravel_index(i, result_shape);
+        size_t mask_offset =
+            ShapeUtils::linear_index(coords, mask_expanded.strides());
+        bool mask_val =
+            *reinterpret_cast<const uint8_t *>(
+                static_cast<const uint8_t *>(mask_expanded.data()) +
+                mask_offset) != 0;
+        if (mask_val) {
+            count++;
+        }
+    }
+
+    // Create output tensor (1D)
+    Tensor result({count}, input.dtype(), Device::CPU);
+    if (count == 0) {
+        return result;
+    }
+
+    // Second pass: gather selected elements
+    T *result_data = result.typed_data<T>();
+    size_t out_idx = 0;
+
+    for (size_t i = 0; i < total_size; ++i) {
+        auto coords = ShapeUtils::unravel_index(i, result_shape);
+
+        size_t mask_offset =
+            ShapeUtils::linear_index(coords, mask_expanded.strides());
+        bool mask_val =
+            *reinterpret_cast<const uint8_t *>(
+                static_cast<const uint8_t *>(mask_expanded.data()) +
+                mask_offset) != 0;
+
+        if (mask_val) {
+            size_t input_offset =
+                ShapeUtils::linear_index(coords, input_expanded.strides());
+            T input_val = *reinterpret_cast<const T *>(
+                static_cast<const uint8_t *>(input_expanded.data()) +
+                input_offset);
+            result_data[out_idx++] = input_val;
+        }
+    }
+
+    return result;
+}
+
+Tensor
+CPUMaskedSelectOperation::execute_masked_select(const Tensor &input,
+                                                const Tensor &mask) const {
+    if (input.device() != Device::CPU || mask.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU MaskedSelect");
+    }
+
+#define DISPATCH_MASKED_SELECT(DTYPE, CTYPE)                                   \
+    case DTYPE:                                                                \
+        return execute_masked_select_typed<CTYPE>(input, mask);
+
+    switch (input.dtype()) {
+        DISPATCH_MASKED_SELECT(DType::Float32, float)
+        DISPATCH_MASKED_SELECT(DType::Float64, double)
+        DISPATCH_MASKED_SELECT(DType::Int32, int32_t)
+        DISPATCH_MASKED_SELECT(DType::Int64, int64_t)
+        DISPATCH_MASKED_SELECT(DType::Int16, int16_t)
+        DISPATCH_MASKED_SELECT(DType::Int8, int8_t)
+        DISPATCH_MASKED_SELECT(DType::UInt8, uint8_t)
+        DISPATCH_MASKED_SELECT(DType::UInt16, uint16_t)
+        DISPATCH_MASKED_SELECT(DType::UInt32, uint32_t)
+        DISPATCH_MASKED_SELECT(DType::UInt64, uint64_t)
+        DISPATCH_MASKED_SELECT(DType::Bool, bool)
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "MaskedSelect");
+    }
+#undef DISPATCH_MASKED_SELECT
+}
+
+// ============================================================================
+// CPU Gather Implementation
+// ============================================================================
+
+template <typename T>
+Tensor CPUGatherOperation::execute_gather_typed(const Tensor &input, int dim,
+                                                const Tensor &indices) const {
+    // Normalize dim
+    int norm_dim = dim;
+    if (norm_dim < 0) {
+        norm_dim += static_cast<int>(input.ndim());
+    }
+
+    // Output has same shape as indices
+    Tensor result(indices.shape(), input.dtype(), Device::CPU);
+
+    // Get indices data (always int64)
+    Tensor indices_i64 = indices.astype(DType::Int64);
+    const int64_t *indices_data = indices_i64.typed_data<int64_t>();
+
+    const T *input_data = input.typed_data<T>();
+    T *result_data = result.typed_data<T>();
+
+    size_t total_size = indices.size();
+    const auto &input_shape = input.shape();
+    const auto &indices_shape = indices.shape();
+    const auto &input_strides = input.strides();
+
+    for (size_t i = 0; i < total_size; ++i) {
+        auto coords = ShapeUtils::unravel_index(i, indices_shape);
+
+        // Get the index value
+        int64_t idx = indices_data[i];
+
+        // Handle negative indices
+        if (idx < 0) {
+            idx += static_cast<int64_t>(input_shape[norm_dim]);
+        }
+
+        // Build input coordinates: replace dim with idx
+        std::vector<size_t> input_coords = coords;
+        input_coords[norm_dim] = static_cast<size_t>(idx);
+
+        // Get the value from input
+        size_t input_offset = ShapeUtils::linear_index(input_coords, input_strides);
+        result_data[i] = *reinterpret_cast<const T *>(
+            static_cast<const uint8_t *>(input.data()) + input_offset);
+    }
+
+    return result;
+}
+
+Tensor CPUGatherOperation::execute_gather(const Tensor &input, int dim,
+                                          const Tensor &indices) const {
+    if (input.device() != Device::CPU || indices.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU Gather");
+    }
+
+#define DISPATCH_GATHER(DTYPE, CTYPE)                                          \
+    case DTYPE:                                                                \
+        return execute_gather_typed<CTYPE>(input, dim, indices);
+
+    switch (input.dtype()) {
+        DISPATCH_GATHER(DType::Float32, float)
+        DISPATCH_GATHER(DType::Float64, double)
+        DISPATCH_GATHER(DType::Int32, int32_t)
+        DISPATCH_GATHER(DType::Int64, int64_t)
+        DISPATCH_GATHER(DType::Int16, int16_t)
+        DISPATCH_GATHER(DType::Int8, int8_t)
+        DISPATCH_GATHER(DType::UInt8, uint8_t)
+        DISPATCH_GATHER(DType::UInt16, uint16_t)
+        DISPATCH_GATHER(DType::UInt32, uint32_t)
+        DISPATCH_GATHER(DType::UInt64, uint64_t)
+        DISPATCH_GATHER(DType::Bool, bool)
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "Gather");
+    }
+#undef DISPATCH_GATHER
+}
+
+// ============================================================================
+// CPU Scatter Implementation
+// ============================================================================
+
+template <typename T>
+Tensor CPUScatterOperation::execute_scatter_typed(const Tensor &input, int dim,
+                                                  const Tensor &indices,
+                                                  const Tensor &src) const {
+    // Normalize dim
+    int norm_dim = dim;
+    if (norm_dim < 0) {
+        norm_dim += static_cast<int>(input.ndim());
+    }
+
+    // Output starts as copy of input
+    Tensor result = input.copy();
+
+    // Get indices data (always int64)
+    Tensor indices_i64 = indices.astype(DType::Int64);
+    const int64_t *indices_data = indices_i64.typed_data<int64_t>();
+
+    // Convert src to same dtype as input
+    Tensor src_converted =
+        (src.dtype() == input.dtype()) ? src : src.astype(input.dtype());
+    const T *src_data = src_converted.typed_data<T>();
+
+    T *result_data = result.typed_data<T>();
+
+    size_t total_size = indices.size();
+    const auto &result_shape = result.shape();
+    const auto &indices_shape = indices.shape();
+    const auto &result_strides = result.strides();
+
+    for (size_t i = 0; i < total_size; ++i) {
+        auto coords = ShapeUtils::unravel_index(i, indices_shape);
+
+        // Get the index value
+        int64_t idx = indices_data[i];
+
+        // Handle negative indices
+        if (idx < 0) {
+            idx += static_cast<int64_t>(result_shape[norm_dim]);
+        }
+
+        // Build result coordinates: replace dim with idx
+        std::vector<size_t> result_coords = coords;
+        result_coords[norm_dim] = static_cast<size_t>(idx);
+
+        // Set the value in result
+        size_t result_offset =
+            ShapeUtils::linear_index(result_coords, result_strides);
+        *reinterpret_cast<T *>(static_cast<uint8_t *>(result.data()) +
+                               result_offset) = src_data[i];
+    }
+
+    return result;
+}
+
+Tensor CPUScatterOperation::execute_scatter(const Tensor &input, int dim,
+                                            const Tensor &indices,
+                                            const Tensor &src) const {
+    if (input.device() != Device::CPU || indices.device() != Device::CPU ||
+        src.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU Scatter");
+    }
+
+#define DISPATCH_SCATTER(DTYPE, CTYPE)                                         \
+    case DTYPE:                                                                \
+        return execute_scatter_typed<CTYPE>(input, dim, indices, src);
+
+    switch (input.dtype()) {
+        DISPATCH_SCATTER(DType::Float32, float)
+        DISPATCH_SCATTER(DType::Float64, double)
+        DISPATCH_SCATTER(DType::Int32, int32_t)
+        DISPATCH_SCATTER(DType::Int64, int64_t)
+        DISPATCH_SCATTER(DType::Int16, int16_t)
+        DISPATCH_SCATTER(DType::Int8, int8_t)
+        DISPATCH_SCATTER(DType::UInt8, uint8_t)
+        DISPATCH_SCATTER(DType::UInt16, uint16_t)
+        DISPATCH_SCATTER(DType::UInt32, uint32_t)
+        DISPATCH_SCATTER(DType::UInt64, uint64_t)
+        DISPATCH_SCATTER(DType::Bool, bool)
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "Scatter");
+    }
+#undef DISPATCH_SCATTER
+}
+
+// ============================================================================
+// CPU IndexSelect Implementation
+// ============================================================================
+
+template <typename T>
+Tensor
+CPUIndexSelectOperation::execute_index_select_typed(const Tensor &input,
+                                                    int dim,
+                                                    const Tensor &indices) const {
+    // Normalize dim
+    int norm_dim = dim;
+    if (norm_dim < 0) {
+        norm_dim += static_cast<int>(input.ndim());
+    }
+
+    // Get indices data
+    Tensor indices_i64 = indices.astype(DType::Int64);
+    const int64_t *indices_data = indices_i64.typed_data<int64_t>();
+    size_t num_indices = indices.size();
+
+    // Compute output shape: replace dim size with num_indices
+    Shape output_shape = input.shape();
+    output_shape[norm_dim] = num_indices;
+
+    Tensor result(output_shape, input.dtype(), Device::CPU);
+
+    const T *input_data = input.typed_data<T>();
+    T *result_data = result.typed_data<T>();
+
+    const auto &input_shape = input.shape();
+    const auto &input_strides = input.strides();
+    const auto &result_strides = result.strides();
+
+    size_t total_size = result.size();
+
+    for (size_t i = 0; i < total_size; ++i) {
+        auto out_coords = ShapeUtils::unravel_index(i, output_shape);
+
+        // Get the index for this dimension
+        size_t idx_pos = out_coords[norm_dim];
+        int64_t idx = indices_data[idx_pos];
+
+        // Handle negative indices
+        if (idx < 0) {
+            idx += static_cast<int64_t>(input_shape[norm_dim]);
+        }
+
+        // Build input coordinates
+        std::vector<size_t> input_coords = out_coords;
+        input_coords[norm_dim] = static_cast<size_t>(idx);
+
+        // Get value from input
+        size_t input_offset =
+            ShapeUtils::linear_index(input_coords, input_strides);
+        result_data[i] = *reinterpret_cast<const T *>(
+            static_cast<const uint8_t *>(input.data()) + input_offset);
+    }
+
+    return result;
+}
+
+Tensor CPUIndexSelectOperation::execute_index_select(const Tensor &input,
+                                                     int dim,
+                                                     const Tensor &indices) const {
+    if (input.device() != Device::CPU || indices.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU IndexSelect");
+    }
+
+    if (indices.ndim() != 1) {
+        throw ShapeError("index_select requires 1D indices tensor");
+    }
+
+#define DISPATCH_INDEX_SELECT(DTYPE, CTYPE)                                    \
+    case DTYPE:                                                                \
+        return execute_index_select_typed<CTYPE>(input, dim, indices);
+
+    switch (input.dtype()) {
+        DISPATCH_INDEX_SELECT(DType::Float32, float)
+        DISPATCH_INDEX_SELECT(DType::Float64, double)
+        DISPATCH_INDEX_SELECT(DType::Int32, int32_t)
+        DISPATCH_INDEX_SELECT(DType::Int64, int64_t)
+        DISPATCH_INDEX_SELECT(DType::Int16, int16_t)
+        DISPATCH_INDEX_SELECT(DType::Int8, int8_t)
+        DISPATCH_INDEX_SELECT(DType::UInt8, uint8_t)
+        DISPATCH_INDEX_SELECT(DType::UInt16, uint16_t)
+        DISPATCH_INDEX_SELECT(DType::UInt32, uint32_t)
+        DISPATCH_INDEX_SELECT(DType::UInt64, uint64_t)
+        DISPATCH_INDEX_SELECT(DType::Bool, bool)
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "IndexSelect");
+    }
+#undef DISPATCH_INDEX_SELECT
+}
+
+// ============================================================================
 // CPU Softmax/LogSoftmax Implementation
 // ============================================================================
 
@@ -1518,6 +1978,23 @@ void register_cpu_operations() {
     // Register where (conditional selection) operation
     OperationRegistry::register_operation(
         OpType::Where, Device::CPU, std::make_unique<CPUWhereOperation>());
+
+    // Register masking operations
+    OperationRegistry::register_operation(
+        OpType::MaskedFill, Device::CPU,
+        std::make_unique<CPUMaskedFillOperation>());
+    OperationRegistry::register_operation(
+        OpType::MaskedSelect, Device::CPU,
+        std::make_unique<CPUMaskedSelectOperation>());
+
+    // Register indexing operations
+    OperationRegistry::register_operation(
+        OpType::Gather, Device::CPU, std::make_unique<CPUGatherOperation>());
+    OperationRegistry::register_operation(
+        OpType::Scatter, Device::CPU, std::make_unique<CPUScatterOperation>());
+    OperationRegistry::register_operation(
+        OpType::IndexSelect, Device::CPU,
+        std::make_unique<CPUIndexSelectOperation>());
 
     // Register softmax operations
     OperationRegistry::register_operation(
