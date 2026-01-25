@@ -397,10 +397,8 @@ Tensor CPUReductionOperation<Func>::execute_reduction(const Tensor& input, const
     }
 
     // For now, we only support float32 for reductions
-    DType result_dtype = DType::Float32;
-    if (input.dtype() != DType::Float32) {
-       // In future, we can support more types
-    }
+    // TODO: Support more types in the future
+    (void)input.dtype();  // Suppress unused warning until multi-type support
 
     return execute_reduction_typed<float>(input, axis, keep_dims);
 }
@@ -790,9 +788,6 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, b
     size_t inner_size = 1;
     for (size_t i = axis + 1; i < ndim; ++i) inner_size *= input.shape()[i];
 
-    // Get strides in elements
-    size_t axis_stride = input.strides()[axis] / input.itemsize();
-
     // Iterate over all positions
     for (size_t outer = 0; outer < outer_size; ++outer) {
         for (size_t inner = 0; inner < inner_size; ++inner) {
@@ -969,6 +964,180 @@ Tensor CPUArgMinOperation::execute_reduction(const Tensor& input, const std::vec
 }
 
 // ============================================================================
+// CPU Where Operation Implementation
+// ============================================================================
+
+// Helper to compute broadcast strides: maps input shape to output shape strides
+// Returns strides in bytes where broadcasted dimensions have stride 0
+static Strides compute_broadcast_strides(const Shape& input_shape, const Shape& output_shape, 
+                                         const Strides& input_strides) {
+    size_t out_ndim = output_shape.size();
+    size_t in_ndim = input_shape.size();
+    Strides result(out_ndim, 0);
+    
+    // Align shapes from the right
+    for (size_t i = 0; i < out_ndim; ++i) {
+        size_t out_idx = out_ndim - 1 - i;
+        if (i < in_ndim) {
+            size_t in_idx = in_ndim - 1 - i;
+            // If input dimension is 1, it's broadcast (stride = 0)
+            // Otherwise, use the input stride
+            if (input_shape[in_idx] == output_shape[out_idx]) {
+                result[out_idx] = input_strides[in_idx];
+            } else if (input_shape[in_idx] == 1) {
+                result[out_idx] = 0;  // Broadcast dimension
+            } else {
+                // This shouldn't happen if shapes are properly broadcastable
+                result[out_idx] = input_strides[in_idx];
+            }
+        } else {
+            // Input has fewer dimensions - broadcast with stride 0
+            result[out_idx] = 0;
+        }
+    }
+    return result;
+}
+
+// Helper to get value from tensor at byte offset, converting to output type T
+template<typename T>
+static T get_tensor_value_at(const void* data, size_t byte_offset, DType dtype) {
+    switch (dtype) {
+        case DType::Bool:
+            return static_cast<T>(*reinterpret_cast<const bool*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::Int8:
+            return static_cast<T>(*reinterpret_cast<const int8_t*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::Int16:
+            return static_cast<T>(*reinterpret_cast<const int16_t*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::Int32:
+            return static_cast<T>(*reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::Int64:
+            return static_cast<T>(*reinterpret_cast<const int64_t*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::UInt8:
+            return static_cast<T>(*reinterpret_cast<const uint8_t*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::UInt16:
+            return static_cast<T>(*reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::UInt32:
+            return static_cast<T>(*reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::UInt64:
+            return static_cast<T>(*reinterpret_cast<const uint64_t*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::Float32:
+            return static_cast<T>(*reinterpret_cast<const float*>(static_cast<const uint8_t*>(data) + byte_offset));
+        case DType::Float64:
+            return static_cast<T>(*reinterpret_cast<const double*>(static_cast<const uint8_t*>(data) + byte_offset));
+        default:
+            return T(0);
+    }
+}
+
+template<typename T>
+Tensor CPUWhereOperation::execute_where_typed(const Tensor& condition, const Tensor& a, const Tensor& b) const {
+    // Compute broadcast shape for all three inputs
+    Shape temp_shape = ShapeUtils::broadcast_shape(condition.shape(), a.shape());
+    Shape output_shape = ShapeUtils::broadcast_shape(temp_shape, b.shape());
+    
+    // Determine output dtype from a and b (condition is bool)
+    DType output_dtype = ops::promote_types(a.dtype(), b.dtype());
+    
+    // Create output tensor
+    Tensor result(output_shape, output_dtype, Device::CPU);
+    
+    size_t numel = ShapeUtils::size(output_shape);
+    if (numel == 0) return result;
+    
+    // Get strides for broadcasting
+    auto cond_strides = compute_broadcast_strides(condition.shape(), output_shape, condition.strides());
+    auto a_strides = compute_broadcast_strides(a.shape(), output_shape, a.strides());
+    auto b_strides = compute_broadcast_strides(b.shape(), output_shape, b.strides());
+    auto result_strides = result.strides();
+    
+    // Get data pointers
+    const uint8_t* cond_data = static_cast<const uint8_t*>(condition.data());
+    const void* a_data = a.data();
+    const void* b_data = b.data();
+    T* result_data = result.typed_data<T>();
+    
+    size_t result_itemsize = result.itemsize();
+    size_t cond_itemsize = condition.itemsize();
+    
+    // Iterate over all elements
+    std::vector<size_t> coords(output_shape.size(), 0);
+    
+    for (size_t i = 0; i < numel; ++i) {
+        // Compute byte offsets for each input
+        size_t cond_offset = 0;
+        size_t a_offset = 0;
+        size_t b_offset = 0;
+        size_t result_offset = 0;
+        
+        for (size_t d = 0; d < output_shape.size(); ++d) {
+            cond_offset += coords[d] * cond_strides[d];
+            a_offset += coords[d] * a_strides[d];
+            b_offset += coords[d] * b_strides[d];
+            result_offset += coords[d] * result_strides[d];
+        }
+        
+        // Get condition value (handle different condition dtypes)
+        bool cond_val = false;
+        if (condition.dtype() == DType::Bool) {
+            cond_val = *reinterpret_cast<const bool*>(cond_data + cond_offset);
+        } else {
+            // For numeric types, non-zero is true
+            // Check if any byte is non-zero
+            for (size_t byte = 0; byte < cond_itemsize; ++byte) {
+                if (cond_data[cond_offset + byte] != 0) {
+                    cond_val = true;
+                    break;
+                }
+            }
+        }
+        
+        // Select from a or b based on condition, with proper type conversion
+        T value = cond_val 
+            ? get_tensor_value_at<T>(a_data, a_offset, a.dtype()) 
+            : get_tensor_value_at<T>(b_data, b_offset, b.dtype());
+        result_data[result_offset / result_itemsize] = value;
+        
+        // Increment coordinates
+        for (int d = static_cast<int>(output_shape.size()) - 1; d >= 0; --d) {
+            coords[d]++;
+            if (coords[d] < output_shape[d]) break;
+            coords[d] = 0;
+        }
+    }
+    
+    return result;
+}
+
+Tensor CPUWhereOperation::execute_where(const Tensor& condition, const Tensor& a, const Tensor& b) const {
+    if (condition.device() != Device::CPU || a.device() != Device::CPU || b.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU Where");
+    }
+    
+    // Determine output dtype from a and b
+    DType output_dtype = ops::promote_types(a.dtype(), b.dtype());
+    
+#define DISPATCH_WHERE(DTYPE, CTYPE) \
+    case DTYPE: return execute_where_typed<CTYPE>(condition, a, b);
+    
+    switch (output_dtype) {
+        DISPATCH_WHERE(DType::Float32, float)
+        DISPATCH_WHERE(DType::Float64, double)
+        DISPATCH_WHERE(DType::Int32, int32_t)
+        DISPATCH_WHERE(DType::Int64, int64_t)
+        DISPATCH_WHERE(DType::Int16, int16_t)
+        DISPATCH_WHERE(DType::Int8, int8_t)
+        DISPATCH_WHERE(DType::UInt8, uint8_t)
+        DISPATCH_WHERE(DType::UInt16, uint16_t)
+        DISPATCH_WHERE(DType::UInt32, uint32_t)
+        DISPATCH_WHERE(DType::UInt64, uint64_t)
+        DISPATCH_WHERE(DType::Bool, bool)
+        default:
+            throw TypeError::unsupported_dtype(dtype_name(output_dtype), "Where");
+    }
+#undef DISPATCH_WHERE
+}
+
+// ============================================================================
 // Factory functions
 // ============================================================================
 
@@ -1077,10 +1246,9 @@ void register_cpu_operations() {
 
   // Register matrix multiplication operation
   OperationRegistry::register_operation(OpType::MatMul, Device::CPU, std::make_unique<CPUMatMulOperation>());
-}
 
-void add(Tensor& a, const Tensor& b) {
-  // Example of a potential external function if needed
+  // Register where (conditional selection) operation
+  OperationRegistry::register_operation(OpType::Where, Device::CPU, std::make_unique<CPUWhereOperation>());
 }
 
 }  // namespace cpu

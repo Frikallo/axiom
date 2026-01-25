@@ -511,12 +511,32 @@ class CPUMatMulOperation : public ops::Operation {
 };
 
 // ============================================================================
+// CPU Where Operation
+// ============================================================================
+
+class CPUWhereOperation : public ops::Operation {
+ public:
+  ops::OpType type() const override { return ops::OpType::Where; }
+  std::string name() const override { return "where"; }
+  Device device() const override { return Device::CPU; }
+
+  Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    (void)lhs; (void)rhs;
+    throw RuntimeError::internal("execute_binary called on Where operation");
+  }
+
+  Tensor execute_where(const Tensor& condition, const Tensor& a, const Tensor& b) const override;
+
+ private:
+  template<typename T>
+  Tensor execute_where_typed(const Tensor& condition, const Tensor& a, const Tensor& b) const;
+};
+
+// ============================================================================
 // Factory functions
 // ============================================================================
 
 void register_cpu_operations();
-
-void add(Tensor& a, const Tensor& b);
 
 void register_cpu_backend();
 

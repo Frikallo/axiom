@@ -337,9 +337,10 @@ static Tensor executeMPSGraphTernaryOp(const Tensor& cond_raw, const Tensor& a_r
         MPSGraphTensor* a_placeholder = createPlaceholder(graph, a);
         MPSGraphTensor* b_placeholder = createPlaceholder(graph, b);
         
-        // Condition must be bool
+        // Cast condition to Bool in graph if needed
+        MPSGraphTensor* cond_bool = cond_placeholder;
         if (cond.dtype() != DType::Bool) {
-            cond_placeholder = castToCommonType(graph, cond_placeholder, DType::Bool);
+            cond_bool = [graph castTensor:cond_placeholder toType:MPSDataTypeBool name:nil];
         }
         
         // Type promotion for a and b
@@ -348,7 +349,7 @@ static Tensor executeMPSGraphTernaryOp(const Tensor& cond_raw, const Tensor& a_r
         MPSGraphTensor* b_cast = castToCommonType(graph, b_placeholder, common_dtype);
         
         // Execute the operation
-        MPSGraphTensor* result_tensor = op_block(graph, cond_placeholder, a_cast, b_cast);
+        MPSGraphTensor* result_tensor = op_block(graph, cond_bool, a_cast, b_cast);
         
         // Cast to output dtype if needed
         result_tensor = castToCommonType(graph, result_tensor, output_dtype);
@@ -510,10 +511,8 @@ static MPSGraphTensor* logical_xor_op(MPSGraph* graph, MPSGraphTensor* a, MPSGra
     return [graph logicalXORWithPrimaryTensor:a_bool secondaryTensor:b_bool name:nil];
 }
 
-static MPSGraphTensor* logical_not_op(MPSGraph* graph, MPSGraphTensor* a) {
-    MPSGraphTensor* a_bool = [graph castTensor:a toType:MPSDataTypeBool name:nil];
-    return [graph notWithTensor:a_bool name:nil];
-}
+// Note: LogicalNot is defined as a unary op but registered through the unary op path
+// using the negate_op pattern with notWithTensor if needed in the future
 
 // Math binary operations
 static MPSGraphTensor* maximum_op(MPSGraph* graph, MPSGraphTensor* a, MPSGraphTensor* b) {
@@ -1282,8 +1281,9 @@ void register_mpsgraph_operations() {
     OperationRegistry::register_operation(OpType::ArgMin, Device::GPU,
         std::make_unique<MPSGraphArgMinOperation>());
     
-    // Note: 'where' operation needs special handling through the API layer
-    // as it's not a standard binary operation
+    // Where (conditional selection) operation
+    OperationRegistry::register_operation(OpType::Where, Device::GPU,
+        std::make_unique<MPSGraphTernaryOperation>(OpType::Where, "where", where_op));
 }
 
 } // namespace metal

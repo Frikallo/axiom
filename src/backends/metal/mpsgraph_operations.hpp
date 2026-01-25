@@ -42,7 +42,7 @@ public:
     std::string name() const override { return op_name_; }
     Device device() const override { return Device::GPU; }
 
-    bool supports_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    bool supports_binary(const Tensor& /*lhs*/, const Tensor& /*rhs*/) const override {
         // MPSGraph handles broadcasting automatically
         return true;
     }
@@ -62,11 +62,11 @@ public:
 
     Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override;
     
-    Tensor execute_unary(const Tensor& input) const override {
+    Tensor execute_unary(const Tensor& /*input*/) const override {
         throw RuntimeError::internal("execute_unary called on binary operation");
     }
     
-    Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override {
+    Tensor execute_reduction(const Tensor& /*input*/, const std::vector<int>& /*axis*/, bool /*keep_dims*/) const override {
         throw RuntimeError::internal("execute_reduction called on binary operation");
     }
 };
@@ -85,11 +85,11 @@ public:
 
     Tensor execute_unary(const Tensor& input) const override;
     
-    Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    Tensor execute_binary(const Tensor& /*lhs*/, const Tensor& /*rhs*/) const override {
         throw RuntimeError::internal("execute_binary called on unary operation");
     }
     
-    Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override {
+    Tensor execute_reduction(const Tensor& /*input*/, const std::vector<int>& /*axis*/, bool /*keep_dims*/) const override {
         throw RuntimeError::internal("execute_reduction called on unary operation");
     }
 };
@@ -107,17 +107,17 @@ public:
                             MPSGraphTernaryOpBlock op_block);
 
     // 'where' is a special ternary operation
-    Tensor execute_where(const Tensor& condition, const Tensor& a, const Tensor& b) const;
+    Tensor execute_where(const Tensor& condition, const Tensor& a, const Tensor& b) const override;
     
-    Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+    Tensor execute_binary(const Tensor& /*lhs*/, const Tensor& /*rhs*/) const override {
         throw RuntimeError::internal("execute_binary called on ternary operation");
     }
     
-    Tensor execute_unary(const Tensor& input) const override {
+    Tensor execute_unary(const Tensor& /*input*/) const override {
         throw RuntimeError::internal("execute_unary called on ternary operation");
     }
     
-    Tensor execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const override {
+    Tensor execute_reduction(const Tensor& /*input*/, const std::vector<int>& /*axis*/, bool /*keep_dims*/) const override {
         throw RuntimeError::internal("execute_reduction called on ternary operation");
     }
 };

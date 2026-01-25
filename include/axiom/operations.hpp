@@ -97,7 +97,10 @@ enum class OpType {
 
   // Matrix operations
   MatMul,
-  BatchMatMul
+  BatchMatMul,
+  
+  // Conditional operations
+  Where
 };
 
 class Operation {
@@ -128,6 +131,10 @@ class Operation {
   // This allows zero-copy transposed views without materializing
   virtual Tensor execute_matmul(const Tensor& a, const Tensor& b,
                                 bool transpose_a, bool transpose_b) const;
+
+  // For conditional selection (where)
+  // Returns elements from 'a' where condition is true, 'b' otherwise
+  virtual Tensor execute_where(const Tensor& condition, const Tensor& a, const Tensor& b) const;
 
   // For in-place operations (future extension)
   virtual void execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const;
@@ -226,6 +233,12 @@ Tensor argmin(const Tensor& input, int axis = -1, bool keep_dims = false);
 // This enables zero-copy transposed matrix multiplication
 Tensor matmul(const Tensor& a, const Tensor& b,
               bool transpose_a = false, bool transpose_b = false);
+
+// Conditional selection
+// where: Returns elements from 'a' where condition is true, 'b' otherwise
+// Equivalent to numpy.where(condition, a, b)
+// All inputs are broadcast together
+Tensor where(const Tensor& condition, const Tensor& a, const Tensor& b);
 
 // In-place operations
 void add_inplace(Tensor& lhs, const Tensor& rhs);

@@ -200,6 +200,11 @@ Tensor Operation::execute_matmul(const Tensor& a, const Tensor& b,
     throw RuntimeError::not_implemented("MatMul operations for " + name());
 }
 
+Tensor Operation::execute_where(const Tensor& condition, const Tensor& a, const Tensor& b) const {
+    (void)condition; (void)a; (void)b;
+    throw RuntimeError::not_implemented("Where operations for " + name());
+}
+
 void Operation::execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const {
   (void)lhs; // Suppress unused parameter warning
   (void)rhs; // Suppress unused parameter warning
@@ -480,6 +485,28 @@ void divide_inplace(Tensor& lhs, const Tensor& rhs) { execute_binary_inplace(OpT
 // Matrix multiplication
 Tensor matmul(const Tensor& a, const Tensor& b, bool transpose_a, bool transpose_b) {
     return execute_matmul_operation(a, b, transpose_a, transpose_b);
+}
+
+// Conditional selection (where)
+Tensor where(const Tensor& condition, const Tensor& a, const Tensor& b) {
+    // Determine device - prefer GPU if any input is on GPU
+    Device device = Device::CPU;
+    if (condition.device() == Device::GPU || a.device() == Device::GPU || b.device() == Device::GPU) {
+        device = Device::GPU;
+    }
+    
+    // Get operation for device
+    auto op = OperationRegistry::get_operation(OpType::Where, device);
+    if (!op) {
+        throw DeviceError("Where operation not available for device: " + axiom::system::device_to_string(device));
+    }
+    
+    // Move tensors to target device if needed
+    Tensor cond_on_device = (condition.device() == device) ? condition : condition.to(device);
+    Tensor a_on_device = (a.device() == device) ? a : a.to(device);
+    Tensor b_on_device = (b.device() == device) ? b : b.to(device);
+    
+    return op->execute_where(cond_on_device, a_on_device, b_on_device);
 }
 
 }  // namespace ops

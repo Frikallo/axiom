@@ -280,3 +280,28 @@ set_tests_properties(tensor_argmax_argmin
     PROPERTIES
         TIMEOUT 30
 )
+
+# Where operation tests
+add_executable(test_tensor_where
+    test_tensor_where.cpp
+)
+
+target_link_libraries(test_tensor_where
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_where
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_where
+    COMMAND test_tensor_where
+)
+
+set_tests_properties(tensor_where
+    PROPERTIES
+        TIMEOUT 30
+)

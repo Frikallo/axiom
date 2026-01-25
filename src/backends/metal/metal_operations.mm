@@ -19,8 +19,6 @@ namespace axiom {
 namespace backends {
 namespace metal {
 
-constexpr int kMaxDims = 8;
-
 // ============================================================================
 // All operations have been migrated to MPSGraph
 // ============================================================================
