@@ -1,8 +1,9 @@
 #include "cpu_operations.hpp"
-#include "axiom/tensor.hpp"
-#include "axiom/shape.hpp"
+
 #include "axiom/error.hpp"
 #include "axiom/operations.hpp"
+#include "axiom/shape.hpp"
+#include "axiom/tensor.hpp"
 
 namespace axiom {
 namespace backends {
@@ -12,151 +13,162 @@ namespace cpu {
 // Simple implementation focusing on basic types
 // ============================================================================
 
-template<typename Func>
-Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor& lhs, const Tensor& rhs) const {
-  // Ensure tensors are on CPU
-  if (lhs.device() != Device::CPU || rhs.device() != Device::CPU) {
-    throw DeviceError::cpu_only("CPU binary operations");
-  }
-  
-  // Compute broadcast information
-  auto broadcast_info = ops::compute_broadcast_info(lhs.shape(), rhs.shape());
-  
-  // Determine result type
-  DType result_dtype = ops::result_type(lhs, rhs);
-  
-  // Handle comparison and logical operations - they always return bool
-  if (op_type_ == ops::OpType::Equal || op_type_ == ops::OpType::NotEqual ||
-      op_type_ == ops::OpType::Less || op_type_ == ops::OpType::LessEqual ||
-      op_type_ == ops::OpType::Greater || op_type_ == ops::OpType::GreaterEqual ||
-      op_type_ == ops::OpType::LogicalAnd || op_type_ == ops::OpType::LogicalOr ||
-      op_type_ == ops::OpType::LogicalXor) {
-    result_dtype = DType::Bool;
-  }
-  
-  // Create result tensor
-  Tensor result(broadcast_info.result_shape, result_dtype, Device::CPU);
+template <typename Func>
+Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor &lhs,
+                                                const Tensor &rhs) const {
+    // Ensure tensors are on CPU
+    if (lhs.device() != Device::CPU || rhs.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU binary operations");
+    }
 
-#define DISPATCH_CPU_BINARY_OP(TYPE_ENUM, TYPE) \
-  case TYPE_ENUM: \
-    execute_binary_typed<TYPE>(lhs, rhs, result); \
-    break;
+    // Compute broadcast information
+    auto broadcast_info = ops::compute_broadcast_info(lhs.shape(), rhs.shape());
 
-  switch (result_dtype) {
-    DISPATCH_CPU_BINARY_OP(DType::Float32, float)
-    DISPATCH_CPU_BINARY_OP(DType::Float64, double)
-    DISPATCH_CPU_BINARY_OP(DType::Float16, float16_t)
-    DISPATCH_CPU_BINARY_OP(DType::Int8, int8_t)
-    DISPATCH_CPU_BINARY_OP(DType::Int16, int16_t)
-    DISPATCH_CPU_BINARY_OP(DType::Int32, int32_t)
-    DISPATCH_CPU_BINARY_OP(DType::Int64, int64_t)
-    DISPATCH_CPU_BINARY_OP(DType::UInt8, uint8_t)
-    DISPATCH_CPU_BINARY_OP(DType::UInt16, uint16_t)
-    DISPATCH_CPU_BINARY_OP(DType::UInt32, uint32_t)
-    DISPATCH_CPU_BINARY_OP(DType::UInt64, uint64_t)
+    // Determine result type
+    DType result_dtype = ops::result_type(lhs, rhs);
+
+    // Handle comparison and logical operations - they always return bool
+    if (op_type_ == ops::OpType::Equal || op_type_ == ops::OpType::NotEqual ||
+        op_type_ == ops::OpType::Less || op_type_ == ops::OpType::LessEqual ||
+        op_type_ == ops::OpType::Greater ||
+        op_type_ == ops::OpType::GreaterEqual ||
+        op_type_ == ops::OpType::LogicalAnd ||
+        op_type_ == ops::OpType::LogicalOr ||
+        op_type_ == ops::OpType::LogicalXor) {
+        result_dtype = DType::Bool;
+    }
+
+    // Create result tensor
+    Tensor result(broadcast_info.result_shape, result_dtype, Device::CPU);
+
+#define DISPATCH_CPU_BINARY_OP(TYPE_ENUM, TYPE)                                \
+    case TYPE_ENUM:                                                            \
+        execute_binary_typed<TYPE>(lhs, rhs, result);                          \
+        break;
+
+    switch (result_dtype) {
+        DISPATCH_CPU_BINARY_OP(DType::Float32, float)
+        DISPATCH_CPU_BINARY_OP(DType::Float64, double)
+        DISPATCH_CPU_BINARY_OP(DType::Float16, float16_t)
+        DISPATCH_CPU_BINARY_OP(DType::Int8, int8_t)
+        DISPATCH_CPU_BINARY_OP(DType::Int16, int16_t)
+        DISPATCH_CPU_BINARY_OP(DType::Int32, int32_t)
+        DISPATCH_CPU_BINARY_OP(DType::Int64, int64_t)
+        DISPATCH_CPU_BINARY_OP(DType::UInt8, uint8_t)
+        DISPATCH_CPU_BINARY_OP(DType::UInt16, uint16_t)
+        DISPATCH_CPU_BINARY_OP(DType::UInt32, uint32_t)
+        DISPATCH_CPU_BINARY_OP(DType::UInt64, uint64_t)
     case DType::Bool:
-      execute_binary_typed<bool>(lhs, rhs, result);
-      break;
+        execute_binary_typed<bool>(lhs, rhs, result);
+        break;
     case DType::Complex64: // Fallthrough
     case DType::Complex128:
-      throw TypeError::unsupported_dtype(dtype_name(result_dtype), "CPU binary operations");
+        throw TypeError::unsupported_dtype(dtype_name(result_dtype),
+                                           "CPU binary operations");
     default:
-      throw TypeError::unsupported_dtype(dtype_name(result_dtype), "CPU binary operations");
-  }
+        throw TypeError::unsupported_dtype(dtype_name(result_dtype),
+                                           "CPU binary operations");
+    }
 #undef DISPATCH_CPU_BINARY_OP
 
-  return result;
+    return result;
 }
 
-template<typename Func>
-template<typename T>
-void CPUBinaryOperation<Func>::execute_binary_typed(const Tensor& lhs, const Tensor& rhs, Tensor& result) const {
-  auto broadcast_info = ops::compute_broadcast_info(lhs.shape(), rhs.shape());
-  
-  if (broadcast_info.needs_broadcast) {
-    execute_binary_broadcast<T>(lhs, rhs, result, broadcast_info);
-  } else {
-    execute_binary_same_shape<T>(lhs, rhs, result);
-  }
-}
+template <typename Func>
+template <typename T>
+void CPUBinaryOperation<Func>::execute_binary_typed(const Tensor &lhs,
+                                                    const Tensor &rhs,
+                                                    Tensor &result) const {
+    auto broadcast_info = ops::compute_broadcast_info(lhs.shape(), rhs.shape());
 
-template<typename Func>
-template<typename T>
-void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor& lhs, const Tensor& rhs, Tensor& result) const {
-  size_t total_elements = result.size();
-  
-  // For comparison operations with bool output
-  if constexpr (std::is_same_v<T, bool>) {
-    // Convert inputs to Float32 for comparison
-    Tensor lhs_float = lhs.astype(DType::Float32);
-    Tensor rhs_float = rhs.astype(DType::Float32);
-    
-    const float* lhs_data = lhs_float.template typed_data<float>();
-    const float* rhs_data = rhs_float.template typed_data<float>();
-    bool* result_data = result.template typed_data<bool>();
-    
-    for (size_t i = 0; i < total_elements; ++i) {
-      result_data[i] = func_(lhs_data[i], rhs_data[i]);
+    if (broadcast_info.needs_broadcast) {
+        execute_binary_broadcast<T>(lhs, rhs, result, broadcast_info);
+    } else {
+        execute_binary_same_shape<T>(lhs, rhs, result);
     }
-  } else {
-    // Convert tensors to result type
-    Tensor lhs_converted = lhs.astype(result.dtype());
-    Tensor rhs_converted = rhs.astype(result.dtype());
-    
-    const T* lhs_data = lhs_converted.template typed_data<T>();
-    const T* rhs_data = rhs_converted.template typed_data<T>();
-    T* result_data = result.template typed_data<T>();
-    
-    for (size_t i = 0; i < total_elements; ++i) {
-      result_data[i] = func_(lhs_data[i], rhs_data[i]);
+}
+
+template <typename Func>
+template <typename T>
+void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
+                                                         const Tensor &rhs,
+                                                         Tensor &result) const {
+    size_t total_elements = result.size();
+
+    // For comparison operations with bool output
+    if constexpr (std::is_same_v<T, bool>) {
+        // Convert inputs to Float32 for comparison
+        Tensor lhs_float = lhs.astype(DType::Float32);
+        Tensor rhs_float = rhs.astype(DType::Float32);
+
+        const float *lhs_data = lhs_float.template typed_data<float>();
+        const float *rhs_data = rhs_float.template typed_data<float>();
+        bool *result_data = result.template typed_data<bool>();
+
+        for (size_t i = 0; i < total_elements; ++i) {
+            result_data[i] = func_(lhs_data[i], rhs_data[i]);
+        }
+    } else {
+        // Convert tensors to result type
+        Tensor lhs_converted = lhs.astype(result.dtype());
+        Tensor rhs_converted = rhs.astype(result.dtype());
+
+        const T *lhs_data = lhs_converted.template typed_data<T>();
+        const T *rhs_data = rhs_converted.template typed_data<T>();
+        T *result_data = result.template typed_data<T>();
+
+        for (size_t i = 0; i < total_elements; ++i) {
+            result_data[i] = func_(lhs_data[i], rhs_data[i]);
+        }
     }
-  }
 }
 
-template<typename Func>
-template<typename T>
-void CPUBinaryOperation<Func>::execute_binary_broadcast(const Tensor& lhs, const Tensor& rhs, Tensor& result,
-                                                       const ops::BroadcastInfo& broadcast_info) const {
-  const Shape& result_shape = broadcast_info.result_shape;
-  
-  // For comparison operations with bool output
-  if constexpr (std::is_same_v<T, bool>) {
-    Tensor lhs_float = lhs.astype(DType::Float32);
-    Tensor rhs_float = rhs.astype(DType::Float32);
-    
-    const float* lhs_data = lhs_float.template typed_data<float>();
-    const float* rhs_data = rhs_float.template typed_data<float>();
-    bool* result_data = result.template typed_data<bool>();
-    
-    execute_broadcast_loop<float, bool>(lhs_data, rhs_data, result_data,
-                                       lhs.shape(), rhs.shape(), result_shape,
-                                       lhs_float.strides(), rhs_float.strides());
-  } else {
-    Tensor lhs_converted = lhs.astype(result.dtype());
-    Tensor rhs_converted = rhs.astype(result.dtype());
-    
-    const T* lhs_data = lhs_converted.template typed_data<T>();
-    const T* rhs_data = rhs_converted.template typed_data<T>();
-    T* result_data = result.template typed_data<T>();
-    
-    execute_broadcast_loop<T, T>(lhs_data, rhs_data, result_data,
-                                lhs.shape(), rhs.shape(), result_shape,
-                                lhs_converted.strides(), rhs_converted.strides());
-  }
+template <typename Func>
+template <typename T>
+void CPUBinaryOperation<Func>::execute_binary_broadcast(
+    const Tensor &lhs, const Tensor &rhs, Tensor &result,
+    const ops::BroadcastInfo &broadcast_info) const {
+    const Shape &result_shape = broadcast_info.result_shape;
+
+    // For comparison operations with bool output
+    if constexpr (std::is_same_v<T, bool>) {
+        Tensor lhs_float = lhs.astype(DType::Float32);
+        Tensor rhs_float = rhs.astype(DType::Float32);
+
+        const float *lhs_data = lhs_float.template typed_data<float>();
+        const float *rhs_data = rhs_float.template typed_data<float>();
+        bool *result_data = result.template typed_data<bool>();
+
+        execute_broadcast_loop<float, bool>(
+            lhs_data, rhs_data, result_data, lhs.shape(), rhs.shape(),
+            result_shape, lhs_float.strides(), rhs_float.strides());
+    } else {
+        Tensor lhs_converted = lhs.astype(result.dtype());
+        Tensor rhs_converted = rhs.astype(result.dtype());
+
+        const T *lhs_data = lhs_converted.template typed_data<T>();
+        const T *rhs_data = rhs_converted.template typed_data<T>();
+        T *result_data = result.template typed_data<T>();
+
+        execute_broadcast_loop<T, T>(
+            lhs_data, rhs_data, result_data, lhs.shape(), rhs.shape(),
+            result_shape, lhs_converted.strides(), rhs_converted.strides());
+    }
 }
 
-template<typename Func>
-template<typename InputT, typename OutputT>
-void CPUBinaryOperation<Func>::execute_broadcast_loop(const InputT* lhs_data, const InputT* rhs_data, OutputT* result_data,
-                                                     const Shape& lhs_shape, const Shape& rhs_shape, const Shape& result_shape,
-                                                     const Strides& lhs_strides_in, const Strides& rhs_strides_in) const {
+template <typename Func>
+template <typename InputT, typename OutputT>
+void CPUBinaryOperation<Func>::execute_broadcast_loop(
+    const InputT *lhs_data, const InputT *rhs_data, OutputT *result_data,
+    const Shape &lhs_shape, const Shape &rhs_shape, const Shape &result_shape,
+    const Strides &lhs_strides_in, const Strides &rhs_strides_in) const {
     size_t total_elements = ShapeUtils::size(result_shape);
     size_t ndim = result_shape.size();
 
     // Prepare broadcasted strides
     Strides lhs_bcast_strides(ndim, 0);
     Strides rhs_bcast_strides(ndim, 0);
-    
+
     int lhs_dim_offset = ndim - lhs_shape.size();
     for (size_t i = 0; i < lhs_shape.size(); ++i) {
         if (lhs_shape[i] != 1) {
@@ -181,10 +193,12 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(const InputT* lhs_data, co
             lhs_byte_offset += result_coords[j] * lhs_bcast_strides[j];
             rhs_byte_offset += result_coords[j] * rhs_bcast_strides[j];
         }
-        
-        const auto& lhs_val = *reinterpret_cast<const InputT*>(reinterpret_cast<const uint8_t*>(lhs_data) + lhs_byte_offset);
-        const auto& rhs_val = *reinterpret_cast<const InputT*>(reinterpret_cast<const uint8_t*>(rhs_data) + rhs_byte_offset);
-        
+
+        const auto &lhs_val = *reinterpret_cast<const InputT *>(
+            reinterpret_cast<const uint8_t *>(lhs_data) + lhs_byte_offset);
+        const auto &rhs_val = *reinterpret_cast<const InputT *>(
+            reinterpret_cast<const uint8_t *>(rhs_data) + rhs_byte_offset);
+
         result_data[i] = func_(lhs_val, rhs_val);
 
         // Increment coordinates
@@ -197,31 +211,36 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(const InputT* lhs_data, co
     }
 }
 
-template<typename Func>
-void CPUBinaryOperation<Func>::execute_binary_inplace(Tensor& lhs, const Tensor& rhs) const {
+template <typename Func>
+void CPUBinaryOperation<Func>::execute_binary_inplace(Tensor &lhs,
+                                                      const Tensor &rhs) const {
     // In-place operations require lhs to be writeable
     if (!lhs.flags().writeable) {
-        throw MemoryError("Cannot perform in-place operation on a non-writeable tensor");
+        throw MemoryError(
+            "Cannot perform in-place operation on a non-writeable tensor");
     }
 
     // Check for type safety. In-place ops do not promote the lhs tensor.
     DType promoted_dtype = ops::promote_types(lhs.dtype(), rhs.dtype());
     if (promoted_dtype != lhs.dtype()) {
-        throw TypeError("In-place operation would require unsafe type casting from " + 
-                       dtype_name(lhs.dtype()) + " to " + dtype_name(promoted_dtype));
+        throw TypeError(
+            "In-place operation would require unsafe type casting from " +
+            dtype_name(lhs.dtype()) + " to " + dtype_name(promoted_dtype));
     }
 
     // Check for broadcast safety. In-place ops cannot change the lhs shape.
-    if (!ops::are_broadcastable(lhs.shape(), rhs.shape()) || 
-        ops::compute_broadcast_info(lhs.shape(), rhs.shape()).result_shape != lhs.shape()) {
-        throw ShapeError("In-place operation with broadcasting cannot change tensor shape");
+    if (!ops::are_broadcastable(lhs.shape(), rhs.shape()) ||
+        ops::compute_broadcast_info(lhs.shape(), rhs.shape()).result_shape !=
+            lhs.shape()) {
+        throw ShapeError(
+            "In-place operation with broadcasting cannot change tensor shape");
     }
 
-    // Dispatch to the typed implementation
-    #define DISPATCH_CPU_INPLACE_OP(TYPE_ENUM, TYPE) \
-        case TYPE_ENUM: \
-            execute_inplace_typed<TYPE>(lhs, rhs); \
-            break;
+// Dispatch to the typed implementation
+#define DISPATCH_CPU_INPLACE_OP(TYPE_ENUM, TYPE)                               \
+    case TYPE_ENUM:                                                            \
+        execute_inplace_typed<TYPE>(lhs, rhs);                                 \
+        break;
 
     switch (lhs.dtype()) {
         DISPATCH_CPU_INPLACE_OP(DType::Float32, float)
@@ -236,18 +255,20 @@ void CPUBinaryOperation<Func>::execute_binary_inplace(Tensor& lhs, const Tensor&
         DISPATCH_CPU_INPLACE_OP(DType::UInt32, uint32_t)
         DISPATCH_CPU_INPLACE_OP(DType::UInt64, uint64_t)
         DISPATCH_CPU_INPLACE_OP(DType::Bool, bool)
-        default:
-            throw TypeError::unsupported_dtype(dtype_name(lhs.dtype()), "CPU in-place operations");
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(lhs.dtype()),
+                                           "CPU in-place operations");
     }
-    #undef DISPATCH_CPU_INPLACE_OP
+#undef DISPATCH_CPU_INPLACE_OP
 }
 
-template<typename Func>
-template<typename T>
-void CPUBinaryOperation<Func>::execute_inplace_typed(Tensor& lhs, const Tensor& rhs) const {
+template <typename Func>
+template <typename T>
+void CPUBinaryOperation<Func>::execute_inplace_typed(Tensor &lhs,
+                                                     const Tensor &rhs) const {
     if (lhs.shape() == rhs.shape()) {
-        T* lhs_data = lhs.template typed_data<T>();
-        const T* rhs_data = rhs.template typed_data<T>();
+        T *lhs_data = lhs.template typed_data<T>();
+        const T *rhs_data = rhs.template typed_data<T>();
         for (size_t i = 0; i < lhs.size(); ++i) {
             lhs_data[i] = func_(lhs_data[i], rhs_data[i]);
         }
@@ -256,11 +277,12 @@ void CPUBinaryOperation<Func>::execute_inplace_typed(Tensor& lhs, const Tensor& 
     }
 }
 
-template<typename Func>
-template<typename T>
-void CPUBinaryOperation<Func>::execute_inplace_broadcast(Tensor& lhs, const Tensor& rhs) const {
-    const Shape& lhs_shape = lhs.shape();
-    const Shape& rhs_shape = rhs.shape();
+template <typename Func>
+template <typename T>
+void CPUBinaryOperation<Func>::execute_inplace_broadcast(
+    Tensor &lhs, const Tensor &rhs) const {
+    const Shape &lhs_shape = lhs.shape();
+    const Shape &rhs_shape = rhs.shape();
     size_t lhs_ndim = lhs_shape.size();
     size_t rhs_ndim = rhs_shape.size();
 
@@ -274,9 +296,9 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(Tensor& lhs, const Tens
         }
     }
 
-    T* lhs_data = lhs.template typed_data<T>();
-    const T* rhs_data = rhs.template typed_data<T>();
-    const Strides& lhs_strides = lhs.strides();
+    T *lhs_data = lhs.template typed_data<T>();
+    const T *rhs_data = rhs.template typed_data<T>();
+    const Strides &lhs_strides = lhs.strides();
     size_t total_elements = lhs.size();
 
     std::vector<size_t> coords(lhs_ndim, 0);
@@ -290,8 +312,10 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(Tensor& lhs, const Tens
             rhs_byte_offset += coords[j] * rhs_bcast_strides[j];
         }
 
-        T& lhs_val = *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(lhs_data) + lhs_byte_offset);
-        const T& rhs_val = *reinterpret_cast<const T*>(reinterpret_cast<const uint8_t*>(rhs_data) + rhs_byte_offset);
+        T &lhs_val = *reinterpret_cast<T *>(
+            reinterpret_cast<uint8_t *>(lhs_data) + lhs_byte_offset);
+        const T &rhs_val = *reinterpret_cast<const T *>(
+            reinterpret_cast<const uint8_t *>(rhs_data) + rhs_byte_offset);
 
         lhs_val = func_(lhs_val, rhs_val);
 
@@ -309,56 +333,60 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(Tensor& lhs, const Tens
 // CPU Unary Operation Implementation
 // ============================================================================
 
-template<typename Func>
-Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor& input) const {
-  if (input.device() != Device::CPU) {
-    throw DeviceError::cpu_only("CPU unary operations");
-  }
+template <typename Func>
+Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
+    if (input.device() != Device::CPU) {
+        throw DeviceError::cpu_only("CPU unary operations");
+    }
 
-  // Unary ops usually return the same dtype as input, except for some functions
-  // which might promote it (e.g., if we had a function that always returns float)
-  DType result_dtype = input.dtype();
-  Tensor result(input.shape(), result_dtype, Device::CPU);
+    // Unary ops usually return the same dtype as input, except for some
+    // functions which might promote it (e.g., if we had a function that always
+    // returns float)
+    DType result_dtype = input.dtype();
+    Tensor result(input.shape(), result_dtype, Device::CPU);
 
-#define DISPATCH_CPU_UNARY_OP(TYPE_ENUM, TYPE) \
-  case TYPE_ENUM: \
-    execute_unary_typed<TYPE>(input, result); \
-    break;
+#define DISPATCH_CPU_UNARY_OP(TYPE_ENUM, TYPE)                                 \
+    case TYPE_ENUM:                                                            \
+        execute_unary_typed<TYPE>(input, result);                              \
+        break;
 
-  switch (result_dtype) {
-    DISPATCH_CPU_UNARY_OP(DType::Float32, float)
-    DISPATCH_CPU_UNARY_OP(DType::Float64, double)
-    DISPATCH_CPU_UNARY_OP(DType::Float16, float16_t)
-    DISPATCH_CPU_UNARY_OP(DType::Int8, int8_t)
-    DISPATCH_CPU_UNARY_OP(DType::Int16, int16_t)
-    DISPATCH_CPU_UNARY_OP(DType::Int32, int32_t)
-    DISPATCH_CPU_UNARY_OP(DType::Int64, int64_t)
-    DISPATCH_CPU_UNARY_OP(DType::UInt8, uint8_t)
-    DISPATCH_CPU_UNARY_OP(DType::UInt16, uint16_t)
-    DISPATCH_CPU_UNARY_OP(DType::UInt32, uint32_t)
-    DISPATCH_CPU_UNARY_OP(DType::UInt64, uint64_t)
-    DISPATCH_CPU_UNARY_OP(DType::Bool, bool)
+    switch (result_dtype) {
+        DISPATCH_CPU_UNARY_OP(DType::Float32, float)
+        DISPATCH_CPU_UNARY_OP(DType::Float64, double)
+        DISPATCH_CPU_UNARY_OP(DType::Float16, float16_t)
+        DISPATCH_CPU_UNARY_OP(DType::Int8, int8_t)
+        DISPATCH_CPU_UNARY_OP(DType::Int16, int16_t)
+        DISPATCH_CPU_UNARY_OP(DType::Int32, int32_t)
+        DISPATCH_CPU_UNARY_OP(DType::Int64, int64_t)
+        DISPATCH_CPU_UNARY_OP(DType::UInt8, uint8_t)
+        DISPATCH_CPU_UNARY_OP(DType::UInt16, uint16_t)
+        DISPATCH_CPU_UNARY_OP(DType::UInt32, uint32_t)
+        DISPATCH_CPU_UNARY_OP(DType::UInt64, uint64_t)
+        DISPATCH_CPU_UNARY_OP(DType::Bool, bool)
     case DType::Complex64: // Fallthrough
     case DType::Complex128:
-      throw TypeError::unsupported_dtype(dtype_name(result_dtype), "CPU unary operations");
+        throw TypeError::unsupported_dtype(dtype_name(result_dtype),
+                                           "CPU unary operations");
     default:
-      throw TypeError::unsupported_dtype(dtype_name(result_dtype), "CPU unary operations");
-  }
+        throw TypeError::unsupported_dtype(dtype_name(result_dtype),
+                                           "CPU unary operations");
+    }
 #undef DISPATCH_CPU_UNARY_OP
 
-  return result;
+    return result;
 }
 
-template<typename Func>
-template<typename T>
-void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor& input, Tensor& result) const {
-  size_t total_elements = input.size();
-  const T* input_data = input.template typed_data<T>();
-  T* result_data = result.template typed_data<T>();
+template <typename Func>
+template <typename T>
+void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
+                                                  Tensor &result) const {
+    size_t total_elements = input.size();
+    const T *input_data = input.template typed_data<T>();
+    T *result_data = result.template typed_data<T>();
 
-  for (size_t i = 0; i < total_elements; ++i) {
-    result_data[i] = func_(input_data[i]);
-  }
+    for (size_t i = 0; i < total_elements; ++i) {
+        result_data[i] = func_(input_data[i]);
+    }
 }
 
 // ============================================================================
@@ -366,7 +394,8 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor& input, Tensor& r
 // ============================================================================
 namespace { // Anonymous namespace for helpers
 
-Shape calculate_reduction_shape(const Shape& input_shape, const std::vector<int>& axes, bool keep_dims) {
+Shape calculate_reduction_shape(const Shape &input_shape,
+                                const std::vector<int> &axes, bool keep_dims) {
     if (axes.empty()) {
         return keep_dims ? Shape(input_shape.size(), 1) : Shape{1};
     }
@@ -390,23 +419,26 @@ Shape calculate_reduction_shape(const Shape& input_shape, const std::vector<int>
 }
 } // namespace
 
-template<typename Func>
-Tensor CPUReductionOperation<Func>::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
+template <typename Func>
+Tensor CPUReductionOperation<Func>::execute_reduction(
+    const Tensor &input, const std::vector<int> &axis, bool keep_dims) const {
     if (input.device() != Device::CPU) {
         throw DeviceError::cpu_only("CPU reduction operations");
     }
 
     // For now, we only support float32 for reductions
     // TODO: Support more types in the future
-    (void)input.dtype();  // Suppress unused warning until multi-type support
+    (void)input.dtype(); // Suppress unused warning until multi-type support
 
     return execute_reduction_typed<float>(input, axis, keep_dims);
 }
 
-template<typename Func>
-template<typename T>
-void CPUReductionOperation<Func>::reduction_recursive_helper(const Tensor& input, Tensor& result, const std::vector<int>& axes,
-                                                              std::vector<size_t>& current_coords, int current_dim, const Func& func, bool keep_dims) {
+template <typename Func>
+template <typename T>
+void CPUReductionOperation<Func>::reduction_recursive_helper(
+    const Tensor &input, Tensor &result, const std::vector<int> &axes,
+    std::vector<size_t> &current_coords, int current_dim, const Func &func,
+    bool keep_dims) {
     if (current_dim == static_cast<int>(input.ndim())) {
         std::vector<size_t> result_coords;
         if (keep_dims) {
@@ -428,16 +460,20 @@ void CPUReductionOperation<Func>::reduction_recursive_helper(const Tensor& input
                 }
             }
         }
-        
+
         if (result_coords.empty()) {
             result_coords.push_back(0);
         }
 
-        size_t result_offset = ShapeUtils::linear_index(result_coords, result.strides()) / result.itemsize();
-        T& result_val = result.template typed_data<T>()[result_offset];
-        
-        size_t input_offset = ShapeUtils::linear_index(current_coords, input.strides()) / input.itemsize();
-        const T& input_val = input.template typed_data<T>()[input_offset];
+        size_t result_offset =
+            ShapeUtils::linear_index(result_coords, result.strides()) /
+            result.itemsize();
+        T &result_val = result.template typed_data<T>()[result_offset];
+
+        size_t input_offset =
+            ShapeUtils::linear_index(current_coords, input.strides()) /
+            input.itemsize();
+        const T &input_val = input.template typed_data<T>()[input_offset];
 
         result_val = func(result_val, input_val);
         return;
@@ -445,17 +481,22 @@ void CPUReductionOperation<Func>::reduction_recursive_helper(const Tensor& input
 
     for (size_t i = 0; i < input.shape()[current_dim]; ++i) {
         current_coords[current_dim] = i;
-        reduction_recursive_helper<T>(input, result, axes, current_coords, current_dim + 1, func, keep_dims);
+        reduction_recursive_helper<T>(input, result, axes, current_coords,
+                                      current_dim + 1, func, keep_dims);
     }
 }
 
-template<typename Func>
-template<typename T>
-Tensor CPUReductionOperation<Func>::execute_reduction_typed(const Tensor& input, const std::vector<int>& axes, bool keep_dims) const {
+template <typename Func>
+template <typename T>
+Tensor CPUReductionOperation<Func>::execute_reduction_typed(
+    const Tensor &input, const std::vector<int> &axes, bool keep_dims) const {
     // Only convert if necessary - avoid unnecessary copies
-    const Tensor& input_typed = (input.dtype() == DType::Float32) ? input : input.astype(DType::Float32);
+    const Tensor &input_typed = (input.dtype() == DType::Float32)
+                                    ? input
+                                    : input.astype(DType::Float32);
 
-    Shape result_shape = calculate_reduction_shape(input.shape(), axes, keep_dims);
+    Shape result_shape =
+        calculate_reduction_shape(input.shape(), axes, keep_dims);
 
     // Create result tensor initialized with identity value
     Tensor result(result_shape, DType::Float32, Device::CPU);
@@ -463,20 +504,22 @@ Tensor CPUReductionOperation<Func>::execute_reduction_typed(const Tensor& input,
 
     std::vector<int> norm_axes = axes;
     if (norm_axes.empty()) {
-        for(size_t i = 0; i < input.ndim(); ++i) norm_axes.push_back(static_cast<int>(i));
+        for (size_t i = 0; i < input.ndim(); ++i)
+            norm_axes.push_back(static_cast<int>(i));
     }
 
     std::vector<size_t> current_coords(input.ndim(), 0);
-    reduction_recursive_helper<T>(input_typed, result, norm_axes, current_coords, 0, func_, keep_dims);
+    reduction_recursive_helper<T>(input_typed, result, norm_axes,
+                                  current_coords, 0, func_, keep_dims);
 
     if (op_type_ == ops::OpType::Mean) {
         size_t reduction_size = 1;
-        for(int axis : norm_axes) {
+        for (int axis : norm_axes) {
             reduction_size *= input.shape()[axis];
         }
 
-        T* result_data = result.template typed_data<T>();
-        for(size_t i = 0; i < result.size(); ++i) {
+        T *result_data = result.template typed_data<T>();
+        for (size_t i = 0; i < result.size(); ++i) {
             result_data[i] /= static_cast<T>(reduction_size);
         }
     }
@@ -488,10 +531,10 @@ Tensor CPUReductionOperation<Func>::execute_reduction_typed(const Tensor& input,
 // CPU MatMul Operation Implementation
 // ============================================================================
 
-void CPUMatMulOperation::get_matmul_dims(const Tensor& a, const Tensor& b,
-                                          bool transpose_a, bool transpose_b,
-                                          size_t& M, size_t& N, size_t& K,
-                                          size_t& K_b) {
+void CPUMatMulOperation::get_matmul_dims(const Tensor &a, const Tensor &b,
+                                         bool transpose_a, bool transpose_b,
+                                         size_t &M, size_t &N, size_t &K,
+                                         size_t &K_b) {
     size_t a_ndim = a.ndim();
     size_t b_ndim = b.ndim();
 
@@ -515,8 +558,10 @@ void CPUMatMulOperation::get_matmul_dims(const Tensor& a, const Tensor& b,
     }
 
     // Apply transpose flags
-    if (transpose_a) std::swap(a_rows, a_cols);
-    if (transpose_b) std::swap(b_rows, b_cols);
+    if (transpose_a)
+        std::swap(a_rows, a_cols);
+    if (transpose_b)
+        std::swap(b_rows, b_cols);
 
     M = a_rows;
     K = a_cols;
@@ -524,25 +569,28 @@ void CPUMatMulOperation::get_matmul_dims(const Tensor& a, const Tensor& b,
     N = b_cols;
 }
 
-Shape CPUMatMulOperation::compute_batch_shape(const Tensor& a, const Tensor& b) {
+Shape CPUMatMulOperation::compute_batch_shape(const Tensor &a,
+                                              const Tensor &b) {
     // Get batch dimensions (all dims except last 2)
     size_t a_batch_dims = a.ndim() > 2 ? a.ndim() - 2 : 0;
     size_t b_batch_dims = b.ndim() > 2 ? b.ndim() - 2 : 0;
 
     Shape a_batch, b_batch;
-    for (size_t i = 0; i < a_batch_dims; ++i) a_batch.push_back(a.shape()[i]);
-    for (size_t i = 0; i < b_batch_dims; ++i) b_batch.push_back(b.shape()[i]);
+    for (size_t i = 0; i < a_batch_dims; ++i)
+        a_batch.push_back(a.shape()[i]);
+    for (size_t i = 0; i < b_batch_dims; ++i)
+        b_batch.push_back(b.shape()[i]);
 
     // Broadcast batch dimensions
     return ShapeUtils::broadcast_shape(a_batch, b_batch);
 }
 
-template<typename T>
-void CPUMatMulOperation::matmul_2d(const T* a_data, const T* b_data, T* c_data,
-                                    size_t M, size_t N, size_t K,
-                                    size_t a_row_stride, size_t a_col_stride,
-                                    size_t b_row_stride, size_t b_col_stride,
-                                    size_t c_row_stride, size_t c_col_stride) {
+template <typename T>
+void CPUMatMulOperation::matmul_2d(const T *a_data, const T *b_data, T *c_data,
+                                   size_t M, size_t N, size_t K,
+                                   size_t a_row_stride, size_t a_col_stride,
+                                   size_t b_row_stride, size_t b_col_stride,
+                                   size_t c_row_stride, size_t c_col_stride) {
     // Standard triple-loop matrix multiplication
     // This handles arbitrary strides for transposed views
     for (size_t i = 0; i < M; ++i) {
@@ -558,16 +606,18 @@ void CPUMatMulOperation::matmul_2d(const T* a_data, const T* b_data, T* c_data,
     }
 }
 
-template<typename T>
-Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b,
-                                                 bool transpose_a, bool transpose_b) const {
+template <typename T>
+Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor &a,
+                                                const Tensor &b,
+                                                bool transpose_a,
+                                                bool transpose_b) const {
     size_t M, N, K, K_b;
     get_matmul_dims(a, b, transpose_a, transpose_b, M, N, K, K_b);
 
     if (K != K_b) {
-        throw ShapeError(
-            "MatMul dimension mismatch: A has " + std::to_string(K) +
-            " columns but B has " + std::to_string(K_b) + " rows");
+        throw ShapeError("MatMul dimension mismatch: A has " +
+                         std::to_string(K) + " columns but B has " +
+                         std::to_string(K_b) + " rows");
     }
 
     size_t a_ndim = a.ndim();
@@ -627,23 +677,27 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b
     }
 
     // Handle transpose via stride swapping (zero-copy!)
-    if (transpose_a) std::swap(a_row_stride, a_col_stride);
-    if (transpose_b) std::swap(b_row_stride, b_col_stride);
+    if (transpose_a)
+        std::swap(a_row_stride, a_col_stride);
+    if (transpose_b)
+        std::swap(b_row_stride, b_col_stride);
 
     size_t result_ndim = result.ndim();
     if (result_ndim >= 2) {
         c_row_stride = result.strides()[result_ndim - 2] / c_itemsize;
         c_col_stride = result.strides()[result_ndim - 1] / c_itemsize;
     } else if (result_ndim == 1) {
-        // For 1D result (from 1D @ 2D), treat as row vector: c_row=0, c_col=stride
-        // Or as column vector (from 2D @ 1D): c_row=stride, c_col=0
-        // We need to determine which based on input shapes
+        // For 1D result (from 1D @ 2D), treat as row vector: c_row=0,
+        // c_col=stride Or as column vector (from 2D @ 1D): c_row=stride,
+        // c_col=0 We need to determine which based on input shapes
         if (a_ndim == 1 && b_ndim >= 2) {
-            // (K,) @ (..., K, N) -> (..., N) - result is conceptually a row, so col varies
+            // (K,) @ (..., K, N) -> (..., N) - result is conceptually a row, so
+            // col varies
             c_row_stride = 0;
             c_col_stride = result.strides()[0] / c_itemsize;
         } else {
-            // (..., M, K) @ (K,) -> (..., M) - result is conceptually a column, so row varies
+            // (..., M, K) @ (K,) -> (..., M) - result is conceptually a column,
+            // so row varies
             c_row_stride = result.strides()[0] / c_itemsize;
             c_col_stride = 0;
         }
@@ -652,16 +706,15 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b
         c_col_stride = 0;
     }
 
-    const T* a_base = a.typed_data<T>();
-    const T* b_base = b.typed_data<T>();
-    T* c_base = result.typed_data<T>();
+    const T *a_base = a.typed_data<T>();
+    const T *b_base = b.typed_data<T>();
+    T *c_base = result.typed_data<T>();
 
     // For simple 2D case without batching
     if (a_ndim <= 2 && b_ndim <= 2) {
-        matmul_2d<T>(a_base, b_base, c_base, M, N, K,
-                     a_row_stride, a_col_stride,
-                     b_row_stride, b_col_stride,
-                     c_row_stride, c_col_stride);
+        matmul_2d<T>(a_base, b_base, c_base, M, N, K, a_row_stride,
+                     a_col_stride, b_row_stride, b_col_stride, c_row_stride,
+                     c_col_stride);
     } else {
         // Batch matmul with broadcasting
         Shape batch_shape = compute_batch_shape(a, b);
@@ -703,15 +756,15 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b
                 c_batch_off += batch_coords[i] * c_batch_strides[i];
             }
 
-            matmul_2d<T>(a_base + a_batch_off, b_base + b_batch_off, c_base + c_batch_off,
-                         M, N, K,
-                         a_row_stride, a_col_stride,
-                         b_row_stride, b_col_stride,
-                         c_row_stride, c_col_stride);
+            matmul_2d<T>(a_base + a_batch_off, b_base + b_batch_off,
+                         c_base + c_batch_off, M, N, K, a_row_stride,
+                         a_col_stride, b_row_stride, b_col_stride, c_row_stride,
+                         c_col_stride);
 
             // Increment batch coordinates
             for (int i = batch_ndim - 1; i >= 0; --i) {
-                if (++batch_coords[i] < batch_shape[i]) break;
+                if (++batch_coords[i] < batch_shape[i])
+                    break;
                 batch_coords[i] = 0;
             }
         }
@@ -720,8 +773,9 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor& a, const Tensor& b
     return result;
 }
 
-Tensor CPUMatMulOperation::execute_matmul(const Tensor& a, const Tensor& b,
-                                           bool transpose_a, bool transpose_b) const {
+Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
+                                          bool transpose_a,
+                                          bool transpose_b) const {
     if (a.device() != Device::CPU || b.device() != Device::CPU) {
         throw DeviceError::cpu_only("CPU MatMul");
     }
@@ -732,19 +786,23 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor& a, const Tensor& b,
 
     // Type promote and dispatch
     DType result_dtype = ops::promote_types(a.dtype(), b.dtype());
-    Tensor a_promoted = (a.dtype() == result_dtype) ? a : a.astype(result_dtype);
-    Tensor b_promoted = (b.dtype() == result_dtype) ? b : b.astype(result_dtype);
+    Tensor a_promoted =
+        (a.dtype() == result_dtype) ? a : a.astype(result_dtype);
+    Tensor b_promoted =
+        (b.dtype() == result_dtype) ? b : b.astype(result_dtype);
 
-#define DISPATCH_MATMUL(DTYPE, CTYPE) \
-    case DTYPE: return execute_matmul_typed<CTYPE>(a_promoted, b_promoted, transpose_a, transpose_b);
+#define DISPATCH_MATMUL(DTYPE, CTYPE)                                          \
+    case DTYPE:                                                                \
+        return execute_matmul_typed<CTYPE>(a_promoted, b_promoted,             \
+                                           transpose_a, transpose_b);
 
     switch (result_dtype) {
         DISPATCH_MATMUL(DType::Float32, float)
         DISPATCH_MATMUL(DType::Float64, double)
         DISPATCH_MATMUL(DType::Int32, int32_t)
         DISPATCH_MATMUL(DType::Int64, int64_t)
-        default:
-            throw TypeError::unsupported_dtype(dtype_name(result_dtype), "MatMul");
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(result_dtype), "MatMul");
     }
 #undef DISPATCH_MATMUL
 }
@@ -753,12 +811,14 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor& a, const Tensor& b,
 // CPU ArgMax/ArgMin Operation Implementation
 // ============================================================================
 
-template<typename T>
-Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, bool keep_dims) const {
+template <typename T>
+Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor &input, int axis,
+                                                bool keep_dims) const {
     size_t ndim = input.ndim();
 
     // Normalize axis
-    if (axis < 0) axis += static_cast<int>(ndim);
+    if (axis < 0)
+        axis += static_cast<int>(ndim);
     if (axis < 0 || axis >= static_cast<int>(ndim)) {
         throw ShapeError::invalid_axis(axis, ndim);
     }
@@ -767,7 +827,8 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, b
     Shape output_shape;
     for (size_t i = 0; i < ndim; ++i) {
         if (static_cast<int>(i) == axis) {
-            if (keep_dims) output_shape.push_back(1);
+            if (keep_dims)
+                output_shape.push_back(1);
         } else {
             output_shape.push_back(input.shape()[i]);
         }
@@ -776,17 +837,19 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, b
 
     // Create output tensor with Int64 dtype for indices
     Tensor result = Tensor::zeros(output_shape, DType::Int64, Device::CPU);
-    int64_t* result_data = result.typed_data<int64_t>();
-    const T* input_data = input.typed_data<T>();
+    int64_t *result_data = result.typed_data<int64_t>();
+    const T *input_data = input.typed_data<T>();
 
     // Calculate sizes
     size_t outer_size = 1;
-    for (int i = 0; i < axis; ++i) outer_size *= input.shape()[i];
+    for (int i = 0; i < axis; ++i)
+        outer_size *= input.shape()[i];
 
     size_t axis_size = input.shape()[axis];
 
     size_t inner_size = 1;
-    for (size_t i = axis + 1; i < ndim; ++i) inner_size *= input.shape()[i];
+    for (size_t i = axis + 1; i < ndim; ++i)
+        inner_size *= input.shape()[i];
 
     // Iterate over all positions
     for (size_t outer = 0; outer < outer_size; ++outer) {
@@ -812,7 +875,8 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, b
 
                 size_t input_offset = 0;
                 for (size_t i = 0; i < ndim; ++i) {
-                    input_offset += coords[i] * (input.strides()[i] / input.itemsize());
+                    input_offset +=
+                        coords[i] * (input.strides()[i] / input.itemsize());
                 }
 
                 T val = input_data[input_offset];
@@ -831,7 +895,9 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor& input, int axis, b
     return result;
 }
 
-Tensor CPUArgMaxOperation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
+Tensor CPUArgMaxOperation::execute_reduction(const Tensor &input,
+                                             const std::vector<int> &axis,
+                                             bool keep_dims) const {
     if (input.device() != Device::CPU) {
         throw DeviceError::cpu_only("CPU ArgMax");
     }
@@ -844,26 +910,29 @@ Tensor CPUArgMaxOperation::execute_reduction(const Tensor& input, const std::vec
         ax = 0;
     }
 
-#define DISPATCH_ARGMAX(DTYPE, CTYPE) \
-    case DTYPE: return execute_argmax_typed<CTYPE>(input, ax, keep_dims);
+#define DISPATCH_ARGMAX(DTYPE, CTYPE)                                          \
+    case DTYPE:                                                                \
+        return execute_argmax_typed<CTYPE>(input, ax, keep_dims);
 
     switch (input.dtype()) {
         DISPATCH_ARGMAX(DType::Float32, float)
         DISPATCH_ARGMAX(DType::Float64, double)
         DISPATCH_ARGMAX(DType::Int32, int32_t)
         DISPATCH_ARGMAX(DType::Int64, int64_t)
-        default:
-            throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "ArgMax");
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "ArgMax");
     }
 #undef DISPATCH_ARGMAX
 }
 
-template<typename T>
-Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor& input, int axis, bool keep_dims) const {
+template <typename T>
+Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor &input, int axis,
+                                                bool keep_dims) const {
     size_t ndim = input.ndim();
 
     // Normalize axis
-    if (axis < 0) axis += static_cast<int>(ndim);
+    if (axis < 0)
+        axis += static_cast<int>(ndim);
     if (axis < 0 || axis >= static_cast<int>(ndim)) {
         throw ShapeError::invalid_axis(axis, ndim);
     }
@@ -872,7 +941,8 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor& input, int axis, b
     Shape output_shape;
     for (size_t i = 0; i < ndim; ++i) {
         if (static_cast<int>(i) == axis) {
-            if (keep_dims) output_shape.push_back(1);
+            if (keep_dims)
+                output_shape.push_back(1);
         } else {
             output_shape.push_back(input.shape()[i]);
         }
@@ -881,17 +951,19 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor& input, int axis, b
 
     // Create output tensor with Int64 dtype for indices
     Tensor result = Tensor::zeros(output_shape, DType::Int64, Device::CPU);
-    int64_t* result_data = result.typed_data<int64_t>();
-    const T* input_data = input.typed_data<T>();
+    int64_t *result_data = result.typed_data<int64_t>();
+    const T *input_data = input.typed_data<T>();
 
     // Calculate sizes
     size_t outer_size = 1;
-    for (int i = 0; i < axis; ++i) outer_size *= input.shape()[i];
+    for (int i = 0; i < axis; ++i)
+        outer_size *= input.shape()[i];
 
     size_t axis_size = input.shape()[axis];
 
     size_t inner_size = 1;
-    for (size_t i = axis + 1; i < ndim; ++i) inner_size *= input.shape()[i];
+    for (size_t i = axis + 1; i < ndim; ++i)
+        inner_size *= input.shape()[i];
 
     // Iterate over all positions
     for (size_t outer = 0; outer < outer_size; ++outer) {
@@ -917,7 +989,8 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor& input, int axis, b
 
                 size_t input_offset = 0;
                 for (size_t i = 0; i < ndim; ++i) {
-                    input_offset += coords[i] * (input.strides()[i] / input.itemsize());
+                    input_offset +=
+                        coords[i] * (input.strides()[i] / input.itemsize());
                 }
 
                 T val = input_data[input_offset];
@@ -936,7 +1009,9 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor& input, int axis, b
     return result;
 }
 
-Tensor CPUArgMinOperation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
+Tensor CPUArgMinOperation::execute_reduction(const Tensor &input,
+                                             const std::vector<int> &axis,
+                                             bool keep_dims) const {
     if (input.device() != Device::CPU) {
         throw DeviceError::cpu_only("CPU ArgMin");
     }
@@ -949,16 +1024,17 @@ Tensor CPUArgMinOperation::execute_reduction(const Tensor& input, const std::vec
         ax = 0;
     }
 
-#define DISPATCH_ARGMIN(DTYPE, CTYPE) \
-    case DTYPE: return execute_argmin_typed<CTYPE>(input, ax, keep_dims);
+#define DISPATCH_ARGMIN(DTYPE, CTYPE)                                          \
+    case DTYPE:                                                                \
+        return execute_argmin_typed<CTYPE>(input, ax, keep_dims);
 
     switch (input.dtype()) {
         DISPATCH_ARGMIN(DType::Float32, float)
         DISPATCH_ARGMIN(DType::Float64, double)
         DISPATCH_ARGMIN(DType::Int32, int32_t)
         DISPATCH_ARGMIN(DType::Int64, int64_t)
-        default:
-            throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "ArgMin");
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "ArgMin");
     }
 #undef DISPATCH_ARGMIN
 }
@@ -969,12 +1045,13 @@ Tensor CPUArgMinOperation::execute_reduction(const Tensor& input, const std::vec
 
 // Helper to compute broadcast strides: maps input shape to output shape strides
 // Returns strides in bytes where broadcasted dimensions have stride 0
-static Strides compute_broadcast_strides(const Shape& input_shape, const Shape& output_shape, 
-                                         const Strides& input_strides) {
+static Strides compute_broadcast_strides(const Shape &input_shape,
+                                         const Shape &output_shape,
+                                         const Strides &input_strides) {
     size_t out_ndim = output_shape.size();
     size_t in_ndim = input_shape.size();
     Strides result(out_ndim, 0);
-    
+
     // Align shapes from the right
     for (size_t i = 0; i < out_ndim; ++i) {
         size_t out_idx = out_ndim - 1 - i;
@@ -985,7 +1062,7 @@ static Strides compute_broadcast_strides(const Shape& input_shape, const Shape& 
             if (input_shape[in_idx] == output_shape[out_idx]) {
                 result[out_idx] = input_strides[in_idx];
             } else if (input_shape[in_idx] == 1) {
-                result[out_idx] = 0;  // Broadcast dimension
+                result[out_idx] = 0; // Broadcast dimension
             } else {
                 // This shouldn't happen if shapes are properly broadcastable
                 result[out_idx] = input_strides[in_idx];
@@ -999,87 +1076,106 @@ static Strides compute_broadcast_strides(const Shape& input_shape, const Shape& 
 }
 
 // Helper to get value from tensor at byte offset, converting to output type T
-template<typename T>
-static T get_tensor_value_at(const void* data, size_t byte_offset, DType dtype) {
+template <typename T>
+static T get_tensor_value_at(const void *data, size_t byte_offset,
+                             DType dtype) {
     switch (dtype) {
-        case DType::Bool:
-            return static_cast<T>(*reinterpret_cast<const bool*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::Int8:
-            return static_cast<T>(*reinterpret_cast<const int8_t*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::Int16:
-            return static_cast<T>(*reinterpret_cast<const int16_t*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::Int32:
-            return static_cast<T>(*reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::Int64:
-            return static_cast<T>(*reinterpret_cast<const int64_t*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::UInt8:
-            return static_cast<T>(*reinterpret_cast<const uint8_t*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::UInt16:
-            return static_cast<T>(*reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::UInt32:
-            return static_cast<T>(*reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::UInt64:
-            return static_cast<T>(*reinterpret_cast<const uint64_t*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::Float32:
-            return static_cast<T>(*reinterpret_cast<const float*>(static_cast<const uint8_t*>(data) + byte_offset));
-        case DType::Float64:
-            return static_cast<T>(*reinterpret_cast<const double*>(static_cast<const uint8_t*>(data) + byte_offset));
-        default:
-            return T(0);
+    case DType::Bool:
+        return static_cast<T>(*reinterpret_cast<const bool *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::Int8:
+        return static_cast<T>(*reinterpret_cast<const int8_t *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::Int16:
+        return static_cast<T>(*reinterpret_cast<const int16_t *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::Int32:
+        return static_cast<T>(*reinterpret_cast<const int32_t *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::Int64:
+        return static_cast<T>(*reinterpret_cast<const int64_t *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::UInt8:
+        return static_cast<T>(*reinterpret_cast<const uint8_t *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::UInt16:
+        return static_cast<T>(*reinterpret_cast<const uint16_t *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::UInt32:
+        return static_cast<T>(*reinterpret_cast<const uint32_t *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::UInt64:
+        return static_cast<T>(*reinterpret_cast<const uint64_t *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::Float32:
+        return static_cast<T>(*reinterpret_cast<const float *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::Float64:
+        return static_cast<T>(*reinterpret_cast<const double *>(
+            static_cast<const uint8_t *>(data) + byte_offset));
+    default:
+        return T(0);
     }
 }
 
-template<typename T>
-Tensor CPUWhereOperation::execute_where_typed(const Tensor& condition, const Tensor& a, const Tensor& b) const {
+template <typename T>
+Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
+                                              const Tensor &a,
+                                              const Tensor &b) const {
     // Compute broadcast shape for all three inputs
-    Shape temp_shape = ShapeUtils::broadcast_shape(condition.shape(), a.shape());
+    Shape temp_shape =
+        ShapeUtils::broadcast_shape(condition.shape(), a.shape());
     Shape output_shape = ShapeUtils::broadcast_shape(temp_shape, b.shape());
-    
+
     // Determine output dtype from a and b (condition is bool)
     DType output_dtype = ops::promote_types(a.dtype(), b.dtype());
-    
+
     // Create output tensor
     Tensor result(output_shape, output_dtype, Device::CPU);
-    
+
     size_t numel = ShapeUtils::size(output_shape);
-    if (numel == 0) return result;
-    
+    if (numel == 0)
+        return result;
+
     // Get strides for broadcasting
-    auto cond_strides = compute_broadcast_strides(condition.shape(), output_shape, condition.strides());
-    auto a_strides = compute_broadcast_strides(a.shape(), output_shape, a.strides());
-    auto b_strides = compute_broadcast_strides(b.shape(), output_shape, b.strides());
+    auto cond_strides = compute_broadcast_strides(
+        condition.shape(), output_shape, condition.strides());
+    auto a_strides =
+        compute_broadcast_strides(a.shape(), output_shape, a.strides());
+    auto b_strides =
+        compute_broadcast_strides(b.shape(), output_shape, b.strides());
     auto result_strides = result.strides();
-    
+
     // Get data pointers
-    const uint8_t* cond_data = static_cast<const uint8_t*>(condition.data());
-    const void* a_data = a.data();
-    const void* b_data = b.data();
-    T* result_data = result.typed_data<T>();
-    
+    const uint8_t *cond_data = static_cast<const uint8_t *>(condition.data());
+    const void *a_data = a.data();
+    const void *b_data = b.data();
+    T *result_data = result.typed_data<T>();
+
     size_t result_itemsize = result.itemsize();
     size_t cond_itemsize = condition.itemsize();
-    
+
     // Iterate over all elements
     std::vector<size_t> coords(output_shape.size(), 0);
-    
+
     for (size_t i = 0; i < numel; ++i) {
         // Compute byte offsets for each input
         size_t cond_offset = 0;
         size_t a_offset = 0;
         size_t b_offset = 0;
         size_t result_offset = 0;
-        
+
         for (size_t d = 0; d < output_shape.size(); ++d) {
             cond_offset += coords[d] * cond_strides[d];
             a_offset += coords[d] * a_strides[d];
             b_offset += coords[d] * b_strides[d];
             result_offset += coords[d] * result_strides[d];
         }
-        
+
         // Get condition value (handle different condition dtypes)
         bool cond_val = false;
         if (condition.dtype() == DType::Bool) {
-            cond_val = *reinterpret_cast<const bool*>(cond_data + cond_offset);
+            cond_val = *reinterpret_cast<const bool *>(cond_data + cond_offset);
         } else {
             // For numeric types, non-zero is true
             // Check if any byte is non-zero
@@ -1090,35 +1186,40 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor& condition, const Ten
                 }
             }
         }
-        
+
         // Select from a or b based on condition, with proper type conversion
-        T value = cond_val 
-            ? get_tensor_value_at<T>(a_data, a_offset, a.dtype()) 
-            : get_tensor_value_at<T>(b_data, b_offset, b.dtype());
+        T value = cond_val
+                      ? get_tensor_value_at<T>(a_data, a_offset, a.dtype())
+                      : get_tensor_value_at<T>(b_data, b_offset, b.dtype());
         result_data[result_offset / result_itemsize] = value;
-        
+
         // Increment coordinates
         for (int d = static_cast<int>(output_shape.size()) - 1; d >= 0; --d) {
             coords[d]++;
-            if (coords[d] < output_shape[d]) break;
+            if (coords[d] < output_shape[d])
+                break;
             coords[d] = 0;
         }
     }
-    
+
     return result;
 }
 
-Tensor CPUWhereOperation::execute_where(const Tensor& condition, const Tensor& a, const Tensor& b) const {
-    if (condition.device() != Device::CPU || a.device() != Device::CPU || b.device() != Device::CPU) {
+Tensor CPUWhereOperation::execute_where(const Tensor &condition,
+                                        const Tensor &a,
+                                        const Tensor &b) const {
+    if (condition.device() != Device::CPU || a.device() != Device::CPU ||
+        b.device() != Device::CPU) {
         throw DeviceError::cpu_only("CPU Where");
     }
-    
+
     // Determine output dtype from a and b
     DType output_dtype = ops::promote_types(a.dtype(), b.dtype());
-    
-#define DISPATCH_WHERE(DTYPE, CTYPE) \
-    case DTYPE: return execute_where_typed<CTYPE>(condition, a, b);
-    
+
+#define DISPATCH_WHERE(DTYPE, CTYPE)                                           \
+    case DTYPE:                                                                \
+        return execute_where_typed<CTYPE>(condition, a, b);
+
     switch (output_dtype) {
         DISPATCH_WHERE(DType::Float32, float)
         DISPATCH_WHERE(DType::Float64, double)
@@ -1131,8 +1232,8 @@ Tensor CPUWhereOperation::execute_where(const Tensor& condition, const Tensor& a
         DISPATCH_WHERE(DType::UInt32, uint32_t)
         DISPATCH_WHERE(DType::UInt64, uint64_t)
         DISPATCH_WHERE(DType::Bool, bool)
-        default:
-            throw TypeError::unsupported_dtype(dtype_name(output_dtype), "Where");
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(output_dtype), "Where");
     }
 #undef DISPATCH_WHERE
 }
@@ -1141,8 +1242,9 @@ Tensor CPUWhereOperation::execute_where(const Tensor& condition, const Tensor& a
 // CPU Softmax/LogSoftmax Implementation
 // ============================================================================
 
-template<typename T>
-Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor& input, int axis) const {
+template <typename T>
+Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor &input,
+                                                  int axis) const {
     // Normalize axis
     int norm_axis = axis;
     if (norm_axis < 0) {
@@ -1153,15 +1255,17 @@ Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor& input, int axis)
     Tensor result(input.shape(), input.dtype(), Device::CPU);
 
     size_t outer_size = 1;
-    for (int i = 0; i < norm_axis; ++i) outer_size *= input.shape()[i];
+    for (int i = 0; i < norm_axis; ++i)
+        outer_size *= input.shape()[i];
 
     size_t axis_size = input.shape()[norm_axis];
 
     size_t inner_size = 1;
-    for (size_t i = norm_axis + 1; i < input.ndim(); ++i) inner_size *= input.shape()[i];
+    for (size_t i = norm_axis + 1; i < input.ndim(); ++i)
+        inner_size *= input.shape()[i];
 
-    const T* input_data = input.typed_data<T>();
-    T* result_data = result.typed_data<T>();
+    const T *input_data = input.typed_data<T>();
+    T *result_data = result.typed_data<T>();
 
     // Process each softmax independently
     for (size_t outer = 0; outer < outer_size; ++outer) {
@@ -1203,8 +1307,10 @@ Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor& input, int axis)
     return result;
 }
 
-Tensor CPUSoftmaxOperation::execute_reduction(const Tensor& input, const std::vector<int>& axis, bool keep_dims) const {
-    (void)keep_dims;  // Softmax preserves shape
+Tensor CPUSoftmaxOperation::execute_reduction(const Tensor &input,
+                                              const std::vector<int> &axis,
+                                              bool keep_dims) const {
+    (void)keep_dims; // Softmax preserves shape
     if (input.device() != Device::CPU) {
         throw DeviceError::cpu_only("CPU Softmax");
     }
@@ -1212,10 +1318,12 @@ Tensor CPUSoftmaxOperation::execute_reduction(const Tensor& input, const std::ve
     int ax = axis.empty() ? -1 : axis[0];
 
     switch (input.dtype()) {
-        case DType::Float32: return execute_softmax_typed<float>(input, ax);
-        case DType::Float64: return execute_softmax_typed<double>(input, ax);
-        default:
-            throw TypeError::unsupported_dtype(dtype_name(input.dtype()), name());
+    case DType::Float32:
+        return execute_softmax_typed<float>(input, ax);
+    case DType::Float64:
+        return execute_softmax_typed<double>(input, ax);
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()), name());
     }
 }
 
@@ -1224,124 +1332,202 @@ Tensor CPUSoftmaxOperation::execute_reduction(const Tensor& input, const std::ve
 // ============================================================================
 
 void register_cpu_operations() {
-  using namespace ops;
-  
-  // Register arithmetic operations
-  OperationRegistry::register_operation(
-    OpType::Add, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<AddFunc>>(OpType::Add, "add", AddFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Subtract, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<SubtractFunc>>(OpType::Subtract, "subtract", SubtractFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Multiply, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<MultiplyFunc>>(OpType::Multiply, "multiply", MultiplyFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Divide, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<DivideFunc>>(OpType::Divide, "divide", DivideFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Power, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<PowerFunc>>(OpType::Power, "power", PowerFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Modulo, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<ModuloFunc>>(OpType::Modulo, "modulo", ModuloFunc{}));
-  
-  // Register comparison operations
-  OperationRegistry::register_operation(
-    OpType::Equal, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<EqualFunc>>(OpType::Equal, "equal", EqualFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::NotEqual, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<NotEqualFunc>>(OpType::NotEqual, "not_equal", NotEqualFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Less, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<LessFunc>>(OpType::Less, "less", LessFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::LessEqual, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<LessEqualFunc>>(OpType::LessEqual, "less_equal", LessEqualFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Greater, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<GreaterFunc>>(OpType::Greater, "greater", GreaterFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::GreaterEqual, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<GreaterEqualFunc>>(OpType::GreaterEqual, "greater_equal", GreaterEqualFunc{}));
-  
-  // Register logical operations
-  OperationRegistry::register_operation(
-    OpType::LogicalAnd, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<LogicalAndFunc>>(OpType::LogicalAnd, "logical_and", LogicalAndFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::LogicalOr, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<LogicalOrFunc>>(OpType::LogicalOr, "logical_or", LogicalOrFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::LogicalXor, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<LogicalXorFunc>>(OpType::LogicalXor, "logical_xor", LogicalXorFunc{}));
-  
-  // Register math operations
-  OperationRegistry::register_operation(
-    OpType::Maximum, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<MaximumFunc>>(OpType::Maximum, "maximum", MaximumFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Minimum, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<MinimumFunc>>(OpType::Minimum, "minimum", MinimumFunc{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Atan2, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<Atan2Func>>(OpType::Atan2, "atan2", Atan2Func{}));
-  
-  OperationRegistry::register_operation(
-    OpType::Hypot, Device::CPU, 
-    std::make_unique<CPUBinaryOperation<HypotFunc>>(OpType::Hypot, "hypot", HypotFunc{}));
+    using namespace ops;
 
-  // Register unary operations
-  OperationRegistry::register_operation(OpType::Negate, Device::CPU, std::make_unique<CPUUnaryOperation<NegateFunc>>(OpType::Negate, "negate", NegateFunc{}));
-  OperationRegistry::register_operation(OpType::Abs, Device::CPU, std::make_unique<CPUUnaryOperation<AbsFunc>>(OpType::Abs, "abs", AbsFunc{}));
-  OperationRegistry::register_operation(OpType::Sqrt, Device::CPU, std::make_unique<CPUUnaryOperation<SqrtFunc>>(OpType::Sqrt, "sqrt", SqrtFunc{}));
-  OperationRegistry::register_operation(OpType::Exp, Device::CPU, std::make_unique<CPUUnaryOperation<ExpFunc>>(OpType::Exp, "exp", ExpFunc{}));
-  OperationRegistry::register_operation(OpType::Log, Device::CPU, std::make_unique<CPUUnaryOperation<LogFunc>>(OpType::Log, "log", LogFunc{}));
-  OperationRegistry::register_operation(OpType::Sin, Device::CPU, std::make_unique<CPUUnaryOperation<SinFunc>>(OpType::Sin, "sin", SinFunc{}));
-  OperationRegistry::register_operation(OpType::Cos, Device::CPU, std::make_unique<CPUUnaryOperation<CosFunc>>(OpType::Cos, "cos", CosFunc{}));
-  OperationRegistry::register_operation(OpType::Tan, Device::CPU, std::make_unique<CPUUnaryOperation<TanFunc>>(OpType::Tan, "tan", TanFunc{}));
-  OperationRegistry::register_operation(OpType::Erf, Device::CPU, std::make_unique<CPUUnaryOperation<ErfFunc>>(OpType::Erf, "erf", ErfFunc{}));
-  OperationRegistry::register_operation(OpType::GELU, Device::CPU, std::make_unique<CPUUnaryOperation<GELUFunc>>(OpType::GELU, "gelu", GELUFunc{}));
-  OperationRegistry::register_operation(OpType::Conj, Device::CPU, std::make_unique<CPUUnaryOperation<ConjFunc>>(OpType::Conj, "conj", ConjFunc{}));
+    // Register arithmetic operations
+    OperationRegistry::register_operation(
+        OpType::Add, Device::CPU,
+        std::make_unique<CPUBinaryOperation<AddFunc>>(OpType::Add, "add",
+                                                      AddFunc{}));
 
-  // Register reduction operations
-  OperationRegistry::register_operation(OpType::Sum, Device::CPU, std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Sum, "sum", SumFunc{}));
-  OperationRegistry::register_operation(OpType::Mean, Device::CPU, std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Mean, "mean", SumFunc{}));
-  OperationRegistry::register_operation(OpType::Max, Device::CPU, std::make_unique<CPUReductionOperation<MaxFunc>>(OpType::Max, "max", MaxFunc{}));
-  OperationRegistry::register_operation(OpType::Min, Device::CPU, std::make_unique<CPUReductionOperation<MinFunc>>(OpType::Min, "min", MinFunc{}));
-  OperationRegistry::register_operation(OpType::Any, Device::CPU, std::make_unique<CPUReductionOperation<AnyFunc>>(OpType::Any, "any", AnyFunc{}));
-  OperationRegistry::register_operation(OpType::All, Device::CPU, std::make_unique<CPUReductionOperation<AllFunc>>(OpType::All, "all", AllFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Subtract, Device::CPU,
+        std::make_unique<CPUBinaryOperation<SubtractFunc>>(
+            OpType::Subtract, "subtract", SubtractFunc{}));
 
-  // Register argmax/argmin operations
-  OperationRegistry::register_operation(OpType::ArgMax, Device::CPU, std::make_unique<CPUArgMaxOperation>());
-  OperationRegistry::register_operation(OpType::ArgMin, Device::CPU, std::make_unique<CPUArgMinOperation>());
+    OperationRegistry::register_operation(
+        OpType::Multiply, Device::CPU,
+        std::make_unique<CPUBinaryOperation<MultiplyFunc>>(
+            OpType::Multiply, "multiply", MultiplyFunc{}));
 
-  // Register matrix multiplication operation
-  OperationRegistry::register_operation(OpType::MatMul, Device::CPU, std::make_unique<CPUMatMulOperation>());
+    OperationRegistry::register_operation(
+        OpType::Divide, Device::CPU,
+        std::make_unique<CPUBinaryOperation<DivideFunc>>(
+            OpType::Divide, "divide", DivideFunc{}));
 
-  // Register where (conditional selection) operation
-  OperationRegistry::register_operation(OpType::Where, Device::CPU, std::make_unique<CPUWhereOperation>());
+    OperationRegistry::register_operation(
+        OpType::Power, Device::CPU,
+        std::make_unique<CPUBinaryOperation<PowerFunc>>(OpType::Power, "power",
+                                                        PowerFunc{}));
 
-  // Register softmax operations
-  OperationRegistry::register_operation(OpType::Softmax, Device::CPU, std::make_unique<CPUSoftmaxOperation>(false));
-  OperationRegistry::register_operation(OpType::LogSoftmax, Device::CPU, std::make_unique<CPUSoftmaxOperation>(true));
+    OperationRegistry::register_operation(
+        OpType::Modulo, Device::CPU,
+        std::make_unique<CPUBinaryOperation<ModuloFunc>>(
+            OpType::Modulo, "modulo", ModuloFunc{}));
+
+    // Register comparison operations
+    OperationRegistry::register_operation(
+        OpType::Equal, Device::CPU,
+        std::make_unique<CPUBinaryOperation<EqualFunc>>(OpType::Equal, "equal",
+                                                        EqualFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::NotEqual, Device::CPU,
+        std::make_unique<CPUBinaryOperation<NotEqualFunc>>(
+            OpType::NotEqual, "not_equal", NotEqualFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::Less, Device::CPU,
+        std::make_unique<CPUBinaryOperation<LessFunc>>(OpType::Less, "less",
+                                                       LessFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::LessEqual, Device::CPU,
+        std::make_unique<CPUBinaryOperation<LessEqualFunc>>(
+            OpType::LessEqual, "less_equal", LessEqualFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::Greater, Device::CPU,
+        std::make_unique<CPUBinaryOperation<GreaterFunc>>(
+            OpType::Greater, "greater", GreaterFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::GreaterEqual, Device::CPU,
+        std::make_unique<CPUBinaryOperation<GreaterEqualFunc>>(
+            OpType::GreaterEqual, "greater_equal", GreaterEqualFunc{}));
+
+    // Register logical operations
+    OperationRegistry::register_operation(
+        OpType::LogicalAnd, Device::CPU,
+        std::make_unique<CPUBinaryOperation<LogicalAndFunc>>(
+            OpType::LogicalAnd, "logical_and", LogicalAndFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::LogicalOr, Device::CPU,
+        std::make_unique<CPUBinaryOperation<LogicalOrFunc>>(
+            OpType::LogicalOr, "logical_or", LogicalOrFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::LogicalXor, Device::CPU,
+        std::make_unique<CPUBinaryOperation<LogicalXorFunc>>(
+            OpType::LogicalXor, "logical_xor", LogicalXorFunc{}));
+
+    // Register math operations
+    OperationRegistry::register_operation(
+        OpType::Maximum, Device::CPU,
+        std::make_unique<CPUBinaryOperation<MaximumFunc>>(
+            OpType::Maximum, "maximum", MaximumFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::Minimum, Device::CPU,
+        std::make_unique<CPUBinaryOperation<MinimumFunc>>(
+            OpType::Minimum, "minimum", MinimumFunc{}));
+
+    OperationRegistry::register_operation(
+        OpType::Atan2, Device::CPU,
+        std::make_unique<CPUBinaryOperation<Atan2Func>>(OpType::Atan2, "atan2",
+                                                        Atan2Func{}));
+
+    OperationRegistry::register_operation(
+        OpType::Hypot, Device::CPU,
+        std::make_unique<CPUBinaryOperation<HypotFunc>>(OpType::Hypot, "hypot",
+                                                        HypotFunc{}));
+
+    // Register unary operations
+    OperationRegistry::register_operation(
+        OpType::Negate, Device::CPU,
+        std::make_unique<CPUUnaryOperation<NegateFunc>>(
+            OpType::Negate, "negate", NegateFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Abs, Device::CPU,
+        std::make_unique<CPUUnaryOperation<AbsFunc>>(OpType::Abs, "abs",
+                                                     AbsFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Sqrt, Device::CPU,
+        std::make_unique<CPUUnaryOperation<SqrtFunc>>(OpType::Sqrt, "sqrt",
+                                                      SqrtFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Exp, Device::CPU,
+        std::make_unique<CPUUnaryOperation<ExpFunc>>(OpType::Exp, "exp",
+                                                     ExpFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Log, Device::CPU,
+        std::make_unique<CPUUnaryOperation<LogFunc>>(OpType::Log, "log",
+                                                     LogFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Sin, Device::CPU,
+        std::make_unique<CPUUnaryOperation<SinFunc>>(OpType::Sin, "sin",
+                                                     SinFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Cos, Device::CPU,
+        std::make_unique<CPUUnaryOperation<CosFunc>>(OpType::Cos, "cos",
+                                                     CosFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Tan, Device::CPU,
+        std::make_unique<CPUUnaryOperation<TanFunc>>(OpType::Tan, "tan",
+                                                     TanFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Erf, Device::CPU,
+        std::make_unique<CPUUnaryOperation<ErfFunc>>(OpType::Erf, "erf",
+                                                     ErfFunc{}));
+    OperationRegistry::register_operation(
+        OpType::GELU, Device::CPU,
+        std::make_unique<CPUUnaryOperation<GELUFunc>>(OpType::GELU, "gelu",
+                                                      GELUFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Conj, Device::CPU,
+        std::make_unique<CPUUnaryOperation<ConjFunc>>(OpType::Conj, "conj",
+                                                      ConjFunc{}));
+
+    // Register reduction operations
+    OperationRegistry::register_operation(
+        OpType::Sum, Device::CPU,
+        std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Sum, "sum",
+                                                         SumFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Mean, Device::CPU,
+        std::make_unique<CPUReductionOperation<SumFunc>>(OpType::Mean, "mean",
+                                                         SumFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Max, Device::CPU,
+        std::make_unique<CPUReductionOperation<MaxFunc>>(OpType::Max, "max",
+                                                         MaxFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Min, Device::CPU,
+        std::make_unique<CPUReductionOperation<MinFunc>>(OpType::Min, "min",
+                                                         MinFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Any, Device::CPU,
+        std::make_unique<CPUReductionOperation<AnyFunc>>(OpType::Any, "any",
+                                                         AnyFunc{}));
+    OperationRegistry::register_operation(
+        OpType::All, Device::CPU,
+        std::make_unique<CPUReductionOperation<AllFunc>>(OpType::All, "all",
+                                                         AllFunc{}));
+
+    // Register argmax/argmin operations
+    OperationRegistry::register_operation(
+        OpType::ArgMax, Device::CPU, std::make_unique<CPUArgMaxOperation>());
+    OperationRegistry::register_operation(
+        OpType::ArgMin, Device::CPU, std::make_unique<CPUArgMinOperation>());
+
+    // Register matrix multiplication operation
+    OperationRegistry::register_operation(
+        OpType::MatMul, Device::CPU, std::make_unique<CPUMatMulOperation>());
+
+    // Register where (conditional selection) operation
+    OperationRegistry::register_operation(
+        OpType::Where, Device::CPU, std::make_unique<CPUWhereOperation>());
+
+    // Register softmax operations
+    OperationRegistry::register_operation(
+        OpType::Softmax, Device::CPU,
+        std::make_unique<CPUSoftmaxOperation>(false));
+    OperationRegistry::register_operation(
+        OpType::LogSoftmax, Device::CPU,
+        std::make_unique<CPUSoftmaxOperation>(true));
 }
 
-}  // namespace cpu
-}  // namespace backends
-}  // namespace axiom 
+} // namespace cpu
+} // namespace backends
+} // namespace axiom

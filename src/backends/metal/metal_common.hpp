@@ -17,28 +17,29 @@ namespace axiom {
 namespace backends {
 namespace metal {
 
-// A singleton to manage the application's single Metal device and command queue.
+// A singleton to manage the application's single Metal device and command
+// queue.
 class MetalContext {
-public:
-    static MetalContext& instance();
+  public:
+    static MetalContext &instance();
 
-    void* device() const;
-    void* command_queue() const;
+    void *device() const;
+    void *command_queue() const;
 
-private:
+  private:
     MetalContext();
     ~MetalContext();
 
-    MetalContext(const MetalContext&) = delete;
-    MetalContext& operator=(const MetalContext&) = delete;
-    
-    void* device_; // Using void* to avoid Obj-C headers
-    void* command_queue_;
+    MetalContext(const MetalContext &) = delete;
+    MetalContext &operator=(const MetalContext &) = delete;
+
+    void *device_; // Using void* to avoid Obj-C headers
+    void *command_queue_;
 };
 
 // Returns the default Metal library, compiled from kernels.metal
-void* get_default_library();
+void *get_default_library();
 
 } // namespace metal
 } // namespace backends
-} // namespace axiom 
+} // namespace axiom

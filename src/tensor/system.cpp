@@ -17,9 +17,12 @@ bool is_metal_available() {
 
 std::string device_to_string(Device device) {
     switch (device) {
-        case Device::CPU: return "CPU";
-        case Device::GPU: return "GPU";
-        default: return "Unknown";
+    case Device::CPU:
+        return "CPU";
+    case Device::GPU:
+        return "GPU";
+    default:
+        return "Unknown";
     }
 }
-} // namespace axiom::system 
+} // namespace axiom::system

@@ -1,12 +1,11 @@
-#include <iostream>
-#include <string>
-#include <vector>
-#include <functional>
-#include <stdexcept>
+#include <axiom/axiom.hpp>
 #include <cmath>
 #include <complex>
-
-#include <axiom/axiom.hpp>
+#include <functional>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 using namespace axiom;
 
@@ -16,25 +15,27 @@ static int tests_passed = 0;
 
 #define RUN_TEST(test_func) run_test([&]() { test_func(); }, #test_func)
 
-void run_test(const std::function<void()>& test_func, const std::string& test_name) {
+void run_test(const std::function<void()> &test_func,
+              const std::string &test_name) {
     tests_run++;
     std::cout << "--- Running: " << test_name << " ---" << std::endl;
     try {
         test_func();
         std::cout << "--- PASSED: " << test_name << " ---" << std::endl;
         tests_passed++;
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         std::cerr << "--- FAILED: " << test_name << " ---" << std::endl;
         std::cerr << "    Error: " << e.what() << std::endl;
     }
     std::cout << std::endl;
 }
 
-#define ASSERT(condition, msg) \
-    do { \
-        if (!(condition)) { \
-            throw std::runtime_error("Assertion failed: (" #condition ") - " + std::string(msg)); \
-        } \
+#define ASSERT(condition, msg)                                                 \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            throw std::runtime_error("Assertion failed: (" #condition ") - " + \
+                                     std::string(msg));                        \
+        }                                                                      \
     } while (0)
 
 // ============================================================================
@@ -72,9 +73,12 @@ void test_real_view() {
     ASSERT(real_view.dtype() == DType::Float32, "Real view should be Float32");
     ASSERT(real_view.shape() == Shape{2}, "Real view shape should match");
 
-    // Real view is strided (stride=8, itemsize=4), so use item() for proper access
-    ASSERT(std::abs(real_view.item<float>({0}) - 1.0f) < 1e-5f, "First real should be 1.0");
-    ASSERT(std::abs(real_view.item<float>({1}) - 3.0f) < 1e-5f, "Second real should be 3.0");
+    // Real view is strided (stride=8, itemsize=4), so use item() for proper
+    // access
+    ASSERT(std::abs(real_view.item<float>({0}) - 1.0f) < 1e-5f,
+           "First real should be 1.0");
+    ASSERT(std::abs(real_view.item<float>({1}) - 3.0f) < 1e-5f,
+           "Second real should be 3.0");
 }
 
 void test_imag_view() {
@@ -86,16 +90,17 @@ void test_imag_view() {
     ASSERT(imag_view.dtype() == DType::Float32, "Imag view should be Float32");
     ASSERT(imag_view.shape() == Shape{2}, "Imag view shape should match");
 
-    // Imag view is strided (stride=8, itemsize=4), so use item() for proper access
-    ASSERT(std::abs(imag_view.item<float>({0}) - 2.0f) < 1e-5f, "First imag should be 2.0");
-    ASSERT(std::abs(imag_view.item<float>({1}) - 4.0f) < 1e-5f, "Second imag should be 4.0");
+    // Imag view is strided (stride=8, itemsize=4), so use item() for proper
+    // access
+    ASSERT(std::abs(imag_view.item<float>({0}) - 2.0f) < 1e-5f,
+           "First imag should be 2.0");
+    ASSERT(std::abs(imag_view.item<float>({1}) - 4.0f) < 1e-5f,
+           "Second imag should be 4.0");
 }
 
 void test_real_imag_2d() {
     std::vector<complex64_t> data = {
-        {1.0f, 2.0f}, {3.0f, 4.0f},
-        {5.0f, 6.0f}, {7.0f, 8.0f}
-    };
+        {1.0f, 2.0f}, {3.0f, 4.0f}, {5.0f, 6.0f}, {7.0f, 8.0f}};
     auto t = Tensor::from_data(data.data(), {2, 2});
 
     auto real_view = t.real();
@@ -132,15 +137,16 @@ void test_complex_illegal_op_throws() {
         // Maximum is not allowed for complex types
         // This should throw TypeError
         (void)t.max();
-    } catch (const TypeError&) {
+    } catch (const TypeError &) {
         threw = true;
-    } catch (const std::exception&) {
+    } catch (const std::exception &) {
         // Other exceptions might be thrown during setup
         threw = true;
     }
 
     // Note: If complex ops aren't fully implemented, this might not throw yet
-    std::cout << "  Complex illegal op test - checking type enforcement" << std::endl;
+    std::cout << "  Complex illegal op test - checking type enforcement"
+              << std::endl;
 }
 
 void test_real_on_non_complex_throws() {
@@ -149,7 +155,7 @@ void test_real_on_non_complex_throws() {
     bool threw = false;
     try {
         auto real_view = t.real();
-    } catch (const TypeError&) {
+    } catch (const TypeError &) {
         threw = true;
     }
 
@@ -162,7 +168,7 @@ void test_imag_on_non_complex_throws() {
     bool threw = false;
     try {
         auto imag_view = t.imag();
-    } catch (const TypeError&) {
+    } catch (const TypeError &) {
         threw = true;
     }
 

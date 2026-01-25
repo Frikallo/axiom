@@ -24,17 +24,20 @@ namespace metal {
 
 // Type to represent a block that builds an MPSGraph operation
 // Takes MPSGraph and input tensors, returns output tensor
-using MPSGraphBinaryOpBlock = MPSGraphTensor* (*)(MPSGraph*, MPSGraphTensor*, MPSGraphTensor*);
-using MPSGraphUnaryOpBlock = MPSGraphTensor* (*)(MPSGraph*, MPSGraphTensor*);
-using MPSGraphTernaryOpBlock = MPSGraphTensor* (*)(MPSGraph*, MPSGraphTensor*, MPSGraphTensor*, MPSGraphTensor*);
+using MPSGraphBinaryOpBlock = MPSGraphTensor *(*)(MPSGraph *, MPSGraphTensor *,
+                                                  MPSGraphTensor *);
+using MPSGraphUnaryOpBlock = MPSGraphTensor *(*)(MPSGraph *, MPSGraphTensor *);
+using MPSGraphTernaryOpBlock = MPSGraphTensor *(*)(MPSGraph *, MPSGraphTensor *,
+                                                   MPSGraphTensor *,
+                                                   MPSGraphTensor *);
 
 // Base class for all MPSGraph-based operations
 class MPSGraphOperation : public ops::Operation {
-protected:
+  protected:
     ops::OpType op_type_;
     std::string op_name_;
 
-public:
+  public:
     MPSGraphOperation(ops::OpType op_type, std::string op_name)
         : op_type_(op_type), op_name_(std::move(op_name)) {}
 
@@ -42,7 +45,8 @@ public:
     std::string name() const override { return op_name_; }
     Device device() const override { return Device::GPU; }
 
-    bool supports_binary(const Tensor& /*lhs*/, const Tensor& /*rhs*/) const override {
+    bool supports_binary(const Tensor & /*lhs*/,
+                         const Tensor & /*rhs*/) const override {
         // MPSGraph handles broadcasting automatically
         return true;
     }
@@ -53,21 +57,25 @@ public:
 // ============================================================================
 
 class MPSGraphBinaryOperation : public MPSGraphOperation {
-private:
+  private:
     MPSGraphBinaryOpBlock op_block_;
 
-public:
-    MPSGraphBinaryOperation(ops::OpType op_type, std::string op_name, 
-                           MPSGraphBinaryOpBlock op_block);
+  public:
+    MPSGraphBinaryOperation(ops::OpType op_type, std::string op_name,
+                            MPSGraphBinaryOpBlock op_block);
 
-    Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override;
-    
-    Tensor execute_unary(const Tensor& /*input*/) const override {
-        throw RuntimeError::internal("execute_unary called on binary operation");
+    Tensor execute_binary(const Tensor &lhs, const Tensor &rhs) const override;
+
+    Tensor execute_unary(const Tensor & /*input*/) const override {
+        throw RuntimeError::internal(
+            "execute_unary called on binary operation");
     }
-    
-    Tensor execute_reduction(const Tensor& /*input*/, const std::vector<int>& /*axis*/, bool /*keep_dims*/) const override {
-        throw RuntimeError::internal("execute_reduction called on binary operation");
+
+    Tensor execute_reduction(const Tensor & /*input*/,
+                             const std::vector<int> & /*axis*/,
+                             bool /*keep_dims*/) const override {
+        throw RuntimeError::internal(
+            "execute_reduction called on binary operation");
     }
 };
 
@@ -76,21 +84,26 @@ public:
 // ============================================================================
 
 class MPSGraphUnaryOperation : public MPSGraphOperation {
-private:
+  private:
     MPSGraphUnaryOpBlock op_block_;
 
-public:
+  public:
     MPSGraphUnaryOperation(ops::OpType op_type, std::string op_name,
-                          MPSGraphUnaryOpBlock op_block);
+                           MPSGraphUnaryOpBlock op_block);
 
-    Tensor execute_unary(const Tensor& input) const override;
-    
-    Tensor execute_binary(const Tensor& /*lhs*/, const Tensor& /*rhs*/) const override {
-        throw RuntimeError::internal("execute_binary called on unary operation");
+    Tensor execute_unary(const Tensor &input) const override;
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on unary operation");
     }
-    
-    Tensor execute_reduction(const Tensor& /*input*/, const std::vector<int>& /*axis*/, bool /*keep_dims*/) const override {
-        throw RuntimeError::internal("execute_reduction called on unary operation");
+
+    Tensor execute_reduction(const Tensor & /*input*/,
+                             const std::vector<int> & /*axis*/,
+                             bool /*keep_dims*/) const override {
+        throw RuntimeError::internal(
+            "execute_reduction called on unary operation");
     }
 };
 
@@ -99,26 +112,33 @@ public:
 // ============================================================================
 
 class MPSGraphTernaryOperation : public MPSGraphOperation {
-private:
+  private:
     MPSGraphTernaryOpBlock op_block_;
 
-public:
+  public:
     MPSGraphTernaryOperation(ops::OpType op_type, std::string op_name,
-                            MPSGraphTernaryOpBlock op_block);
+                             MPSGraphTernaryOpBlock op_block);
 
     // 'where' is a special ternary operation
-    Tensor execute_where(const Tensor& condition, const Tensor& a, const Tensor& b) const override;
-    
-    Tensor execute_binary(const Tensor& /*lhs*/, const Tensor& /*rhs*/) const override {
-        throw RuntimeError::internal("execute_binary called on ternary operation");
+    Tensor execute_where(const Tensor &condition, const Tensor &a,
+                         const Tensor &b) const override;
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on ternary operation");
     }
-    
-    Tensor execute_unary(const Tensor& /*input*/) const override {
-        throw RuntimeError::internal("execute_unary called on ternary operation");
+
+    Tensor execute_unary(const Tensor & /*input*/) const override {
+        throw RuntimeError::internal(
+            "execute_unary called on ternary operation");
     }
-    
-    Tensor execute_reduction(const Tensor& /*input*/, const std::vector<int>& /*axis*/, bool /*keep_dims*/) const override {
-        throw RuntimeError::internal("execute_reduction called on ternary operation");
+
+    Tensor execute_reduction(const Tensor & /*input*/,
+                             const std::vector<int> & /*axis*/,
+                             bool /*keep_dims*/) const override {
+        throw RuntimeError::internal(
+            "execute_reduction called on ternary operation");
     }
 };
 
@@ -127,14 +147,14 @@ public:
 // ============================================================================
 
 // Note: MPSGraphMatMulOperation is defined in the .mm file since it's a simple
-// wrapper that delegates to the executeMatMul function. Unlike binary/unary ops,
-// it doesn't need a block-based approach.
+// wrapper that delegates to the executeMatMul function. Unlike binary/unary
+// ops, it doesn't need a block-based approach.
 
 // ============================================================================
 // MPSGraph ArgMax/ArgMin Operations
 // ============================================================================
 
-// Note: MPSGraphArgMaxMinOperation is defined in the .mm file since it's a 
+// Note: MPSGraphArgMaxMinOperation is defined in the .mm file since it's a
 // simple wrapper for the reduction operations.
 
 // ============================================================================

@@ -7,85 +7,85 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
-#include <sstream>
 
 using namespace axiom;
 
 // Test utilities
 class TestRunner {
- private:
-  int tests_run = 0;
-  int tests_passed = 0;
-  int tests_failed = 0;
-  std::vector<std::string> failed_tests;
+  private:
+    int tests_run = 0;
+    int tests_passed = 0;
+    int tests_failed = 0;
+    std::vector<std::string> failed_tests;
 
- public:
-  void run_test(const std::string& name, std::function<void()> test_func) {
-    tests_run++;
-    std::cout << "Running " << name << "..." << std::flush;
+  public:
+    void run_test(const std::string &name, std::function<void()> test_func) {
+        tests_run++;
+        std::cout << "Running " << name << "..." << std::flush;
 
-    try {
-      test_func();
-      tests_passed++;
-      std::cout << " PASSED" << std::endl;
-    } catch (const std::exception& e) {
-      tests_failed++;
-      failed_tests.push_back(name + ": " + e.what());
-      std::cout << " FAILED: " << e.what() << std::endl;
-    }
-  }
-
-  void print_summary() {
-    std::cout << "\n=== Test Summary ===" << std::endl;
-    std::cout << "Total tests: " << tests_run << std::endl;
-    std::cout << "Passed: " << tests_passed << std::endl;
-    std::cout << "Failed: " << tests_failed << std::endl;
-
-    if (tests_failed > 0) {
-      std::cout << "\nFailed tests:" << std::endl;
-      for (const auto& failure : failed_tests) {
-        std::cout << "  - " << failure << std::endl;
-      }
+        try {
+            test_func();
+            tests_passed++;
+            std::cout << " PASSED" << std::endl;
+        } catch (const std::exception &e) {
+            tests_failed++;
+            failed_tests.push_back(name + ": " + e.what());
+            std::cout << " FAILED: " << e.what() << std::endl;
+        }
     }
 
-    std::cout << "Success rate: " << std::fixed << std::setprecision(1)
-              << (100.0 * tests_passed / tests_run) << "%" << std::endl;
-  }
+    void print_summary() {
+        std::cout << "\n=== Test Summary ===" << std::endl;
+        std::cout << "Total tests: " << tests_run << std::endl;
+        std::cout << "Passed: " << tests_passed << std::endl;
+        std::cout << "Failed: " << tests_failed << std::endl;
 
-  bool all_passed() const { return tests_failed == 0; }
+        if (tests_failed > 0) {
+            std::cout << "\nFailed tests:" << std::endl;
+            for (const auto &failure : failed_tests) {
+                std::cout << "  - " << failure << std::endl;
+            }
+        }
+
+        std::cout << "Success rate: " << std::fixed << std::setprecision(1)
+                  << (100.0 * tests_passed / tests_run) << "%" << std::endl;
+    }
+
+    bool all_passed() const { return tests_failed == 0; }
 };
 
 // Device availability helper
 bool is_gpu_available() {
 #ifdef __APPLE__
-  try {
-    auto test_tensor = Tensor::zeros({2, 2}, DType::Float32, Device::GPU);
-    return true;
-  } catch (...) {
-    return false;
-  }
+    try {
+        auto test_tensor = Tensor::zeros({2, 2}, DType::Float32, Device::GPU);
+        return true;
+    } catch (...) {
+        return false;
+    }
 #else
-  return false;
+    return false;
 #endif
 }
 
 // Test data validation helper
 template <typename T>
-void validate_tensor_data(const Tensor& tensor,
-                          const std::vector<T>& expected_data) {
-  assert(tensor.device() == Device::CPU);
-  assert(tensor.size() == expected_data.size());
+void validate_tensor_data(const Tensor &tensor,
+                          const std::vector<T> &expected_data) {
+    assert(tensor.device() == Device::CPU);
+    assert(tensor.size() == expected_data.size());
 
-  auto data = tensor.typed_data<T>();
-  for (size_t i = 0; i < expected_data.size(); ++i) {
-    if constexpr (std::is_floating_point_v<T>) {
-      assert(std::abs(data[i] - expected_data[i]) < 1e-6);
-    } else {
-      assert(data[i] == expected_data[i]);
+    auto data = tensor.typed_data<T>();
+    for (size_t i = 0; i < expected_data.size(); ++i) {
+        if constexpr (std::is_floating_point_v<T>) {
+            assert(std::abs(data[i] - expected_data[i]) < 1e-6);
+        } else {
+            assert(data[i] == expected_data[i]);
+        }
     }
-  }
 }
 
 //=============================================================================
@@ -93,46 +93,48 @@ void validate_tensor_data(const Tensor& tensor,
 //=============================================================================
 
 void test_tensor_creation_cpu() {
-  // Test basic constructors
-  auto t1 = Tensor({3, 4}, DType::Float32, Device::CPU);
-  assert(t1.ndim() == 2);
-  assert(t1.shape()[0] == 3);
-  assert(t1.shape()[1] == 4);
-  assert(t1.size() == 12);
-  assert(t1.dtype() == DType::Float32);
-  assert(t1.device() == Device::CPU);
-  assert(t1.memory_order() == MemoryOrder::RowMajor);
+    // Test basic constructors
+    auto t1 = Tensor({3, 4}, DType::Float32, Device::CPU);
+    assert(t1.ndim() == 2);
+    assert(t1.shape()[0] == 3);
+    assert(t1.shape()[1] == 4);
+    assert(t1.size() == 12);
+    assert(t1.dtype() == DType::Float32);
+    assert(t1.device() == Device::CPU);
+    assert(t1.memory_order() == MemoryOrder::RowMajor);
 
-  // Test initializer list constructor
-  auto t2 = Tensor({2, 3, 4}, DType::Int32, Device::CPU);
-  assert(t2.ndim() == 3);
-  assert(t2.size() == 24);
-  assert(t2.dtype() == DType::Int32);
+    // Test initializer list constructor
+    auto t2 = Tensor({2, 3, 4}, DType::Int32, Device::CPU);
+    assert(t2.ndim() == 3);
+    assert(t2.size() == 24);
+    assert(t2.dtype() == DType::Int32);
 
-  // Test with memory order
-  auto t3 = Tensor({2, 3}, DType::Float64, Device::CPU, MemoryOrder::ColMajor);
-  assert(t3.memory_order() == MemoryOrder::ColMajor);
-  assert(t3.is_f_contiguous());
+    // Test with memory order
+    auto t3 =
+        Tensor({2, 3}, DType::Float64, Device::CPU, MemoryOrder::ColMajor);
+    assert(t3.memory_order() == MemoryOrder::ColMajor);
+    assert(t3.is_f_contiguous());
 
-  // Test empty tensor
-  auto t4 = Tensor();
-  assert(t4.ndim() == 0);
-  assert(t4.size() == 1);
+    // Test empty tensor
+    auto t4 = Tensor();
+    assert(t4.ndim() == 0);
+    assert(t4.size() == 1);
 }
 
 void test_tensor_creation_gpu() {
-  auto t1 = Tensor({3, 4}, DType::Float32, Device::GPU);
-  assert(t1.ndim() == 2);
-  assert(t1.shape()[0] == 3);
-  assert(t1.shape()[1] == 4);
-  assert(t1.size() == 12);
-  assert(t1.dtype() == DType::Float32);
-  assert(t1.device() == Device::GPU);
+    auto t1 = Tensor({3, 4}, DType::Float32, Device::GPU);
+    assert(t1.ndim() == 2);
+    assert(t1.shape()[0] == 3);
+    assert(t1.shape()[1] == 4);
+    assert(t1.size() == 12);
+    assert(t1.dtype() == DType::Float32);
+    assert(t1.device() == Device::GPU);
 
-  // Test with different memory orders
-  auto t2 = Tensor({2, 3}, DType::Float32, Device::GPU, MemoryOrder::ColMajor);
-  assert(t2.memory_order() == MemoryOrder::ColMajor);
-  assert(t2.device() == Device::GPU);
+    // Test with different memory orders
+    auto t2 =
+        Tensor({2, 3}, DType::Float32, Device::GPU, MemoryOrder::ColMajor);
+    assert(t2.memory_order() == MemoryOrder::ColMajor);
+    assert(t2.device() == Device::GPU);
 }
 
 //=============================================================================
@@ -140,93 +142,93 @@ void test_tensor_creation_gpu() {
 //=============================================================================
 
 void test_factory_functions_cpu() {
-  // Test zeros
-  auto z = Tensor::zeros({2, 3}, DType::Float32, Device::CPU);
-  assert(z.shape()[0] == 2);
-  assert(z.shape()[1] == 3);
-  assert(z.is_c_contiguous());
+    // Test zeros
+    auto z = Tensor::zeros({2, 3}, DType::Float32, Device::CPU);
+    assert(z.shape()[0] == 2);
+    assert(z.shape()[1] == 3);
+    assert(z.is_c_contiguous());
 
-  auto data = z.typed_data<float>();
-  for (size_t i = 0; i < z.size(); ++i) {
-    assert(data[i] == 0.0f);
-  }
-
-  // Test zeros with Fortran order
-  auto z_f =
-      Tensor::zeros({2, 3}, DType::Float32, Device::CPU, MemoryOrder::ColMajor);
-  assert(z_f.is_f_contiguous());
-  assert(z_f.memory_order() == MemoryOrder::ColMajor);
-
-  // Test ones
-  auto o = Tensor::ones({2, 2}, DType::Float32, Device::CPU);
-  auto ones_data = o.typed_data<float>();
-  for (size_t i = 0; i < o.size(); ++i) {
-    assert(ones_data[i] == 1.0f);
-  }
-
-  // Test ones with different dtypes
-  auto o_int = Tensor::ones({2, 2}, DType::Int32, Device::CPU);
-  auto int_data = o_int.typed_data<int32_t>();
-  for (size_t i = 0; i < o_int.size(); ++i) {
-    assert(int_data[i] == 1);
-  }
-
-  // Test eye/identity
-  auto eye_mat = Tensor::eye(3, DType::Float32, Device::CPU);
-  auto eye_data = eye_mat.typed_data<float>();
-  for (size_t i = 0; i < 3; ++i) {
-    for (size_t j = 0; j < 3; ++j) {
-      float expected = (i == j) ? 1.0f : 0.0f;
-      assert(eye_data[i * 3 + j] == expected);
+    auto data = z.typed_data<float>();
+    for (size_t i = 0; i < z.size(); ++i) {
+        assert(data[i] == 0.0f);
     }
-  }
 
-  // Test identity (alias for eye)
-  auto id_mat = Tensor::identity(2, DType::Float64, Device::CPU);
-  assert(id_mat.shape()[0] == 2);
-  assert(id_mat.shape()[1] == 2);
-  assert(id_mat.dtype() == DType::Float64);
+    // Test zeros with Fortran order
+    auto z_f = Tensor::zeros({2, 3}, DType::Float32, Device::CPU,
+                             MemoryOrder::ColMajor);
+    assert(z_f.is_f_contiguous());
+    assert(z_f.memory_order() == MemoryOrder::ColMajor);
 
-  // Test empty
-  auto e = Tensor::empty({3, 3}, DType::Int32, Device::CPU);
-  assert(e.shape()[0] == 3);
-  assert(e.shape()[1] == 3);
-  assert(e.dtype() == DType::Int32);
+    // Test ones
+    auto o = Tensor::ones({2, 2}, DType::Float32, Device::CPU);
+    auto ones_data = o.typed_data<float>();
+    for (size_t i = 0; i < o.size(); ++i) {
+        assert(ones_data[i] == 1.0f);
+    }
 
-  // Test full
-  auto f = Tensor::full<float>({2, 2}, 42.0f, Device::CPU);
-  auto full_data = f.typed_data<float>();
-  for (size_t i = 0; i < f.size(); ++i) {
-    assert(full_data[i] == 42.0f);
-  }
+    // Test ones with different dtypes
+    auto o_int = Tensor::ones({2, 2}, DType::Int32, Device::CPU);
+    auto int_data = o_int.typed_data<int32_t>();
+    for (size_t i = 0; i < o_int.size(); ++i) {
+        assert(int_data[i] == 1);
+    }
+
+    // Test eye/identity
+    auto eye_mat = Tensor::eye(3, DType::Float32, Device::CPU);
+    auto eye_data = eye_mat.typed_data<float>();
+    for (size_t i = 0; i < 3; ++i) {
+        for (size_t j = 0; j < 3; ++j) {
+            float expected = (i == j) ? 1.0f : 0.0f;
+            assert(eye_data[i * 3 + j] == expected);
+        }
+    }
+
+    // Test identity (alias for eye)
+    auto id_mat = Tensor::identity(2, DType::Float64, Device::CPU);
+    assert(id_mat.shape()[0] == 2);
+    assert(id_mat.shape()[1] == 2);
+    assert(id_mat.dtype() == DType::Float64);
+
+    // Test empty
+    auto e = Tensor::empty({3, 3}, DType::Int32, Device::CPU);
+    assert(e.shape()[0] == 3);
+    assert(e.shape()[1] == 3);
+    assert(e.dtype() == DType::Int32);
+
+    // Test full
+    auto f = Tensor::full<float>({2, 2}, 42.0f, Device::CPU);
+    auto full_data = f.typed_data<float>();
+    for (size_t i = 0; i < f.size(); ++i) {
+        assert(full_data[i] == 42.0f);
+    }
 }
 
 void test_factory_functions_gpu() {
-  // Test zeros on GPU
-  auto z = Tensor::zeros({2, 3}, DType::Float32, Device::GPU);
-  assert(z.device() == Device::GPU);
-  assert(z.shape()[0] == 2);
-  assert(z.shape()[1] == 3);
+    // Test zeros on GPU
+    auto z = Tensor::zeros({2, 3}, DType::Float32, Device::GPU);
+    assert(z.device() == Device::GPU);
+    assert(z.shape()[0] == 2);
+    assert(z.shape()[1] == 3);
 
-  // Test ones on GPU
-  auto o = Tensor::ones({2, 2}, DType::Float32, Device::GPU);
-  assert(o.device() == Device::GPU);
+    // Test ones on GPU
+    auto o = Tensor::ones({2, 2}, DType::Float32, Device::GPU);
+    assert(o.device() == Device::GPU);
 
-  // Test eye on GPU
-  auto eye_mat = Tensor::eye(3, DType::Float32, Device::GPU);
-  assert(eye_mat.device() == Device::GPU);
-  assert(eye_mat.shape()[0] == 3);
-  assert(eye_mat.shape()[1] == 3);
+    // Test eye on GPU
+    auto eye_mat = Tensor::eye(3, DType::Float32, Device::GPU);
+    assert(eye_mat.device() == Device::GPU);
+    assert(eye_mat.shape()[0] == 3);
+    assert(eye_mat.shape()[1] == 3);
 
-  // Test empty on GPU
-  auto e = Tensor::empty({3, 3}, DType::Int32, Device::GPU);
-  assert(e.device() == Device::GPU);
+    // Test empty on GPU
+    auto e = Tensor::empty({3, 3}, DType::Int32, Device::GPU);
+    assert(e.device() == Device::GPU);
 
-  // Test with different memory orders
-  auto z_f =
-      Tensor::zeros({2, 3}, DType::Float32, Device::GPU, MemoryOrder::ColMajor);
-  assert(z_f.device() == Device::GPU);
-  assert(z_f.memory_order() == MemoryOrder::ColMajor);
+    // Test with different memory orders
+    auto z_f = Tensor::zeros({2, 3}, DType::Float32, Device::GPU,
+                             MemoryOrder::ColMajor);
+    assert(z_f.device() == Device::GPU);
+    assert(z_f.memory_order() == MemoryOrder::ColMajor);
 }
 
 //=============================================================================
@@ -234,66 +236,66 @@ void test_factory_functions_gpu() {
 //=============================================================================
 
 void test_data_access_cpu() {
-  auto t = Tensor::zeros({2, 3}, DType::Float32, Device::CPU);
+    auto t = Tensor::zeros({2, 3}, DType::Float32, Device::CPU);
 
-  // Test direct data access
-  void* raw_data = t.data();
-  assert(raw_data != nullptr);
+    // Test direct data access
+    void *raw_data = t.data();
+    assert(raw_data != nullptr);
 
-  const void* const_raw_data = const_cast<const Tensor&>(t).data();
-  assert(const_raw_data != nullptr);
+    const void *const_raw_data = const_cast<const Tensor &>(t).data();
+    assert(const_raw_data != nullptr);
 
-  // Test typed data access
-  auto typed_data = t.typed_data<float>();
-  assert(typed_data != nullptr);
+    // Test typed data access
+    auto typed_data = t.typed_data<float>();
+    assert(typed_data != nullptr);
 
-  // Test element access and modification
-  t.set_item<float>({0, 1}, 5.0f);
-  float val = t.item<float>({0, 1});
-  assert(val == 5.0f);
+    // Test element access and modification
+    t.set_item<float>({0, 1}, 5.0f);
+    float val = t.item<float>({0, 1});
+    assert(val == 5.0f);
 
-  t.set_item<float>({1, 2}, 3.14f);
-  val = t.item<float>({1, 2});
-  assert(std::abs(val - 3.14f) < 1e-6);
+    t.set_item<float>({1, 2}, 3.14f);
+    val = t.item<float>({1, 2});
+    assert(std::abs(val - 3.14f) < 1e-6);
 
-  // Test fill operation
-  auto t2 = Tensor::empty({3, 3}, DType::Int32, Device::CPU);
-  t2.fill<int32_t>(42);
-  auto data = t2.typed_data<int32_t>();
-  for (size_t i = 0; i < t2.size(); ++i) {
-    assert(data[i] == 42);
-  }
+    // Test fill operation
+    auto t2 = Tensor::empty({3, 3}, DType::Int32, Device::CPU);
+    t2.fill<int32_t>(42);
+    auto data = t2.typed_data<int32_t>();
+    for (size_t i = 0; i < t2.size(); ++i) {
+        assert(data[i] == 42);
+    }
 
-  // Test bounds checking
-  bool caught_exception = false;
-  try {
-    t.item<float>({5, 5});  // Out of bounds
-  } catch (const std::exception&) {
-    caught_exception = true;
-  }
-  assert(caught_exception);
+    // Test bounds checking
+    bool caught_exception = false;
+    try {
+        t.item<float>({5, 5}); // Out of bounds
+    } catch (const std::exception &) {
+        caught_exception = true;
+    }
+    assert(caught_exception);
 }
 
 void test_data_access_gpu() {
-  auto t = Tensor::zeros({2, 3}, DType::Float32, Device::GPU);
+    auto t = Tensor::zeros({2, 3}, DType::Float32, Device::GPU);
 
-  // GPU tensors should not allow direct data access
-  bool caught_exception = false;
-  try {
-    t.data();
-  } catch (const std::exception&) {
-    caught_exception = true;
-  }
-  assert(caught_exception);
+    // GPU tensors should not allow direct data access
+    bool caught_exception = false;
+    try {
+        t.data();
+    } catch (const std::exception &) {
+        caught_exception = true;
+    }
+    assert(caught_exception);
 
-  // Test that GPU tensor element access throws
-  caught_exception = false;
-  try {
-    t.item<float>({0, 1});
-  } catch (const std::exception&) {
-    caught_exception = true;
-  }
-  assert(caught_exception);
+    // Test that GPU tensor element access throws
+    caught_exception = false;
+    try {
+        t.item<float>({0, 1});
+    } catch (const std::exception &) {
+        caught_exception = true;
+    }
+    assert(caught_exception);
 }
 
 //=============================================================================
@@ -301,103 +303,103 @@ void test_data_access_gpu() {
 //=============================================================================
 
 void test_shape_manipulation_cpu() {
-  auto t = Tensor::zeros({2, 3, 4}, DType::Float32, Device::CPU);
+    auto t = Tensor::zeros({2, 3, 4}, DType::Float32, Device::CPU);
 
-  // Test reshape
-  auto reshaped = t.reshape({6, 4});
-  assert(reshaped.shape()[0] == 6);
-  assert(reshaped.shape()[1] == 4);
-  assert(reshaped.size() == t.size());
-  assert(reshaped.memory_order() == MemoryOrder::RowMajor);
+    // Test reshape
+    auto reshaped = t.reshape({6, 4});
+    assert(reshaped.shape()[0] == 6);
+    assert(reshaped.shape()[1] == 4);
+    assert(reshaped.size() == t.size());
+    assert(reshaped.memory_order() == MemoryOrder::RowMajor);
 
-  // Test reshape with memory order
-  auto reshaped_f = t.reshape({6, 4}, MemoryOrder::ColMajor);
-  assert(reshaped_f.memory_order() == MemoryOrder::ColMajor);
+    // Test reshape with memory order
+    auto reshaped_f = t.reshape({6, 4}, MemoryOrder::ColMajor);
+    assert(reshaped_f.memory_order() == MemoryOrder::ColMajor);
 
-  // Test reshape with -1 (inferred dimension)
-  auto reshaped_infer = t.reshape({static_cast<unsigned long>(-1), 4});
-  assert(reshaped_infer.shape()[0] == 6);
-  assert(reshaped_infer.shape()[1] == 4);
+    // Test reshape with -1 (inferred dimension)
+    auto reshaped_infer = t.reshape({static_cast<unsigned long>(-1), 4});
+    assert(reshaped_infer.shape()[0] == 6);
+    assert(reshaped_infer.shape()[1] == 4);
 
-  // Test transpose
-  auto t2d = Tensor::zeros({3, 4}, DType::Float32, Device::CPU);
-  
-  // Test squeeze on a tensor with no dimensions of size 1 (should be a no-op)
-  auto no_squeeze = t2d.squeeze(0);
-  assert(no_squeeze.ndim() == 2);
-  assert(no_squeeze.shape() == t2d.shape());
+    // Test transpose
+    auto t2d = Tensor::zeros({3, 4}, DType::Float32, Device::CPU);
 
-  auto transposed = t2d.transpose();
-  assert(transposed.shape()[0] == 4);
-  assert(transposed.shape()[1] == 3);
+    // Test squeeze on a tensor with no dimensions of size 1 (should be a no-op)
+    auto no_squeeze = t2d.squeeze(0);
+    assert(no_squeeze.ndim() == 2);
+    assert(no_squeeze.shape() == t2d.shape());
 
-  // Test transpose with specific axes
-  auto t3d = Tensor::zeros({2, 3, 4}, DType::Float32, Device::CPU);
-  auto transposed_axes = t3d.transpose({2, 0, 1});
-  assert(transposed_axes.shape()[0] == 4);
-  assert(transposed_axes.shape()[1] == 2);
-  assert(transposed_axes.shape()[2] == 3);
+    auto transposed = t2d.transpose();
+    assert(transposed.shape()[0] == 4);
+    assert(transposed.shape()[1] == 3);
 
-  // Test squeeze
-  auto t_with_ones = Tensor::zeros({1, 3, 1, 4}, DType::Float32, Device::CPU);
-  auto squeezed = t_with_ones.squeeze();
-  assert(squeezed.ndim() == 2);
-  assert(squeezed.shape()[0] == 3);
-  assert(squeezed.shape()[1] == 4);
+    // Test transpose with specific axes
+    auto t3d = Tensor::zeros({2, 3, 4}, DType::Float32, Device::CPU);
+    auto transposed_axes = t3d.transpose({2, 0, 1});
+    assert(transposed_axes.shape()[0] == 4);
+    assert(transposed_axes.shape()[1] == 2);
+    assert(transposed_axes.shape()[2] == 3);
 
-  // Test squeeze specific axis
-  auto squeezed_axis = t_with_ones.squeeze(0);
-  assert(squeezed_axis.ndim() == 3);
-  assert(squeezed_axis.shape()[0] == 3);
-  assert(squeezed_axis.shape()[1] == 1);
-  assert(squeezed_axis.shape()[2] == 4);
+    // Test squeeze
+    auto t_with_ones = Tensor::zeros({1, 3, 1, 4}, DType::Float32, Device::CPU);
+    auto squeezed = t_with_ones.squeeze();
+    assert(squeezed.ndim() == 2);
+    assert(squeezed.shape()[0] == 3);
+    assert(squeezed.shape()[1] == 4);
 
-  // Test unsqueeze
-  auto t2 = Tensor::zeros({3, 4}, DType::Float32, Device::CPU);
-  auto unsqueezed = t2.unsqueeze(1);
-  assert(unsqueezed.ndim() == 3);
-  assert(unsqueezed.shape()[0] == 3);
-  assert(unsqueezed.shape()[1] == 1);
-  assert(unsqueezed.shape()[2] == 4);
+    // Test squeeze specific axis
+    auto squeezed_axis = t_with_ones.squeeze(0);
+    assert(squeezed_axis.ndim() == 3);
+    assert(squeezed_axis.shape()[0] == 3);
+    assert(squeezed_axis.shape()[1] == 1);
+    assert(squeezed_axis.shape()[2] == 4);
 
-  // Test unsqueeze with negative axis
-  auto unsqueezed_neg = t2.unsqueeze(-1);
-  assert(unsqueezed_neg.ndim() == 3);
-  assert(unsqueezed_neg.shape()[2] == 1);
+    // Test unsqueeze
+    auto t2 = Tensor::zeros({3, 4}, DType::Float32, Device::CPU);
+    auto unsqueezed = t2.unsqueeze(1);
+    assert(unsqueezed.ndim() == 3);
+    assert(unsqueezed.shape()[0] == 3);
+    assert(unsqueezed.shape()[1] == 1);
+    assert(unsqueezed.shape()[2] == 4);
 
-  // Test view
-  auto view = t.view({24});
-  assert(view.ndim() == 1);
-  assert(view.shape()[0] == 24);
-  assert(view.size() == t.size());
+    // Test unsqueeze with negative axis
+    auto unsqueezed_neg = t2.unsqueeze(-1);
+    assert(unsqueezed_neg.ndim() == 3);
+    assert(unsqueezed_neg.shape()[2] == 1);
+
+    // Test view
+    auto view = t.view({24});
+    assert(view.ndim() == 1);
+    assert(view.shape()[0] == 24);
+    assert(view.size() == t.size());
 }
 
 void test_shape_manipulation_gpu() {
-  auto t = Tensor::zeros({2, 3, 4}, DType::Float32, Device::GPU);
+    auto t = Tensor::zeros({2, 3, 4}, DType::Float32, Device::GPU);
 
-  // Test reshape on GPU
-  auto reshaped = t.reshape({6, 4});
-  assert(reshaped.device() == Device::GPU);
-  assert(reshaped.shape()[0] == 6);
-  assert(reshaped.shape()[1] == 4);
+    // Test reshape on GPU
+    auto reshaped = t.reshape({6, 4});
+    assert(reshaped.device() == Device::GPU);
+    assert(reshaped.shape()[0] == 6);
+    assert(reshaped.shape()[1] == 4);
 
-  // Test transpose on GPU
-  auto t2d = Tensor::zeros({3, 4}, DType::Float32, Device::GPU);
-  auto transposed = t2d.transpose();
-  assert(transposed.device() == Device::GPU);
-  assert(transposed.shape()[0] == 4);
-  assert(transposed.shape()[1] == 3);
+    // Test transpose on GPU
+    auto t2d = Tensor::zeros({3, 4}, DType::Float32, Device::GPU);
+    auto transposed = t2d.transpose();
+    assert(transposed.device() == Device::GPU);
+    assert(transposed.shape()[0] == 4);
+    assert(transposed.shape()[1] == 3);
 
-  // Test squeeze on GPU
-  auto t_with_ones = Tensor::zeros({1, 3, 1, 4}, DType::Float32, Device::GPU);
-  auto squeezed = t_with_ones.squeeze();
-  assert(squeezed.device() == Device::GPU);
-  assert(squeezed.ndim() == 2);
+    // Test squeeze on GPU
+    auto t_with_ones = Tensor::zeros({1, 3, 1, 4}, DType::Float32, Device::GPU);
+    auto squeezed = t_with_ones.squeeze();
+    assert(squeezed.device() == Device::GPU);
+    assert(squeezed.ndim() == 2);
 
-  // Test unsqueeze on GPU
-  auto unsqueezed = t2d.unsqueeze(1);
-  assert(unsqueezed.device() == Device::GPU);
-  assert(unsqueezed.ndim() == 3);
+    // Test unsqueeze on GPU
+    auto unsqueezed = t2d.unsqueeze(1);
+    assert(unsqueezed.device() == Device::GPU);
+    assert(unsqueezed.ndim() == 3);
 }
 
 //=============================================================================
@@ -405,73 +407,73 @@ void test_shape_manipulation_gpu() {
 //=============================================================================
 
 void test_memory_operations_cpu() {
-  auto t1 = Tensor::ones({2, 3}, DType::Float32, Device::CPU);
+    auto t1 = Tensor::ones({2, 3}, DType::Float32, Device::CPU);
 
-  // Test copy
-  auto t2 = t1.copy();
-  assert(t2.same_shape(t1));
-  assert(t2.same_dtype(t1));
-  assert(t2.same_device(t1));
-  assert(t2.same_memory_order(t1));
+    // Test copy
+    auto t2 = t1.copy();
+    assert(t2.same_shape(t1));
+    assert(t2.same_dtype(t1));
+    assert(t2.same_device(t1));
+    assert(t2.same_memory_order(t1));
 
-  // Modify original, copy should be unchanged
-  t1.fill<float>(5.0f);
-  auto t1_data = t1.typed_data<float>();
-  auto t2_data = t2.typed_data<float>();
+    // Modify original, copy should be unchanged
+    t1.fill<float>(5.0f);
+    auto t1_data = t1.typed_data<float>();
+    auto t2_data = t2.typed_data<float>();
 
-  assert(t1_data[0] == 5.0f);
-  assert(t2_data[0] == 1.0f);
+    assert(t1_data[0] == 5.0f);
+    assert(t2_data[0] == 1.0f);
 
-  // Test copy with different memory order
-  auto t3 = t1.copy(MemoryOrder::ColMajor);
-  assert(t3.memory_order() == MemoryOrder::ColMajor);
-  assert(t3.is_f_contiguous());
+    // Test copy with different memory order
+    auto t3 = t1.copy(MemoryOrder::ColMajor);
+    assert(t3.memory_order() == MemoryOrder::ColMajor);
+    assert(t3.is_f_contiguous());
 
-  // Test clone (alias for copy)
-  auto t4 = t1.clone();
-  assert(t4.same_shape(t1));
+    // Test clone (alias for copy)
+    auto t4 = t1.clone();
+    assert(t4.same_shape(t1));
 
-  // Test device transfer (CPU to CPU should be no-op)
-  auto t5 = t1.to(Device::CPU);
-  assert(t5.device() == Device::CPU);
+    // Test device transfer (CPU to CPU should be no-op)
+    auto t5 = t1.to(Device::CPU);
+    assert(t5.device() == Device::CPU);
 
-  // Test cpu() method
-  auto t6 = t1.cpu();
-  assert(t6.device() == Device::CPU);
+    // Test cpu() method
+    auto t6 = t1.cpu();
+    assert(t6.device() == Device::CPU);
 }
 
 void test_memory_operations_gpu() {
-  auto cpu_tensor = Tensor::ones({2, 3}, DType::Float32, Device::CPU);
+    auto cpu_tensor = Tensor::ones({2, 3}, DType::Float32, Device::CPU);
 
-  // Test CPU to GPU transfer
-  auto gpu_tensor = cpu_tensor.gpu();
-  assert(gpu_tensor.device() == Device::GPU);
-  assert(gpu_tensor.same_shape(cpu_tensor));
-  assert(gpu_tensor.same_dtype(cpu_tensor));
+    // Test CPU to GPU transfer
+    auto gpu_tensor = cpu_tensor.gpu();
+    assert(gpu_tensor.device() == Device::GPU);
+    assert(gpu_tensor.same_shape(cpu_tensor));
+    assert(gpu_tensor.same_dtype(cpu_tensor));
 
-  // Test GPU copy
-  auto gpu_copy = gpu_tensor.copy();
-  assert(gpu_copy.device() == Device::GPU);
-  assert(gpu_copy.same_shape(gpu_tensor));
+    // Test GPU copy
+    auto gpu_copy = gpu_tensor.copy();
+    assert(gpu_copy.device() == Device::GPU);
+    assert(gpu_copy.same_shape(gpu_tensor));
 
-  // Test GPU to CPU transfer
-  auto back_to_cpu = gpu_tensor.cpu();
-  assert(back_to_cpu.device() == Device::CPU);
+    // Test GPU to CPU transfer
+    auto back_to_cpu = gpu_tensor.cpu();
+    assert(back_to_cpu.device() == Device::CPU);
 
-  // Verify data integrity through round trip
-  auto cpu_data = back_to_cpu.typed_data<float>();
-  for (size_t i = 0; i < back_to_cpu.size(); ++i) {
-    assert(cpu_data[i] == 1.0f);
-  }
+    // Verify data integrity through round trip
+    auto cpu_data = back_to_cpu.typed_data<float>();
+    for (size_t i = 0; i < back_to_cpu.size(); ++i) {
+        assert(cpu_data[i] == 1.0f);
+    }
 
-  // Test direct device transfer
-  auto gpu_tensor2 = cpu_tensor.to(Device::GPU);
-  assert(gpu_tensor2.device() == Device::GPU);
+    // Test direct device transfer
+    auto gpu_tensor2 = cpu_tensor.to(Device::GPU);
+    assert(gpu_tensor2.device() == Device::GPU);
 
-  // Test transfer with memory order change
-  auto gpu_f = cpu_tensor.to(Device::GPU, MemoryOrder::ColMajor);
-  assert(gpu_f.device() == Device::GPU);
-  assert(gpu_f.memory_order() == MemoryOrder::ColMajor);
+    // Test transfer with memory order change
+    auto gpu_f = cpu_tensor.to(Device::GPU, MemoryOrder::ColMajor);
+    assert(gpu_f.device() == Device::GPU);
+    assert(gpu_f.memory_order() == MemoryOrder::ColMajor);
 }
 
 //=============================================================================
@@ -479,79 +481,79 @@ void test_memory_operations_gpu() {
 //=============================================================================
 
 void test_memory_order_cpu() {
-  // Test C-order creation and properties
-  auto c_tensor =
-      Tensor::zeros({3, 4}, DType::Float32, Device::CPU, MemoryOrder::RowMajor);
-  assert(c_tensor.memory_order() == MemoryOrder::RowMajor);
-  assert(c_tensor.is_c_contiguous());
-  assert(!c_tensor.is_f_contiguous());
+    // Test C-order creation and properties
+    auto c_tensor = Tensor::zeros({3, 4}, DType::Float32, Device::CPU,
+                                  MemoryOrder::RowMajor);
+    assert(c_tensor.memory_order() == MemoryOrder::RowMajor);
+    assert(c_tensor.is_c_contiguous());
+    assert(!c_tensor.is_f_contiguous());
 
-  // Test F-order creation and properties
-  auto f_tensor =
-      Tensor::zeros({3, 4}, DType::Float32, Device::CPU, MemoryOrder::ColMajor);
-  assert(f_tensor.memory_order() == MemoryOrder::ColMajor);
-  assert(f_tensor.is_f_contiguous());
-  assert(!f_tensor.is_c_contiguous());
+    // Test F-order creation and properties
+    auto f_tensor = Tensor::zeros({3, 4}, DType::Float32, Device::CPU,
+                                  MemoryOrder::ColMajor);
+    assert(f_tensor.memory_order() == MemoryOrder::ColMajor);
+    assert(f_tensor.is_f_contiguous());
+    assert(!f_tensor.is_c_contiguous());
 
-  // Test stride patterns
-  auto c_strides = c_tensor.strides();
-  auto f_strides = f_tensor.strides();
+    // Test stride patterns
+    auto c_strides = c_tensor.strides();
+    auto f_strides = f_tensor.strides();
 
-  // C-order: [16, 4] for 3x4 float32 matrix
-  assert(c_strides[1] == 4);   // Column stride = itemsize
-  assert(c_strides[0] == 16);  // Row stride = 4 * itemsize
+    // C-order: [16, 4] for 3x4 float32 matrix
+    assert(c_strides[1] == 4);  // Column stride = itemsize
+    assert(c_strides[0] == 16); // Row stride = 4 * itemsize
 
-  // F-order: [4, 12] for 3x4 float32 matrix
-  assert(f_strides[0] == 4);   // Row stride = itemsize
-  assert(f_strides[1] == 12);  // Column stride = 3 * itemsize
+    // F-order: [4, 12] for 3x4 float32 matrix
+    assert(f_strides[0] == 4);  // Row stride = itemsize
+    assert(f_strides[1] == 12); // Column stride = 3 * itemsize
 
-  // Test conversion functions
-  auto c_to_f = c_tensor.asfortranarray();
-  assert(c_to_f.is_f_contiguous());
-  assert(c_to_f.memory_order() == MemoryOrder::ColMajor);
+    // Test conversion functions
+    auto c_to_f = c_tensor.asfortranarray();
+    assert(c_to_f.is_f_contiguous());
+    assert(c_to_f.memory_order() == MemoryOrder::ColMajor);
 
-  auto f_to_c = f_tensor.ascontiguousarray();
-  assert(f_to_c.is_c_contiguous());
-  assert(f_to_c.memory_order() == MemoryOrder::RowMajor);
+    auto f_to_c = f_tensor.ascontiguousarray();
+    assert(f_to_c.is_c_contiguous());
+    assert(f_to_c.memory_order() == MemoryOrder::RowMajor);
 
-  // Test NumPy-style functions
-  auto c_result = Tensor::ascontiguousarray(f_tensor);
-  assert(c_result.is_c_contiguous());
+    // Test NumPy-style functions
+    auto c_result = Tensor::ascontiguousarray(f_tensor);
+    assert(c_result.is_c_contiguous());
 
-  auto f_result = Tensor::asfortranarray(c_tensor);
-  assert(f_result.is_f_contiguous());
+    auto f_result = Tensor::asfortranarray(c_tensor);
+    assert(f_result.is_f_contiguous());
 
-  // Test idempotence
-  auto c_result2 = Tensor::ascontiguousarray(c_tensor);
-  assert(c_result2.storage() == c_tensor.storage());
+    // Test idempotence
+    auto c_result2 = Tensor::ascontiguousarray(c_tensor);
+    assert(c_result2.storage() == c_tensor.storage());
 
-  auto f_result2 = Tensor::asfortranarray(f_tensor);
-  assert(f_result2.storage() == f_tensor.storage());
+    auto f_result2 = Tensor::asfortranarray(f_tensor);
+    assert(f_result2.storage() == f_tensor.storage());
 }
 
 void test_memory_order_gpu() {
-  // Test memory order preservation on GPU
-  auto c_gpu =
-      Tensor::zeros({3, 4}, DType::Float32, Device::GPU, MemoryOrder::RowMajor);
-  assert(c_gpu.memory_order() == MemoryOrder::RowMajor);
-  assert(c_gpu.device() == Device::GPU);
+    // Test memory order preservation on GPU
+    auto c_gpu = Tensor::zeros({3, 4}, DType::Float32, Device::GPU,
+                               MemoryOrder::RowMajor);
+    assert(c_gpu.memory_order() == MemoryOrder::RowMajor);
+    assert(c_gpu.device() == Device::GPU);
 
-  auto f_gpu =
-      Tensor::zeros({3, 4}, DType::Float32, Device::GPU, MemoryOrder::ColMajor);
-  assert(f_gpu.memory_order() == MemoryOrder::ColMajor);
-  assert(f_gpu.device() == Device::GPU);
+    auto f_gpu = Tensor::zeros({3, 4}, DType::Float32, Device::GPU,
+                               MemoryOrder::ColMajor);
+    assert(f_gpu.memory_order() == MemoryOrder::ColMajor);
+    assert(f_gpu.device() == Device::GPU);
 
-  // Test conversion on GPU
-  auto c_to_f_gpu = c_gpu.asfortranarray();
-  assert(c_to_f_gpu.device() == Device::GPU);
-  assert(c_to_f_gpu.memory_order() == MemoryOrder::ColMajor);
+    // Test conversion on GPU
+    auto c_to_f_gpu = c_gpu.asfortranarray();
+    assert(c_to_f_gpu.device() == Device::GPU);
+    assert(c_to_f_gpu.memory_order() == MemoryOrder::ColMajor);
 
-  // Test device transfer with memory order
-  auto cpu_c =
-      Tensor::ones({2, 3}, DType::Float32, Device::CPU, MemoryOrder::RowMajor);
-  auto gpu_f = cpu_c.to(Device::GPU, MemoryOrder::ColMajor);
-  assert(gpu_f.device() == Device::GPU);
-  assert(gpu_f.memory_order() == MemoryOrder::ColMajor);
+    // Test device transfer with memory order
+    auto cpu_c = Tensor::ones({2, 3}, DType::Float32, Device::CPU,
+                              MemoryOrder::RowMajor);
+    auto gpu_f = cpu_c.to(Device::GPU, MemoryOrder::ColMajor);
+    assert(gpu_f.device() == Device::GPU);
+    assert(gpu_f.memory_order() == MemoryOrder::ColMajor);
 }
 
 //=============================================================================
@@ -559,42 +561,42 @@ void test_memory_order_gpu() {
 //=============================================================================
 
 void test_dtype_system() {
-  // Test different data types
-  auto t_f32 = Tensor::zeros({2, 2}, DType::Float32, Device::CPU);
-  auto t_f64 = Tensor::zeros({2, 2}, DType::Float64, Device::CPU);
-  auto t_i32 = Tensor::zeros({2, 2}, DType::Int32, Device::CPU);
-  auto t_i64 = Tensor::zeros({2, 2}, DType::Int64, Device::CPU);
-  auto t_bool = Tensor::zeros({2, 2}, DType::Bool, Device::CPU);
+    // Test different data types
+    auto t_f32 = Tensor::zeros({2, 2}, DType::Float32, Device::CPU);
+    auto t_f64 = Tensor::zeros({2, 2}, DType::Float64, Device::CPU);
+    auto t_i32 = Tensor::zeros({2, 2}, DType::Int32, Device::CPU);
+    auto t_i64 = Tensor::zeros({2, 2}, DType::Int64, Device::CPU);
+    auto t_bool = Tensor::zeros({2, 2}, DType::Bool, Device::CPU);
 
-  // Test itemsize
-  assert(t_f32.itemsize() == 4);
-  assert(t_f64.itemsize() == 8);
-  assert(t_i32.itemsize() == 4);
-  assert(t_i64.itemsize() == 8);
-  assert(t_bool.itemsize() == 1);
+    // Test itemsize
+    assert(t_f32.itemsize() == 4);
+    assert(t_f64.itemsize() == 8);
+    assert(t_i32.itemsize() == 4);
+    assert(t_i64.itemsize() == 8);
+    assert(t_bool.itemsize() == 1);
 
-  // Test dtype names
-  assert(t_f32.dtype_name() == "float32");
-  assert(t_f64.dtype_name() == "float64");
-  assert(t_i32.dtype_name() == "int32");
-  assert(t_i64.dtype_name() == "int64");
-  assert(t_bool.dtype_name() == "bool");
+    // Test dtype names
+    assert(t_f32.dtype_name() == "float32");
+    assert(t_f64.dtype_name() == "float64");
+    assert(t_i32.dtype_name() == "int32");
+    assert(t_i64.dtype_name() == "int64");
+    assert(t_bool.dtype_name() == "bool");
 
-  // Test nbytes calculation
-  assert(t_f32.nbytes() == 16);  // 4 elements * 4 bytes
-  assert(t_f64.nbytes() == 32);  // 4 elements * 8 bytes
+    // Test nbytes calculation
+    assert(t_f32.nbytes() == 16); // 4 elements * 4 bytes
+    assert(t_f64.nbytes() == 32); // 4 elements * 8 bytes
 
-  // Test automatic dtype deduction (compile-time)
-  static_assert(dtype_of_v<float> == DType::Float32);
-  static_assert(dtype_of_v<double> == DType::Float64);
-  static_assert(dtype_of_v<int32_t> == DType::Int32);
-  static_assert(dtype_of_v<int64_t> == DType::Int64);
-  static_assert(dtype_of_v<bool> == DType::Bool);
+    // Test automatic dtype deduction (compile-time)
+    static_assert(dtype_of_v<float> == DType::Float32);
+    static_assert(dtype_of_v<double> == DType::Float64);
+    static_assert(dtype_of_v<int32_t> == DType::Int32);
+    static_assert(dtype_of_v<int64_t> == DType::Int64);
+    static_assert(dtype_of_v<bool> == DType::Bool);
 
-  // Test dtype comparison
-  assert(t_f32.same_dtype(t_f32));
-  assert(!t_f32.same_dtype(t_f64));
-  assert(!t_f32.same_dtype(t_i32));
+    // Test dtype comparison
+    assert(t_f32.same_dtype(t_f32));
+    assert(!t_f32.same_dtype(t_f64));
+    assert(!t_f32.same_dtype(t_i32));
 }
 
 //=============================================================================
@@ -602,75 +604,75 @@ void test_dtype_system() {
 //=============================================================================
 
 void test_views_and_sharing_cpu() {
-  auto base = Tensor::zeros({2, 3, 4}, DType::Float32, Device::CPU);
-  base.fill<float>(1.0f);
+    auto base = Tensor::zeros({2, 3, 4}, DType::Float32, Device::CPU);
+    base.fill<float>(1.0f);
 
-  // Test reshape view (should share memory for contiguous tensors)
-  auto reshaped = base.reshape({6, 4});
+    // Test reshape view (should share memory for contiguous tensors)
+    auto reshaped = base.reshape({6, 4});
 
-  // Modify via reshaped view
-  reshaped.set_item<float>({0, 0}, 99.0f);
-  float val = base.item<float>({0, 0, 0});
-  assert(val == 99.0f);  // Change should be visible in base
+    // Modify via reshaped view
+    reshaped.set_item<float>({0, 0}, 99.0f);
+    float val = base.item<float>({0, 0, 0});
+    assert(val == 99.0f); // Change should be visible in base
 
-  // Test view method
-  auto view = base.view({24});
-  assert(view.ndim() == 1);
-  assert(view.shape()[0] == 24);
+    // Test view method
+    auto view = base.view({24});
+    assert(view.ndim() == 1);
+    assert(view.shape()[0] == 24);
 
-  // Modify via view
-  view.set_item<float>({1}, 77.0f);
-  float val2 = base.item<float>({0, 0, 1});
-  assert(val2 == 77.0f);
+    // Modify via view
+    view.set_item<float>({1}, 77.0f);
+    float val2 = base.item<float>({0, 0, 1});
+    assert(val2 == 77.0f);
 
-  // Test transpose view
-  auto t2d = Tensor::zeros({3, 4}, DType::Float32, Device::CPU);
-  t2d.set_item<float>({1, 2}, 42.0f);
+    // Test transpose view
+    auto t2d = Tensor::zeros({3, 4}, DType::Float32, Device::CPU);
+    t2d.set_item<float>({1, 2}, 42.0f);
 
-  auto transposed = t2d.transpose();
-  float val3 = transposed.item<float>({2, 1});
-  assert(val3 == 42.0f);
+    auto transposed = t2d.transpose();
+    float val3 = transposed.item<float>({2, 1});
+    assert(val3 == 42.0f);
 
-  // Test squeeze/unsqueeze views
-  auto with_ones = Tensor::zeros({1, 3, 1}, DType::Float32, Device::CPU);
-  with_ones.set_item<float>({0, 1, 0}, 123.0f);
+    // Test squeeze/unsqueeze views
+    auto with_ones = Tensor::zeros({1, 3, 1}, DType::Float32, Device::CPU);
+    with_ones.set_item<float>({0, 1, 0}, 123.0f);
 
-  auto squeezed = with_ones.squeeze();
-  float val4 = squeezed.item<float>({1});
-  assert(val4 == 123.0f);
+    auto squeezed = with_ones.squeeze();
+    float val4 = squeezed.item<float>({1});
+    assert(val4 == 123.0f);
 
-  auto unsqueezed = squeezed.unsqueeze(0);
-  float val5 = unsqueezed.item<float>({0, 1});
-  assert(val5 == 123.0f);
+    auto unsqueezed = squeezed.unsqueeze(0);
+    float val5 = unsqueezed.item<float>({0, 1});
+    assert(val5 == 123.0f);
 
-  // Test that copy creates independent data
-  auto copied = base.copy();
-  copied.set_item<float>({0, 0, 0}, 555.0f);
-  float original_val = base.item<float>({0, 0, 0});
-  float copied_val = copied.item<float>({0, 0, 0});
-  assert(original_val == 99.0f);  // Original unchanged
-  assert(copied_val == 555.0f);   // Copy modified
+    // Test that copy creates independent data
+    auto copied = base.copy();
+    copied.set_item<float>({0, 0, 0}, 555.0f);
+    float original_val = base.item<float>({0, 0, 0});
+    float copied_val = copied.item<float>({0, 0, 0});
+    assert(original_val == 99.0f); // Original unchanged
+    assert(copied_val == 555.0f);  // Copy modified
 }
 
 void test_views_and_sharing_gpu() {
-  auto base = Tensor::zeros({2, 3, 4}, DType::Float32, Device::GPU);
+    auto base = Tensor::zeros({2, 3, 4}, DType::Float32, Device::GPU);
 
-  // Test reshape on GPU (should work for views)
-  auto reshaped = base.reshape({6, 4});
-  assert(reshaped.device() == Device::GPU);
-  assert(reshaped.same_shape(Tensor({6, 4})));
+    // Test reshape on GPU (should work for views)
+    auto reshaped = base.reshape({6, 4});
+    assert(reshaped.device() == Device::GPU);
+    assert(reshaped.same_shape(Tensor({6, 4})));
 
-  // Test view on GPU
-  auto view = base.view({24});
-  assert(view.device() == Device::GPU);
-  assert(view.ndim() == 1);
+    // Test view on GPU
+    auto view = base.view({24});
+    assert(view.device() == Device::GPU);
+    assert(view.ndim() == 1);
 
-  // Test transpose on GPU
-  auto t2d = Tensor::zeros({3, 4}, DType::Float32, Device::GPU);
-  auto transposed = t2d.transpose();
-  assert(transposed.device() == Device::GPU);
-  assert(transposed.shape()[0] == 4);
-  assert(transposed.shape()[1] == 3);
+    // Test transpose on GPU
+    auto t2d = Tensor::zeros({3, 4}, DType::Float32, Device::GPU);
+    auto transposed = t2d.transpose();
+    assert(transposed.device() == Device::GPU);
+    assert(transposed.shape()[0] == 4);
+    assert(transposed.shape()[1] == 3);
 }
 
 //=============================================================================
@@ -678,57 +680,57 @@ void test_views_and_sharing_gpu() {
 //=============================================================================
 
 void test_error_handling() {
-  // Test invalid shape
-  bool caught = false;
-  try {
-    auto t = Tensor({0}, DType::Float32, Device::CPU);  // Zero dimension
-  } catch (const std::exception&) {
-    // This might be valid for some implementations
-  }
+    // Test invalid shape
+    bool caught = false;
+    try {
+        auto t = Tensor({0}, DType::Float32, Device::CPU); // Zero dimension
+    } catch (const std::exception &) {
+        // This might be valid for some implementations
+    }
 
-  // Test out of bounds access
-  auto t = Tensor::zeros({2, 3}, DType::Float32, Device::CPU);
-  caught = false;
-  try {
-    t.item<float>({5, 5});
-  } catch (const std::exception&) {
-    caught = true;
-  }
-  assert(caught);
-
-  // Test invalid reshape
-  caught = false;
-  try {
-    t.reshape({7});  // 6 elements can't reshape to 7
-  } catch (const std::exception&) {
-    caught = true;
-  }
-  assert(caught);
-
-  // Test invalid squeeze (should be a no-op)
-  auto no_squeeze = t.squeeze(0);
-  assert(no_squeeze.shape() == t.shape());
-
-  // Test GPU data access
-  if (is_gpu_available()) {
-    auto gpu_tensor = Tensor::zeros({2, 2}, DType::Float32, Device::GPU);
+    // Test out of bounds access
+    auto t = Tensor::zeros({2, 3}, DType::Float32, Device::CPU);
     caught = false;
     try {
-      gpu_tensor.data();
-    } catch (const std::exception&) {
-      caught = true;
+        t.item<float>({5, 5});
+    } catch (const std::exception &) {
+        caught = true;
     }
     assert(caught);
-  }
 
-  // Test invalid view
-  caught = false;
-  try {
-    t.view({7});  // Can't view 6 elements as 7
-  } catch (const std::exception&) {
-    caught = true;
-  }
-  assert(caught);
+    // Test invalid reshape
+    caught = false;
+    try {
+        t.reshape({7}); // 6 elements can't reshape to 7
+    } catch (const std::exception &) {
+        caught = true;
+    }
+    assert(caught);
+
+    // Test invalid squeeze (should be a no-op)
+    auto no_squeeze = t.squeeze(0);
+    assert(no_squeeze.shape() == t.shape());
+
+    // Test GPU data access
+    if (is_gpu_available()) {
+        auto gpu_tensor = Tensor::zeros({2, 2}, DType::Float32, Device::GPU);
+        caught = false;
+        try {
+            gpu_tensor.data();
+        } catch (const std::exception &) {
+            caught = true;
+        }
+        assert(caught);
+    }
+
+    // Test invalid view
+    caught = false;
+    try {
+        t.view({7}); // Can't view 6 elements as 7
+    } catch (const std::exception &) {
+        caught = true;
+    }
+    assert(caught);
 }
 
 //=============================================================================
@@ -736,55 +738,55 @@ void test_error_handling() {
 //=============================================================================
 
 void test_large_tensors() {
-  // Test large tensor creation and basic operations
-  const size_t large_size = 1000;
+    // Test large tensor creation and basic operations
+    const size_t large_size = 1000;
 
-  auto large_tensor =
-      Tensor::zeros({large_size, large_size}, DType::Float32, Device::CPU);
-  assert(large_tensor.size() == large_size * large_size);
-  assert(large_tensor.nbytes() == large_size * large_size * 4);
+    auto large_tensor =
+        Tensor::zeros({large_size, large_size}, DType::Float32, Device::CPU);
+    assert(large_tensor.size() == large_size * large_size);
+    assert(large_tensor.nbytes() == large_size * large_size * 4);
 
-  // Test reshape of large tensor
-  auto reshaped = large_tensor.reshape({large_size * large_size});
-  assert(reshaped.ndim() == 1);
-  assert(reshaped.size() == large_size * large_size);
+    // Test reshape of large tensor
+    auto reshaped = large_tensor.reshape({large_size * large_size});
+    assert(reshaped.ndim() == 1);
+    assert(reshaped.size() == large_size * large_size);
 
-  // Test copy of large tensor
-  auto copied = large_tensor.copy();
-  assert(copied.same_shape(large_tensor));
+    // Test copy of large tensor
+    auto copied = large_tensor.copy();
+    assert(copied.same_shape(large_tensor));
 
-  if (is_gpu_available()) {
-    // Test GPU transfer of large tensor
-    auto gpu_large = large_tensor.gpu();
-    assert(gpu_large.device() == Device::GPU);
-    assert(gpu_large.same_shape(large_tensor));
-  }
+    if (is_gpu_available()) {
+        // Test GPU transfer of large tensor
+        auto gpu_large = large_tensor.gpu();
+        assert(gpu_large.device() == Device::GPU);
+        assert(gpu_large.same_shape(large_tensor));
+    }
 }
 
 void test_memory_order_performance() {
-  const size_t size = 200;
+    const size_t size = 200;
 
-  // Create matrices in both orders
-  auto c_matrix = Tensor::zeros({size, size}, DType::Float32, Device::CPU,
-                                MemoryOrder::RowMajor);
-  auto f_matrix = Tensor::zeros({size, size}, DType::Float32, Device::CPU,
-                                MemoryOrder::ColMajor);
+    // Create matrices in both orders
+    auto c_matrix = Tensor::zeros({size, size}, DType::Float32, Device::CPU,
+                                  MemoryOrder::RowMajor);
+    auto f_matrix = Tensor::zeros({size, size}, DType::Float32, Device::CPU,
+                                  MemoryOrder::ColMajor);
 
-  // Test that memory orders are correct
-  assert(c_matrix.is_c_contiguous());
-  assert(f_matrix.is_f_contiguous());
+    // Test that memory orders are correct
+    assert(c_matrix.is_c_contiguous());
+    assert(f_matrix.is_f_contiguous());
 
-  // Test conversion performance (not timing, just functionality)
-  auto c_to_f = c_matrix.asfortranarray();
-  assert(c_to_f.is_f_contiguous());
+    // Test conversion performance (not timing, just functionality)
+    auto c_to_f = c_matrix.asfortranarray();
+    assert(c_to_f.is_f_contiguous());
 
-  auto f_to_c = f_matrix.ascontiguousarray();
-  assert(f_to_c.is_c_contiguous());
+    auto f_to_c = f_matrix.ascontiguousarray();
+    assert(f_to_c.is_c_contiguous());
 
-  // Test that data is preserved during conversion
-  c_matrix.set_item<float>({10, 20}, 42.0f);
-  auto converted = c_matrix.asfortranarray();
-  assert(converted.item<float>({10, 20}) == 42.0f);
+    // Test that data is preserved during conversion
+    c_matrix.set_item<float>({10, 20}, 42.0f);
+    auto converted = c_matrix.asfortranarray();
+    assert(converted.item<float>({10, 20}) == 42.0f);
 }
 
 //=============================================================================
@@ -792,68 +794,70 @@ void test_memory_order_performance() {
 //=============================================================================
 
 void test_cross_device_workflow() {
-  if (!is_gpu_available()) return;
+    if (!is_gpu_available())
+        return;
 
-  // Create data on CPU
-  auto cpu_data = Tensor::ones({10, 10}, DType::Float32, Device::CPU);
+    // Create data on CPU
+    auto cpu_data = Tensor::ones({10, 10}, DType::Float32, Device::CPU);
 
-  // Modify some data
-  for (size_t i = 0; i < 10; ++i) {
-    cpu_data.set_item<float>({i, i}, static_cast<float>(i));
-  }
+    // Modify some data
+    for (size_t i = 0; i < 10; ++i) {
+        cpu_data.set_item<float>({i, i}, static_cast<float>(i));
+    }
 
-  // Transfer to GPU
-  auto gpu_data = cpu_data.gpu();
-  assert(gpu_data.device() == Device::GPU);
+    // Transfer to GPU
+    auto gpu_data = cpu_data.gpu();
+    assert(gpu_data.device() == Device::GPU);
 
-  // Reshape on GPU
-  auto gpu_reshaped = gpu_data.reshape({100});
-  assert(gpu_reshaped.device() == Device::GPU);
-  assert(gpu_reshaped.ndim() == 1);
+    // Reshape on GPU
+    auto gpu_reshaped = gpu_data.reshape({100});
+    assert(gpu_reshaped.device() == Device::GPU);
+    assert(gpu_reshaped.ndim() == 1);
 
-  // Transfer back to CPU
-  auto result = gpu_reshaped.cpu();
-  assert(result.device() == Device::CPU);
-  assert(result.ndim() == 1);
-  assert(result.size() == 100);
+    // Transfer back to CPU
+    auto result = gpu_reshaped.cpu();
+    assert(result.device() == Device::CPU);
+    assert(result.ndim() == 1);
+    assert(result.size() == 100);
 
-  // Verify data integrity
-  for (size_t i = 0; i < 10; ++i) {
-    float expected = static_cast<float>(i);
-    float actual = result.item<float>({i * 10 + i});  // Diagonal elements
-    assert(actual == expected);
-  }
+    // Verify data integrity
+    for (size_t i = 0; i < 10; ++i) {
+        float expected = static_cast<float>(i);
+        float actual = result.item<float>({i * 10 + i}); // Diagonal elements
+        assert(actual == expected);
+    }
 }
 
 void test_mixed_memory_orders() {
-  // Test operations mixing different memory orders
-  auto c_tensor =
-      Tensor::ones({3, 4}, DType::Float32, Device::CPU, MemoryOrder::RowMajor);
-  auto f_tensor =
-      Tensor::ones({3, 4}, DType::Float32, Device::CPU, MemoryOrder::ColMajor);
+    // Test operations mixing different memory orders
+    auto c_tensor = Tensor::ones({3, 4}, DType::Float32, Device::CPU,
+                                 MemoryOrder::RowMajor);
+    auto f_tensor = Tensor::ones({3, 4}, DType::Float32, Device::CPU,
+                                 MemoryOrder::ColMajor);
 
-  // Both should have same logical values
-  for (size_t i = 0; i < 3; ++i) {
-    for (size_t j = 0; j < 4; ++j) {
-      assert(c_tensor.item<float>({i, j}) == 1.0f);
-      assert(f_tensor.item<float>({i, j}) == 1.0f);
+    // Both should have same logical values
+    for (size_t i = 0; i < 3; ++i) {
+        for (size_t j = 0; j < 4; ++j) {
+            assert(c_tensor.item<float>({i, j}) == 1.0f);
+            assert(f_tensor.item<float>({i, j}) == 1.0f);
+        }
     }
-  }
 
-  // Test conversions preserve data
-  auto c_to_f = c_tensor.copy(MemoryOrder::ColMajor);
-  auto f_to_c = f_tensor.copy(MemoryOrder::RowMajor);
+    // Test conversions preserve data
+    auto c_to_f = c_tensor.copy(MemoryOrder::ColMajor);
+    auto f_to_c = f_tensor.copy(MemoryOrder::RowMajor);
 
-  for (size_t i = 0; i < 3; ++i) {
-    for (size_t j = 0; j < 4; ++j) {
-      assert(c_to_f.item<float>({i, j}) == 1.0f);
-      assert(f_to_c.item<float>({i, j}) == 1.0f);
+    for (size_t i = 0; i < 3; ++i) {
+        for (size_t j = 0; j < 4; ++j) {
+            assert(c_to_f.item<float>({i, j}) == 1.0f);
+            assert(f_to_c.item<float>({i, j}) == 1.0f);
+        }
     }
-  }
 }
 
 void test_tensor_printing() {
-    auto a = axiom::Tensor::arange(4).reshape({2, 2}).astype(axiom::DType::Float32);
+    auto a =
+        axiom::Tensor::arange(4).reshape({2, 2}).astype(axiom::DType::Float32);
     std::stringstream ss;
     ss << a;
     std::string expected = "[[0.0000 1.0000]\n [2.0000 3.0000]]";
@@ -865,12 +869,12 @@ void test_tensor_printing_ellipsis() {
     std::stringstream ss;
     ss << a;
     std::string expected = "[[0 1 2 ... 7 8 9]\n"
-                         " [10 11 12 ... 17 18 19]\n"
-                         " [20 21 22 ... 27 28 29]\n"
-                         " ...\n"
-                         " [70 71 72 ... 77 78 79]\n"
-                         " [80 81 82 ... 87 88 89]\n"
-                         " [90 91 92 ... 97 98 99]]";
+                           " [10 11 12 ... 17 18 19]\n"
+                           " [20 21 22 ... 27 28 29]\n"
+                           " ...\n"
+                           " [70 71 72 ... 77 78 79]\n"
+                           " [80 81 82 ... 87 88 89]\n"
+                           " [90 91 92 ... 97 98 99]]";
     assert(ss.str() == expected);
 }
 
@@ -879,76 +883,77 @@ void test_tensor_printing_ellipsis() {
 //=============================================================================
 
 int main() {
-  std::cout << "=== Axiom Comprehensive Test Suite ===" << std::endl;
-  std::cout << "GPU Available: " << (is_gpu_available() ? "Yes" : "No")
-            << std::endl;
-  std::cout << std::endl;
+    std::cout << "=== Axiom Comprehensive Test Suite ===" << std::endl;
+    std::cout << "GPU Available: " << (is_gpu_available() ? "Yes" : "No")
+              << std::endl;
+    std::cout << std::endl;
 
-  TestRunner runner;
+    TestRunner runner;
 
-  // Basic functionality tests
-  runner.run_test("Tensor Creation (CPU)", test_tensor_creation_cpu);
-  if (is_gpu_available()) {
-    runner.run_test("Tensor Creation (GPU)", test_tensor_creation_gpu);
-  }
+    // Basic functionality tests
+    runner.run_test("Tensor Creation (CPU)", test_tensor_creation_cpu);
+    if (is_gpu_available()) {
+        runner.run_test("Tensor Creation (GPU)", test_tensor_creation_gpu);
+    }
 
-  // Factory function tests
-  runner.run_test("Factory Functions (CPU)", test_factory_functions_cpu);
-  if (is_gpu_available()) {
-    runner.run_test("Factory Functions (GPU)", test_factory_functions_gpu);
-  }
+    // Factory function tests
+    runner.run_test("Factory Functions (CPU)", test_factory_functions_cpu);
+    if (is_gpu_available()) {
+        runner.run_test("Factory Functions (GPU)", test_factory_functions_gpu);
+    }
 
-  // Data access tests
-  runner.run_test("Data Access (CPU)", test_data_access_cpu);
-  if (is_gpu_available()) {
-    runner.run_test("Data Access (GPU)", test_data_access_gpu);
-  }
+    // Data access tests
+    runner.run_test("Data Access (CPU)", test_data_access_cpu);
+    if (is_gpu_available()) {
+        runner.run_test("Data Access (GPU)", test_data_access_gpu);
+    }
 
-  // Shape manipulation tests
-  runner.run_test("Shape Manipulation (CPU)", test_shape_manipulation_cpu);
-  if (is_gpu_available()) {
-    runner.run_test("Shape Manipulation (GPU)", test_shape_manipulation_gpu);
-  }
+    // Shape manipulation tests
+    runner.run_test("Shape Manipulation (CPU)", test_shape_manipulation_cpu);
+    if (is_gpu_available()) {
+        runner.run_test("Shape Manipulation (GPU)",
+                        test_shape_manipulation_gpu);
+    }
 
-  // Memory operation tests
-  runner.run_test("Memory Operations (CPU)", test_memory_operations_cpu);
-  if (is_gpu_available()) {
-    runner.run_test("Memory Operations (GPU)", test_memory_operations_gpu);
-  }
+    // Memory operation tests
+    runner.run_test("Memory Operations (CPU)", test_memory_operations_cpu);
+    if (is_gpu_available()) {
+        runner.run_test("Memory Operations (GPU)", test_memory_operations_gpu);
+    }
 
-  // Memory order tests
-  runner.run_test("Memory Order (CPU)", test_memory_order_cpu);
-  if (is_gpu_available()) {
-    runner.run_test("Memory Order (GPU)", test_memory_order_gpu);
-  }
+    // Memory order tests
+    runner.run_test("Memory Order (CPU)", test_memory_order_cpu);
+    if (is_gpu_available()) {
+        runner.run_test("Memory Order (GPU)", test_memory_order_gpu);
+    }
 
-  // Data type tests
-  runner.run_test("Data Type System", test_dtype_system);
+    // Data type tests
+    runner.run_test("Data Type System", test_dtype_system);
 
-  // Views and sharing tests
-  runner.run_test("Views and Sharing (CPU)", test_views_and_sharing_cpu);
-  if (is_gpu_available()) {
-    runner.run_test("Views and Sharing (GPU)", test_views_and_sharing_gpu);
-  }
+    // Views and sharing tests
+    runner.run_test("Views and Sharing (CPU)", test_views_and_sharing_cpu);
+    if (is_gpu_available()) {
+        runner.run_test("Views and Sharing (GPU)", test_views_and_sharing_gpu);
+    }
 
-  // Error handling tests
-  runner.run_test("Error Handling", test_error_handling);
+    // Error handling tests
+    runner.run_test("Error Handling", test_error_handling);
 
-  // Performance and stress tests
-  runner.run_test("Large Tensors", test_large_tensors);
-  runner.run_test("Memory Order Performance", test_memory_order_performance);
+    // Performance and stress tests
+    runner.run_test("Large Tensors", test_large_tensors);
+    runner.run_test("Memory Order Performance", test_memory_order_performance);
 
-  // Integration tests
-  if (is_gpu_available()) {
-    runner.run_test("Cross-Device Workflow", test_cross_device_workflow);
-  }
-  runner.run_test("Mixed Memory Orders", test_mixed_memory_orders);
-  runner.run_test("Tensor Printing", test_tensor_printing);
-  runner.run_test("Tensor Printing Ellipsis", test_tensor_printing_ellipsis);
+    // Integration tests
+    if (is_gpu_available()) {
+        runner.run_test("Cross-Device Workflow", test_cross_device_workflow);
+    }
+    runner.run_test("Mixed Memory Orders", test_mixed_memory_orders);
+    runner.run_test("Tensor Printing", test_tensor_printing);
+    runner.run_test("Tensor Printing Ellipsis", test_tensor_printing_ellipsis);
 
-  // Print final results
-  std::cout << std::endl;
-  runner.print_summary();
+    // Print final results
+    std::cout << std::endl;
+    runner.print_summary();
 
-  return runner.all_passed() ? 0 : 1;
+    return runner.all_passed() ? 0 : 1;
 }

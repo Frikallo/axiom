@@ -1,11 +1,10 @@
+#include <axiom/axiom.hpp>
+#include <cmath>
+#include <functional>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
-#include <functional>
-#include <stdexcept>
-#include <cmath>
-
-#include <axiom/axiom.hpp>
 
 using namespace axiom;
 
@@ -15,37 +14,41 @@ static int tests_passed = 0;
 
 #define RUN_TEST(test_func) run_test([&]() { test_func(); }, #test_func)
 
-void run_test(const std::function<void()>& test_func, const std::string& test_name) {
+void run_test(const std::function<void()> &test_func,
+              const std::string &test_name) {
     tests_run++;
     std::cout << "--- Running: " << test_name << " ---" << std::endl;
     try {
         test_func();
         std::cout << "--- PASSED: " << test_name << " ---" << std::endl;
         tests_passed++;
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         std::cerr << "--- FAILED: " << test_name << " ---" << std::endl;
         std::cerr << "    Error: " << e.what() << std::endl;
     }
     std::cout << std::endl;
 }
 
-#define ASSERT(condition, msg) \
-    do { \
-        if (!(condition)) { \
-            throw std::runtime_error("Assertion failed: (" #condition ") - " + std::string(msg)); \
-        } \
+#define ASSERT(condition, msg)                                                 \
+    do {                                                                       \
+        if (!(condition)) {                                                    \
+            throw std::runtime_error("Assertion failed: (" #condition ") - " + \
+                                     std::string(msg));                        \
+        }                                                                      \
     } while (0)
 
-template<typename T>
-void assert_tensor_near(const Tensor& t, const std::vector<T>& expected, T tol = T(1e-4)) {
+template <typename T>
+void assert_tensor_near(const Tensor &t, const std::vector<T> &expected,
+                        T tol = T(1e-4)) {
     auto t_cpu = t.cpu();
     ASSERT(t_cpu.size() == expected.size(), "Size mismatch");
-    const T* data = t_cpu.typed_data<T>();
+    const T *data = t_cpu.typed_data<T>();
     for (size_t i = 0; i < expected.size(); ++i) {
         if (std::abs(data[i] - expected[i]) > tol) {
-            throw std::runtime_error("Value mismatch at index " + std::to_string(i) +
-                                   ": got " + std::to_string(data[i]) +
-                                   ", expected " + std::to_string(expected[i]));
+            throw std::runtime_error("Value mismatch at index " +
+                                     std::to_string(i) + ": got " +
+                                     std::to_string(data[i]) + ", expected " +
+                                     std::to_string(expected[i]));
         }
     }
 }
@@ -64,29 +67,27 @@ void test_softmax_1d_cpu() {
     ASSERT(result.dtype() == DType::Float32, "Dtype should be Float32");
 
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
 
     // Softmax values should sum to 1
     float sum = out[0] + out[1] + out[2];
     ASSERT(std::abs(sum - 1.0f) < 1e-5f, "Softmax should sum to 1");
 
     // Values should be in ascending order (since inputs are ascending)
-    ASSERT(out[0] < out[1] && out[1] < out[2], "Softmax values should preserve order");
+    ASSERT(out[0] < out[1] && out[1] < out[2],
+           "Softmax values should preserve order");
 }
 
 void test_softmax_2d_cpu() {
-    std::vector<float> data = {
-        1.0f, 2.0f, 3.0f,
-        1.0f, 1.0f, 1.0f
-    };
+    std::vector<float> data = {1.0f, 2.0f, 3.0f, 1.0f, 1.0f, 1.0f};
     auto t = Tensor::from_data(data.data(), {2, 3});
 
-    auto result = ops::softmax(t, -1);  // Softmax along last axis
+    auto result = ops::softmax(t, -1); // Softmax along last axis
 
     ASSERT(result.shape() == Shape({2, 3}), "Shape should be preserved");
 
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
 
     // Each row should sum to 1
     float sum0 = out[0] + out[1] + out[2];
@@ -95,7 +96,8 @@ void test_softmax_2d_cpu() {
     ASSERT(std::abs(sum1 - 1.0f) < 1e-5f, "Second row should sum to 1");
 
     // Second row has equal inputs, so outputs should be equal
-    ASSERT(std::abs(out[3] - out[4]) < 1e-5f, "Equal inputs should give equal outputs");
+    ASSERT(std::abs(out[3] - out[4]) < 1e-5f,
+           "Equal inputs should give equal outputs");
 }
 
 void test_log_softmax_cpu() {
@@ -107,14 +109,16 @@ void test_log_softmax_cpu() {
     ASSERT(result.shape() == Shape{3}, "Shape should be preserved");
 
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
 
     // All log_softmax values should be negative (log of probability < 1)
-    ASSERT(out[0] < 0 && out[1] < 0 && out[2] < 0, "Log softmax values should be negative");
+    ASSERT(out[0] < 0 && out[1] < 0 && out[2] < 0,
+           "Log softmax values should be negative");
 
     // exp(log_softmax) should sum to 1
     float sum_exp = std::exp(out[0]) + std::exp(out[1]) + std::exp(out[2]);
-    ASSERT(std::abs(sum_exp - 1.0f) < 1e-5f, "exp(log_softmax) should sum to 1");
+    ASSERT(std::abs(sum_exp - 1.0f) < 1e-5f,
+           "exp(log_softmax) should sum to 1");
 }
 
 void test_softmax_gpu() {
@@ -127,7 +131,7 @@ void test_softmax_gpu() {
     ASSERT(result.shape() == Shape{4}, "Shape should be preserved");
 
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
 
     float sum = out[0] + out[1] + out[2] + out[3];
     ASSERT(std::abs(sum - 1.0f) < 1e-4f, "Softmax should sum to 1");
@@ -146,7 +150,7 @@ void test_gelu_cpu() {
     ASSERT(result.shape() == Shape{5}, "Shape should be preserved");
 
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
 
     // GELU(0) = 0
     ASSERT(std::abs(out[2]) < 1e-5f, "GELU(0) should be 0");
@@ -170,7 +174,7 @@ void test_gelu_gpu() {
     ASSERT(result.device() == Device::GPU, "Result should be on GPU");
 
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
 
     ASSERT(std::abs(out[0]) < 1e-5f, "GELU(0) should be 0");
 }
@@ -186,7 +190,7 @@ void test_erf_cpu() {
     auto result = ops::erf(t);
 
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
 
     // erf(0) = 0
     ASSERT(std::abs(out[0]) < 1e-5f, "erf(0) should be 0");
@@ -221,7 +225,7 @@ void test_dropout_training() {
     ASSERT(mask.dtype() == DType::Bool, "Mask should be Bool");
 
     auto output_cpu = output.cpu();
-    const float* out = output_cpu.typed_data<float>();
+    const float *out = output_cpu.typed_data<float>();
 
     // With 50% dropout, some values should be 0 and some should be ~2 (scaled)
     int zeros = 0;
@@ -245,7 +249,8 @@ void test_dropout_inference() {
     auto [output, mask] = ops::dropout(t, 0.5f, false);
 
     // In inference mode (training=false), dropout should be identity
-    assert_tensor_near<float>(output, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
+    assert_tensor_near<float>(
+        output, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
 }
 
 void test_dropout_p_zero() {
@@ -254,7 +259,8 @@ void test_dropout_p_zero() {
     auto [output, mask] = ops::dropout(t, 0.0f, true);
 
     // With p=0, no dropout occurs
-    assert_tensor_near<float>(output, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
+    assert_tensor_near<float>(
+        output, {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
 }
 
 // ============================================================================
@@ -269,7 +275,7 @@ void test_any_cpu() {
 
     ASSERT(result.size() == 1, "Should reduce to scalar");
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
     ASSERT(out[0] != 0.0f, "any([0,0,1,0]) should be true");
 }
 
@@ -281,7 +287,7 @@ void test_all_cpu() {
 
     ASSERT(result.size() == 1, "Should reduce to scalar");
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
     ASSERT(out[0] != 0.0f, "all([1,1,1,1]) should be true");
 }
 
@@ -292,7 +298,7 @@ void test_all_with_zero_cpu() {
     auto result = ops::all(t, {}, false);
 
     auto result_cpu = result.cpu();
-    const float* out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
     ASSERT(out[0] == 0.0f, "all([1,0,1,1]) should be false");
 }
 
@@ -300,7 +306,8 @@ int main() {
     // Initialize operations registry
     ops::OperationRegistry::initialize_builtin_operations();
 
-    std::cout << "=== Activation and Reduction Tests ===" << std::endl << std::endl;
+    std::cout << "=== Activation and Reduction Tests ===" << std::endl
+              << std::endl;
 
     // Softmax tests
     std::cout << "--- Softmax Tests ---" << std::endl;

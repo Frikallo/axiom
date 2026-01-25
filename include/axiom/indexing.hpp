@@ -1,8 +1,8 @@
 #pragma once
 
-#include <variant>
-#include <optional>
 #include <cstdint>
+#include <optional>
+#include <variant>
 
 namespace axiom {
 
@@ -20,4 +20,4 @@ struct Slice {
 // Represents a single index, which can be a single integer or a slice.
 using Index = std::variant<int64_t, Slice>;
 
-} // namespace axiom 
+} // namespace axiom

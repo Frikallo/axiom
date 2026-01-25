@@ -6,7 +6,7 @@ namespace axiom {
 namespace backends {
 namespace metal {
 
-void add(Tensor& a, const Tensor& b);
+void add(Tensor &a, const Tensor &b);
 
 // Register all Metal backend operations (both custom kernels and MPSGraph)
 void register_metal_operations();
@@ -16,4 +16,4 @@ bool is_metal_available();
 
 } // namespace metal
 } // namespace backends
-} // namespace axiom 
+} // namespace axiom
