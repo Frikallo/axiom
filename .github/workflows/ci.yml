@@ -113,18 +113,46 @@ jobs:
           
     - name: Check Formatting
       run: |
-        # Use Xcode's clang-format which has proper SDK paths
-        find include src -name '*.hpp' -o -name '*.cpp' | head -20 | while read file; do
+        echo "Checking code formatting with clang-format..."
+        UNFORMATTED_FILES=()
+        
+        # Check all C++ files in include/ and src/
+        while IFS= read -r -d '' file; do
           if ! clang-format --dry-run --Werror "$file" 2>/dev/null; then
-            echo "::warning file=$file::File needs formatting"
+            UNFORMATTED_FILES+=("$file")
           fi
-        done
+        done < <(find include src -type f \( -name '*.hpp' -o -name '*.cpp' \) -print0)
+        
+        # Report results
+        if [ ${#UNFORMATTED_FILES[@]} -gt 0 ]; then
+          echo ""
+          echo "::error::The following ${#UNFORMATTED_FILES[@]} file(s) need formatting:"
+          for file in "${UNFORMATTED_FILES[@]}"; do
+            echo "  - $file"
+            echo "::warning file=$file::Needs clang-format"
+          done
+          echo ""
+          echo "Run 'clang-format -i <file>' to fix, or 'make format' to format all files."
+          exit 1
+        else
+          echo "All files are properly formatted!"
+        fi
         
     - name: Run clang-tidy
       run: |
-        # Run clang-tidy on source files (not headers) using Xcode's toolchain
-        # which has proper Apple SDK include paths configured
-        find src -name '*.cpp' | head -5 | while read file; do
+        echo "Running clang-tidy on source files..."
+        TIDY_ERRORS=0
+        
+        # Check all .cpp files in src/ (not headers - they're checked transitively)
+        while IFS= read -r -d '' file; do
           echo "Checking $file..."
-          clang-tidy -p build "$file" --quiet 2>/dev/null || true
-        done
+          if ! clang-tidy -p build "$file" --quiet 2>/dev/null; then
+            TIDY_ERRORS=$((TIDY_ERRORS + 1))
+          fi
+        done < <(find src -type f -name '*.cpp' -print0)
+        
+        if [ $TIDY_ERRORS -gt 0 ]; then
+          echo "::warning::clang-tidy found issues in $TIDY_ERRORS file(s)"
+        else
+          echo "clang-tidy passed!"
+        fi
