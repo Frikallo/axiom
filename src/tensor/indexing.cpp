@@ -63,7 +63,8 @@ MaskedView &MaskedView::operator=(const Tensor &values) {
     }
     // For tensor assignment, we need to scatter values back
     // This requires masked_scatter which we'll implement as a simple where
-    // For now, use masked_fill with the first element if it's a scalar-like tensor
+    // For now, use masked_fill with the first element if it's a scalar-like
+    // tensor
     if (values.size() == 1) {
         float val = values.cpu().typed_data<float>()[0];
         *parent_ = parent_->masked_fill(*mask_, val);

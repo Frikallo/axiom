@@ -221,8 +221,7 @@ class MPSGraphScatterOperation : public MPSGraphOperation {
             "execute_binary called on scatter operation");
     }
 
-    Tensor execute_scatter(const Tensor &input, int dim,
-                           const Tensor &indices,
+    Tensor execute_scatter(const Tensor &input, int dim, const Tensor &indices,
                            const Tensor &src) const override;
 };
 

@@ -381,7 +381,8 @@ Tensor Operation::execute_masked_select(const Tensor &input,
                                         const Tensor &mask) const {
     (void)input;
     (void)mask;
-    throw RuntimeError::not_implemented("MaskedSelect operations for " + name());
+    throw RuntimeError::not_implemented("MaskedSelect operations for " +
+                                        name());
 }
 
 Tensor Operation::execute_gather(const Tensor &input, int dim,
@@ -557,8 +558,9 @@ static Tensor execute_complex_reduction(OpType op_type, const Tensor &input,
                                         bool keep_dims) {
     // Only Sum and Mean are valid for complex types
     if (op_type != OpType::Sum && op_type != OpType::Mean) {
-        throw TypeError("Reduction '" + op_type_name(op_type) +
-                        "' not supported for complex types (no total ordering)");
+        throw TypeError(
+            "Reduction '" + op_type_name(op_type) +
+            "' not supported for complex types (no total ordering)");
     }
 
     Tensor input_cpu = input.cpu();
@@ -804,8 +806,8 @@ static Tensor execute_complex_binary(OpType op_type, const Tensor &lhs,
         complex64_t *out = result.typed_data<complex64_t>();
 
         // Simple case: same shape, contiguous
-        if (lhs_cpu.shape() == rhs_cpu.shape() &&
-            lhs_cpu.is_contiguous() && rhs_cpu.is_contiguous()) {
+        if (lhs_cpu.shape() == rhs_cpu.shape() && lhs_cpu.is_contiguous() &&
+            rhs_cpu.is_contiguous()) {
             for (size_t i = 0; i < total; ++i) {
                 switch (op_type) {
                 case OpType::Add:
@@ -861,8 +863,8 @@ static Tensor execute_complex_binary(OpType op_type, const Tensor &lhs,
         const complex128_t *r = rhs_cpu.typed_data<complex128_t>();
         complex128_t *out = result.typed_data<complex128_t>();
 
-        if (lhs_cpu.shape() == rhs_cpu.shape() &&
-            lhs_cpu.is_contiguous() && rhs_cpu.is_contiguous()) {
+        if (lhs_cpu.shape() == rhs_cpu.shape() && lhs_cpu.is_contiguous() &&
+            rhs_cpu.is_contiguous()) {
             for (size_t i = 0; i < total; ++i) {
                 switch (op_type) {
                 case OpType::Add:
@@ -1036,7 +1038,7 @@ Tensor logical_not(const Tensor &input) {
 
 // Bitwise operations - require integer types
 static void assert_bitwise_types(const Tensor &lhs, const Tensor &rhs,
-                                  const std::string &op_name) {
+                                 const std::string &op_name) {
     auto check_integral = [&](DType dtype) {
         return dtype == DType::Int8 || dtype == DType::Int16 ||
                dtype == DType::Int32 || dtype == DType::Int64 ||
@@ -1280,7 +1282,8 @@ Tensor masked_fill(const Tensor &input, const Tensor &mask, float value) {
 }
 
 Tensor masked_fill(const Tensor &input, const Tensor &mask, double value) {
-    auto value_tensor = Tensor::full({1}, static_cast<float>(value), input.device());
+    auto value_tensor =
+        Tensor::full({1}, static_cast<float>(value), input.device());
     return masked_fill(input, mask, value_tensor);
 }
 
@@ -1308,8 +1311,7 @@ Tensor masked_fill(const Tensor &input, const Tensor &mask,
     // Move tensors to target device if needed
     Tensor input_on_device =
         (input.device() == device) ? input : input.to(device);
-    Tensor mask_on_device =
-        (mask.device() == device) ? mask : mask.to(device);
+    Tensor mask_on_device = (mask.device() == device) ? mask : mask.to(device);
     Tensor value_on_device =
         (value.device() == device) ? value : value.to(device);
 
@@ -1339,8 +1341,7 @@ Tensor masked_select(const Tensor &input, const Tensor &mask) {
     // Move tensors to target device if needed
     Tensor input_on_device =
         (input.device() == device) ? input : input.to(device);
-    Tensor mask_on_device =
-        (mask.device() == device) ? mask : mask.to(device);
+    Tensor mask_on_device = (mask.device() == device) ? mask : mask.to(device);
 
     return op->execute_masked_select(input_on_device, mask_on_device);
 }

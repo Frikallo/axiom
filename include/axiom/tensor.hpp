@@ -185,9 +185,8 @@ class Tensor {
     Tensor
     rearrange(const std::string &pattern,
               const std::map<std::string, size_t> &axis_sizes = {}) const;
-    Tensor
-    reduce(const std::string &pattern, const std::string &reduction,
-           const std::map<std::string, size_t> &axis_sizes = {}) const;
+    Tensor reduce(const std::string &pattern, const std::string &reduction,
+                  const std::map<std::string, size_t> &axis_sizes = {}) const;
     Tensor transpose() const;
     Tensor transpose(const std::vector<int> &axes) const;
     Tensor squeeze(int axis = -1) const;
@@ -223,8 +222,9 @@ class Tensor {
     // Conditional and masking operations (fluent API)
     // =========================================================================
 
-    // where: Returns elements from *this where condition is true, other otherwise
-    // Usage: x.where(x > 0, 0.0f) - similar to torch.where but as member function
+    // where: Returns elements from *this where condition is true, other
+    // otherwise Usage: x.where(x > 0, 0.0f) - similar to torch.where but as
+    // member function
     Tensor where(const Tensor &condition, const Tensor &other) const;
     Tensor where(const Tensor &condition, float other) const;
     Tensor where(const Tensor &condition, double other) const;

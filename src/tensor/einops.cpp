@@ -242,7 +242,6 @@ EinopsExpression::infer_axis_sizes(const Tensor &tensor) const {
 
     // First pass: find ellipsis and calculate how many dimensions it should
     // consume
-    size_t ellipsis_start = 0;
     size_t ellipsis_length = 0;
     bool has_ellipsis = false;
 
@@ -250,7 +249,6 @@ EinopsExpression::infer_axis_sizes(const Tensor &tensor) const {
     for (const auto &element : parsed_input_.elements) {
         if (std::holds_alternative<EllipsisAxis>(element)) {
             has_ellipsis = true;
-            ellipsis_start = explicit_dims;
         } else {
             explicit_dims++;
         }
@@ -379,7 +377,7 @@ size_t EinopsExpression::calculate_grouped_size(
 }
 
 std::vector<int> EinopsExpression::calculate_transpose_axes(
-    const std::map<std::string, size_t> &sizes) const {
+    [[maybe_unused]] const std::map<std::string, size_t> &sizes) const {
     // Build mapping from axis name to position in input
     std::map<std::string, int> axis_to_input_pos;
     auto input_axes = get_pattern_axes(parsed_input_);
@@ -488,17 +486,17 @@ Tensor reduce(const Tensor &tensor, const std::string &pattern,
         throw EinopsError("'prod' reduction not yet implemented");
     } else {
         throw EinopsError("Unknown reduction: " + reduction +
-                         ". Use 'sum', 'mean', 'max', 'min', or 'prod'");
+                          ". Use 'sum', 'mean', 'max', 'min', or 'prod'");
     }
 
     // Parse the einops expression
     EinopsExpression expr(pattern, axis_sizes);
 
     // Get the input and output axes
-    auto input_axes =
-        expr.get_pattern_axes(expr.parse_single_pattern(pattern.substr(0, pattern.find("->"))));
-    auto output_axes =
-        expr.get_pattern_axes(expr.parse_single_pattern(pattern.substr(pattern.find("->") + 2)));
+    auto input_axes = expr.get_pattern_axes(
+        expr.parse_single_pattern(pattern.substr(0, pattern.find("->"))));
+    auto output_axes = expr.get_pattern_axes(
+        expr.parse_single_pattern(pattern.substr(pattern.find("->") + 2)));
 
     // First, rearrange if there are any grouped axes to expand
     Tensor working = tensor;

@@ -166,6 +166,40 @@ format-diff:  ## Show formatting changes without applying
 	done
 
 # ============================================================================
+# Static Analysis
+# ============================================================================
+
+# macOS SDK path for clang-tidy
+MACOS_SDK := $(shell xcrun --show-sdk-path 2>/dev/null)
+CLANG_TIDY_ARGS := --extra-arg=-isysroot$(MACOS_SDK) --extra-arg=-std=c++20
+
+.PHONY: lint
+lint: $(BUILD_DIR)/Makefile  ## Run clang-tidy static analysis
+	@echo "$(CYAN)Running clang-tidy...$(RESET)"
+	@if ! command -v clang-tidy &> /dev/null; then \
+		echo "$(YELLOW)clang-tidy not found. Install with: brew install llvm$(RESET)"; \
+		exit 0; \
+	fi
+	@find src/tensor -name '*.cpp' | while read file; do \
+		echo "  Checking $$file..."; \
+		clang-tidy -p $(BUILD_DIR) $(CLANG_TIDY_ARGS) "$$file" --quiet 2>/dev/null || true; \
+	done
+	@echo "$(GREEN)✓ Static analysis complete$(RESET)"
+
+.PHONY: lint-fix
+lint-fix: $(BUILD_DIR)/Makefile  ## Run clang-tidy and apply fixes
+	@echo "$(CYAN)Running clang-tidy with fixes...$(RESET)"
+	@if ! command -v clang-tidy &> /dev/null; then \
+		echo "$(RED)clang-tidy not found. Install with: brew install llvm$(RESET)"; \
+		exit 1; \
+	fi
+	@find src/tensor -name '*.cpp' | while read file; do \
+		echo "  Fixing $$file..."; \
+		clang-tidy -p $(BUILD_DIR) $(CLANG_TIDY_ARGS) "$$file" --fix --quiet 2>/dev/null || true; \
+	done
+	@echo "$(GREEN)✓ Fixes applied$(RESET)"
+
+# ============================================================================
 # Installation
 # ============================================================================
 

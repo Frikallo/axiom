@@ -1,0 +1,101 @@
+---
+Checks: '
+bugprone-*,
+-bugprone-easily-swappable-parameters,
+-bugprone-exception-escape,
+-bugprone-forward-declaration-namespace,
+-bugprone-lambda-function-name,
+-bugprone-macro-parentheses,
+-bugprone-reserved-identifier,
+-bugprone-return-const-ref-from-parameter,
+-bugprone-swapped-arguments,
+clang-analyzer-core.*,
+clang-analyzer-cplusplus.*,
+clang-analyzer-deadcode.*,
+clang-analyzer-nullability.*,
+clang-diagnostic-missing-prototypes,
+cppcoreguidelines-*,
+-cppcoreguidelines-avoid-c-arrays,
+-cppcoreguidelines-avoid-do-while,
+-cppcoreguidelines-avoid-magic-numbers,
+-cppcoreguidelines-avoid-non-const-global-variables,
+-cppcoreguidelines-interfaces-global-init,
+-cppcoreguidelines-macro-usage,
+-cppcoreguidelines-macro-to-enum,
+-cppcoreguidelines-non-private-member-variables-in-classes,
+-cppcoreguidelines-owning-memory,
+-cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+-cppcoreguidelines-pro-bounds-constant-array-index,
+-cppcoreguidelines-pro-bounds-pointer-arithmetic,
+-cppcoreguidelines-pro-type-cstyle-cast,
+-cppcoreguidelines-pro-type-reinterpret-cast,
+-cppcoreguidelines-pro-type-static-cast-downcast,
+-cppcoreguidelines-pro-type-union-access,
+-cppcoreguidelines-pro-type-vararg,
+hicpp-exception-baseclass,
+hicpp-avoid-goto,
+misc-*,
+-misc-confusable-identifiers,
+-misc-const-correctness,
+-misc-include-cleaner,
+-misc-no-recursion,
+-misc-non-private-member-variables-in-classes,
+-misc-unused-parameters,
+-misc-unused-using-decls,
+-misc-use-anonymous-namespace,
+modernize-*,
+-modernize-avoid-c-arrays,
+-modernize-macro-to-enum,
+-modernize-return-braced-init-list,
+-modernize-use-auto,
+-modernize-use-nodiscard,
+-modernize-use-trailing-return-type,
+performance-*,
+-performance-enum-size,
+readability-container-size-empty,
+readability-delete-null-pointer,
+readability-duplicate-include,
+readability-misplaced-array-index,
+readability-named-parameter,
+readability-redundant*,
+readability-simplify-subscript-expr,
+readability-static-definition-in-anonymous-namespace,
+readability-string-compare,
+-readability-redundant-access-specifiers,
+-readability-redundant-control-flow,
+-readability-redundant-inline-specifier,
+'
+HeaderFilterRegex: '^.*/include/axiom/.*\.hpp$'
+WarningsAsErrors: '*'
+LineFilter:
+  - name: '/usr/.*'
+  - name: '/Library/.*'
+  - name: '/Applications/Xcode.*'
+CheckOptions:
+  cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor: true
+  cppcoreguidelines-special-member-functions.AllowImplicitlyDeletedCopyOrMove: true
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.EnumConstantCase: CamelCase
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.MethodCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.MemberCase: lower_case
+  readability-identifier-naming.PrivateMemberSuffix: '_'
+  readability-identifier-naming.ConstantCase: lower_case
+  readability-identifier-naming.GlobalConstantCase: lower_case
+  readability-identifier-naming.StaticConstantCase: lower_case
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  readability-identifier-naming.TypeAliasCase: lower_case
+  readability-identifier-naming.TypedefCase: lower_case
+  readability-identifier-naming.TemplateParameterCase: CamelCase
+  readability-function-size.LineThreshold: 200
+  readability-function-size.StatementThreshold: 200
+  readability-function-size.BranchThreshold: 50
+  readability-function-size.ParameterThreshold: 10
+
+UseColor: true
+...

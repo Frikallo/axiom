@@ -170,7 +170,8 @@ std::string dispatch_element_to_string(const Tensor &t, size_t index) {
 }
 
 void print_recursive(std::stringstream &ss, const Tensor &t,
-                     std::vector<size_t> &coords, int dim, size_t edge_items) {
+                     std::vector<size_t> &coords, size_t dim,
+                     size_t edge_items) {
     ss << "[";
     size_t dim_size = t.shape()[dim];
 
@@ -206,19 +207,19 @@ void print_recursive(std::stringstream &ss, const Tensor &t,
             for (size_t i = 0; i < edge_items; ++i) {
                 if (i > 0) {
                     ss << "\n";
-                    for (int j = 0; j <= dim; ++j)
+                    for (size_t j = 0; j <= dim; ++j)
                         ss << " ";
                 }
                 coords[dim] = i;
                 print_recursive(ss, t, coords, dim + 1, edge_items);
             }
             ss << "\n";
-            for (int j = 0; j <= dim; ++j)
+            for (size_t j = 0; j <= dim; ++j)
                 ss << " ";
             ss << "...";
             for (size_t i = dim_size - edge_items; i < dim_size; ++i) {
                 ss << "\n";
-                for (int j = 0; j <= dim; ++j)
+                for (size_t j = 0; j <= dim; ++j)
                     ss << " ";
                 coords[dim] = i;
                 print_recursive(ss, t, coords, dim + 1, edge_items);
@@ -227,7 +228,7 @@ void print_recursive(std::stringstream &ss, const Tensor &t,
             for (size_t i = 0; i < dim_size; ++i) {
                 if (i > 0) {
                     ss << "\n";
-                    for (int j = 0; j <= dim; ++j) {
+                    for (size_t j = 0; j <= dim; ++j) {
                         ss << " ";
                     }
                 }

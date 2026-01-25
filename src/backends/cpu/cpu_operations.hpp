@@ -285,8 +285,9 @@ struct LogicalXorFunc {
 };
 
 // Bitwise operations (only for integer types)
-// Use if constexpr to avoid compile errors when instantiated for non-integer types
-// (runtime checks in execute_binary prevent non-integer types from reaching here)
+// Use if constexpr to avoid compile errors when instantiated for non-integer
+// types (runtime checks in execute_binary prevent non-integer types from
+// reaching here)
 struct BitwiseAndFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
         if constexpr (std::is_integral_v<T>) {
@@ -782,8 +783,7 @@ class CPUScatterOperation : public ops::Operation {
             "execute_binary called on Scatter operation");
     }
 
-    Tensor execute_scatter(const Tensor &input, int dim,
-                           const Tensor &indices,
+    Tensor execute_scatter(const Tensor &input, int dim, const Tensor &indices,
                            const Tensor &src) const override;
 
   private:

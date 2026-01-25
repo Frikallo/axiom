@@ -115,8 +115,8 @@ Tensor rearrange(const Tensor &tensor, const std::string &pattern,
 /**
  * Reduce tensor according to einops pattern
  * @param tensor Input tensor
- * @param pattern Einops pattern string like "b h w c -> b c" (axes not in output
- * are reduced)
+ * @param pattern Einops pattern string like "b h w c -> b c" (axes not in
+ * output are reduced)
  * @param reduction Reduction operation: "sum", "mean", "max", "min", "prod"
  * @param axis_sizes Optional axis size specifications
  * @return Reduced tensor

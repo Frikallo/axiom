@@ -128,7 +128,7 @@ void test_complex_add() {
     auto result = ops::add(a, b);
 
     ASSERT(result.dtype() == DType::Complex64, "Result should be Complex64");
-    const complex64_t* data = result.typed_data<complex64_t>();
+    const complex64_t *data = result.typed_data<complex64_t>();
     // (1+i) + (1+0i) = (2+i)
     ASSERT(std::abs(data[0].real() - 2.0f) < 1e-5f, "Add real part 0");
     ASSERT(std::abs(data[0].imag() - 1.0f) < 1e-5f, "Add imag part 0");
@@ -146,7 +146,7 @@ void test_complex_subtract() {
 
     auto result = ops::subtract(a, b);
 
-    const complex64_t* data = result.typed_data<complex64_t>();
+    const complex64_t *data = result.typed_data<complex64_t>();
     // (3+4i) - (1+i) = (2+3i)
     ASSERT(std::abs(data[0].real() - 2.0f) < 1e-5f, "Subtract real part 0");
     ASSERT(std::abs(data[0].imag() - 3.0f) < 1e-5f, "Subtract imag part 0");
@@ -164,7 +164,7 @@ void test_complex_multiply() {
 
     auto result = ops::multiply(a, b);
 
-    const complex64_t* data = result.typed_data<complex64_t>();
+    const complex64_t *data = result.typed_data<complex64_t>();
     // (1+2i) * (3+4i) = 3 + 4i + 6i + 8i² = 3 + 10i - 8 = -5 + 10i
     ASSERT(std::abs(data[0].real() - (-5.0f)) < 1e-5f, "Multiply real part 0");
     ASSERT(std::abs(data[0].imag() - 10.0f) < 1e-5f, "Multiply imag part 0");
@@ -182,7 +182,7 @@ void test_complex_divide() {
 
     auto result = ops::divide(a, b);
 
-    const complex64_t* data = result.typed_data<complex64_t>();
+    const complex64_t *data = result.typed_data<complex64_t>();
     // (4+2i) / 2 = (2+i)
     ASSERT(std::abs(data[0].real() - 2.0f) < 1e-5f, "Divide real part");
     ASSERT(std::abs(data[0].imag() - 1.0f) < 1e-5f, "Divide imag part");
@@ -194,7 +194,7 @@ void test_complex_negate() {
 
     auto result = ops::negate(t);
 
-    const complex64_t* res_data = result.typed_data<complex64_t>();
+    const complex64_t *res_data = result.typed_data<complex64_t>();
     ASSERT(std::abs(res_data[0].real() - (-1.0f)) < 1e-5f, "Negate real 0");
     ASSERT(std::abs(res_data[0].imag() - (-2.0f)) < 1e-5f, "Negate imag 0");
     ASSERT(std::abs(res_data[1].real() - 3.0f) < 1e-5f, "Negate real 1");
@@ -209,7 +209,7 @@ void test_complex_abs() {
     auto result = ops::abs(t);
 
     ASSERT(result.dtype() == DType::Float32, "Abs should return Float32");
-    const float* res_data = result.typed_data<float>();
+    const float *res_data = result.typed_data<float>();
     // |3+4i| = 5
     ASSERT(std::abs(res_data[0] - 5.0f) < 1e-5f, "Abs of 3+4i = 5");
     // |0+5i| = 5
@@ -223,9 +223,10 @@ void test_complex_exp() {
 
     auto result = ops::exp(t);
 
-    const complex64_t* res_data = result.typed_data<complex64_t>();
+    const complex64_t *res_data = result.typed_data<complex64_t>();
     // exp(i*pi) ≈ -1 + 0i
-    ASSERT(std::abs(res_data[0].real() - (-1.0f)) < 1e-5f, "exp(i*pi) real ≈ -1");
+    ASSERT(std::abs(res_data[0].real() - (-1.0f)) < 1e-5f,
+           "exp(i*pi) real ≈ -1");
     ASSERT(std::abs(res_data[0].imag()) < 1e-5f, "exp(i*pi) imag ≈ 0");
 }
 
@@ -236,10 +237,11 @@ void test_complex_log() {
 
     auto result = ops::log(t);
 
-    const complex64_t* res_data = result.typed_data<complex64_t>();
+    const complex64_t *res_data = result.typed_data<complex64_t>();
     // log(-1) = i*pi
     ASSERT(std::abs(res_data[0].real()) < 1e-5f, "log(-1) real ≈ 0");
-    ASSERT(std::abs(res_data[0].imag() - static_cast<float>(M_PI)) < 1e-5f, "log(-1) imag ≈ pi");
+    ASSERT(std::abs(res_data[0].imag() - static_cast<float>(M_PI)) < 1e-5f,
+           "log(-1) imag ≈ pi");
 }
 
 void test_complex_sqrt() {
@@ -249,7 +251,7 @@ void test_complex_sqrt() {
 
     auto result = ops::sqrt(t);
 
-    const complex64_t* res_data = result.typed_data<complex64_t>();
+    const complex64_t *res_data = result.typed_data<complex64_t>();
     // sqrt(-1) = i
     ASSERT(std::abs(res_data[0].real()) < 1e-5f, "sqrt(-1) real ≈ 0");
     ASSERT(std::abs(res_data[0].imag() - 1.0f) < 1e-5f, "sqrt(-1) imag ≈ 1");
@@ -261,7 +263,7 @@ void test_complex_conj() {
 
     auto result = ops::conj(t);
 
-    const complex64_t* res_data = result.typed_data<complex64_t>();
+    const complex64_t *res_data = result.typed_data<complex64_t>();
     // conj(1+2i) = 1-2i
     ASSERT(std::abs(res_data[0].real() - 1.0f) < 1e-5f, "Conj real 0");
     ASSERT(std::abs(res_data[0].imag() - (-2.0f)) < 1e-5f, "Conj imag 0");
@@ -281,7 +283,7 @@ void test_complex_sum() {
     auto result = ops::sum(t, {}, false);
 
     ASSERT(result.dtype() == DType::Complex64, "Sum should preserve Complex64");
-    const complex64_t* res_data = result.typed_data<complex64_t>();
+    const complex64_t *res_data = result.typed_data<complex64_t>();
     // (1+2i) + (3+4i) + (5+6i) = (9+12i)
     ASSERT(std::abs(res_data[0].real() - 9.0f) < 1e-5f, "Sum real");
     ASSERT(std::abs(res_data[0].imag() - 12.0f) < 1e-5f, "Sum imag");
@@ -293,7 +295,7 @@ void test_complex_mean() {
 
     auto result = ops::mean(t, {}, false);
 
-    const complex64_t* res_data = result.typed_data<complex64_t>();
+    const complex64_t *res_data = result.typed_data<complex64_t>();
     // mean = (1+2i + 3+4i) / 2 = (2+3i)
     ASSERT(std::abs(res_data[0].real() - 2.0f) < 1e-5f, "Mean real");
     ASSERT(std::abs(res_data[0].imag() - 3.0f) < 1e-5f, "Mean imag");
@@ -306,12 +308,16 @@ void test_complex_mean() {
 void test_complex_matmul() {
     // Simple 2x2 complex matmul
     std::vector<complex64_t> a_data = {
-        {1.0f, 0.0f}, {0.0f, 1.0f},  // [[1, i],
-        {0.0f, 0.0f}, {1.0f, 0.0f}   //  [0, 1]]
+        {1.0f, 0.0f},
+        {0.0f, 1.0f}, // [[1, i],
+        {0.0f, 0.0f},
+        {1.0f, 0.0f} //  [0, 1]]
     };
     std::vector<complex64_t> b_data = {
-        {1.0f, 0.0f}, {0.0f, 0.0f},  // [[1, 0],
-        {0.0f, 0.0f}, {1.0f, 0.0f}   //  [0, 1]]
+        {1.0f, 0.0f},
+        {0.0f, 0.0f}, // [[1, 0],
+        {0.0f, 0.0f},
+        {1.0f, 0.0f} //  [0, 1]]
     };
     auto a = Tensor::from_data(a_data.data(), {2, 2});
     auto b = Tensor::from_data(b_data.data(), {2, 2});
@@ -320,8 +326,8 @@ void test_complex_matmul() {
 
     ASSERT(result.shape() == Shape({2, 2}), "MatMul shape");
     ASSERT(result.dtype() == DType::Complex64, "MatMul dtype");
-    
-    const complex64_t* res_data = result.typed_data<complex64_t>();
+
+    const complex64_t *res_data = result.typed_data<complex64_t>();
     // [[1, i], [0, 1]] @ [[1, 0], [0, 1]] = [[1, i], [0, 1]]
     ASSERT(std::abs(res_data[0].real() - 1.0f) < 1e-5f, "(0,0) real");
     ASSERT(std::abs(res_data[0].imag()) < 1e-5f, "(0,0) imag");

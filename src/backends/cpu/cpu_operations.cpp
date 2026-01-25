@@ -46,10 +46,12 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor &lhs,
                           op_type_ == ops::OpType::RightShift);
     if (is_bitwise_op) {
         if (result_dtype == DType::Float16 || result_dtype == DType::Float32 ||
-            result_dtype == DType::Float64 || result_dtype == DType::Complex64 ||
+            result_dtype == DType::Float64 ||
+            result_dtype == DType::Complex64 ||
             result_dtype == DType::Complex128) {
-            throw TypeError("Bitwise operations only support integer types, got " +
-                            dtype_name(result_dtype));
+            throw TypeError(
+                "Bitwise operations only support integer types, got " +
+                dtype_name(result_dtype));
         }
     }
 
@@ -88,10 +90,12 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor &lhs,
         break;
     case DType::Complex64:
     case DType::Complex128:
-        // Complex types are handled separately - only arithmetic ops are allowed
-        // The operation registry and operations.cpp should enforce this before we get here
-        throw TypeError::unsupported_dtype(dtype_name(result_dtype),
-                                           "CPU binary operations (complex types require special handling)");
+        // Complex types are handled separately - only arithmetic ops are
+        // allowed The operation registry and operations.cpp should enforce this
+        // before we get here
+        throw TypeError::unsupported_dtype(
+            dtype_name(result_dtype),
+            "CPU binary operations (complex types require special handling)");
     default:
         throw TypeError::unsupported_dtype(dtype_name(result_dtype),
                                            "CPU binary operations");
@@ -361,7 +365,7 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(
 // ============================================================================
 
 Tensor CPUComplexBinaryOperation::execute_binary(const Tensor &lhs,
-                                                  const Tensor &rhs) const {
+                                                 const Tensor &rhs) const {
     if (lhs.device() != Device::CPU || rhs.device() != Device::CPU) {
         throw DeviceError::cpu_only("CPU complex binary operations");
     }
@@ -370,7 +374,8 @@ Tensor CPUComplexBinaryOperation::execute_binary(const Tensor &lhs,
     DType result_dtype = ops::result_type(lhs, rhs);
 
     if (!is_complex_dtype(result_dtype)) {
-        throw TypeError("CPUComplexBinaryOperation requires complex input types");
+        throw TypeError(
+            "CPUComplexBinaryOperation requires complex input types");
     }
 
     Tensor result(broadcast_info.result_shape, result_dtype, Device::CPU);
@@ -386,8 +391,8 @@ Tensor CPUComplexBinaryOperation::execute_binary(const Tensor &lhs,
 
 template <typename T>
 void CPUComplexBinaryOperation::execute_complex_typed(const Tensor &lhs,
-                                                       const Tensor &rhs,
-                                                       Tensor &result) const {
+                                                      const Tensor &rhs,
+                                                      Tensor &result) const {
     Tensor lhs_conv = lhs.astype(result.dtype());
     Tensor rhs_conv = rhs.astype(result.dtype());
 
@@ -449,7 +454,8 @@ void CPUComplexBinaryOperation::execute_complex_typed(const Tensor &lhs,
             result_data[i] = lhs_val / rhs_val;
             break;
         default:
-            throw TypeError("Unsupported operation for complex types: " + name());
+            throw TypeError("Unsupported operation for complex types: " +
+                            name());
         }
 
         // Increment coordinates
@@ -487,8 +493,8 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
     // - logical_not always returns Bool
     DType result_dtype = input.dtype();
     if (is_abs_op && is_complex_dtype(input.dtype())) {
-        result_dtype =
-            (input.dtype() == DType::Complex64) ? DType::Float32 : DType::Float64;
+        result_dtype = (input.dtype() == DType::Complex64) ? DType::Float32
+                                                           : DType::Float64;
     }
     if (is_logical_not) {
         result_dtype = DType::Bool;
@@ -567,10 +573,10 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
         DISPATCH_CPU_UNARY_OP(DType::Bool, bool)
     case DType::Complex64:
     case DType::Complex128:
-        // Complex unary operations should be handled at the higher level in operations.cpp
-        // except for abs which is already handled above
-        throw TypeError::unsupported_dtype(dtype_name(result_dtype),
-                                           name() + " (use higher-level dispatch)");
+        // Complex unary operations should be handled at the higher level in
+        // operations.cpp except for abs which is already handled above
+        throw TypeError::unsupported_dtype(
+            dtype_name(result_dtype), name() + " (use higher-level dispatch)");
     default:
         throw TypeError::unsupported_dtype(dtype_name(result_dtype),
                                            "CPU unary operations");
@@ -660,15 +666,18 @@ Tensor CPUReductionOperation<Func>::execute_reduction(
     case DType::Complex64:
     case DType::Complex128:
         // Complex types only support Sum and Mean reductions
-        // Max, Min, Any, All, ArgMax, ArgMin don't have a total ordering on complex
+        // Max, Min, Any, All, ArgMax, ArgMin don't have a total ordering on
+        // complex
         if (op_type_ != ops::OpType::Sum && op_type_ != ops::OpType::Mean) {
-            throw TypeError("Reduction '" + name() +
-                            "' not supported for complex types (no total ordering)");
+            throw TypeError(
+                "Reduction '" + name() +
+                "' not supported for complex types (no total ordering)");
         }
         // Fall back to direct implementation instead of template
         // This avoids template instantiation issues with SumFunc identity
         throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           name() + " (use higher-level reduction)");
+                                           name() +
+                                               " (use higher-level reduction)");
     default:
         throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
                                            "CPU reduction operations");
@@ -1520,7 +1529,8 @@ Tensor CPUMaskedFillOperation::execute_masked_fill_typed(
     }
 
     // Handle broadcasting: mask and input may have different shapes
-    auto broadcast_info = ops::compute_broadcast_info(input.shape(), mask.shape());
+    auto broadcast_info =
+        ops::compute_broadcast_info(input.shape(), mask.shape());
     const auto &result_shape = broadcast_info.result_shape;
 
     // If shapes match, fast path
@@ -1551,10 +1561,9 @@ Tensor CPUMaskedFillOperation::execute_masked_fill_typed(
         // Get mask value
         size_t mask_offset =
             ShapeUtils::linear_index(coords, mask_expanded.strides());
-        bool mask_val =
-            *reinterpret_cast<const uint8_t *>(
-                static_cast<const uint8_t *>(mask_expanded.data()) +
-                mask_offset) != 0;
+        bool mask_val = *reinterpret_cast<const uint8_t *>(
+                            static_cast<const uint8_t *>(mask_expanded.data()) +
+                            mask_offset) != 0;
 
         // Get input value
         size_t input_offset =
@@ -1608,7 +1617,8 @@ Tensor CPUMaskedSelectOperation::execute_masked_select_typed(
     const Tensor &input, const Tensor &mask) const {
 
     // Handle broadcasting
-    auto broadcast_info = ops::compute_broadcast_info(input.shape(), mask.shape());
+    auto broadcast_info =
+        ops::compute_broadcast_info(input.shape(), mask.shape());
     const auto &result_shape = broadcast_info.result_shape;
 
     Tensor input_expanded = input.broadcast_to(result_shape);
@@ -1622,10 +1632,9 @@ Tensor CPUMaskedSelectOperation::execute_masked_select_typed(
         auto coords = ShapeUtils::unravel_index(i, result_shape);
         size_t mask_offset =
             ShapeUtils::linear_index(coords, mask_expanded.strides());
-        bool mask_val =
-            *reinterpret_cast<const uint8_t *>(
-                static_cast<const uint8_t *>(mask_expanded.data()) +
-                mask_offset) != 0;
+        bool mask_val = *reinterpret_cast<const uint8_t *>(
+                            static_cast<const uint8_t *>(mask_expanded.data()) +
+                            mask_offset) != 0;
         if (mask_val) {
             count++;
         }
@@ -1646,10 +1655,9 @@ Tensor CPUMaskedSelectOperation::execute_masked_select_typed(
 
         size_t mask_offset =
             ShapeUtils::linear_index(coords, mask_expanded.strides());
-        bool mask_val =
-            *reinterpret_cast<const uint8_t *>(
-                static_cast<const uint8_t *>(mask_expanded.data()) +
-                mask_offset) != 0;
+        bool mask_val = *reinterpret_cast<const uint8_t *>(
+                            static_cast<const uint8_t *>(mask_expanded.data()) +
+                            mask_offset) != 0;
 
         if (mask_val) {
             size_t input_offset =
@@ -1738,7 +1746,8 @@ Tensor CPUGatherOperation::execute_gather_typed(const Tensor &input, int dim,
         input_coords[norm_dim] = static_cast<size_t>(idx);
 
         // Get the value from input
-        size_t input_offset = ShapeUtils::linear_index(input_coords, input_strides);
+        size_t input_offset =
+            ShapeUtils::linear_index(input_coords, input_strides);
         result_data[i] = *reinterpret_cast<const T *>(
             static_cast<const uint8_t *>(input.data()) + input_offset);
     }
@@ -1868,10 +1877,8 @@ Tensor CPUScatterOperation::execute_scatter(const Tensor &input, int dim,
 // ============================================================================
 
 template <typename T>
-Tensor
-CPUIndexSelectOperation::execute_index_select_typed(const Tensor &input,
-                                                    int dim,
-                                                    const Tensor &indices) const {
+Tensor CPUIndexSelectOperation::execute_index_select_typed(
+    const Tensor &input, int dim, const Tensor &indices) const {
     // Normalize dim
     int norm_dim = dim;
     if (norm_dim < 0) {
@@ -1924,9 +1931,9 @@ CPUIndexSelectOperation::execute_index_select_typed(const Tensor &input,
     return result;
 }
 
-Tensor CPUIndexSelectOperation::execute_index_select(const Tensor &input,
-                                                     int dim,
-                                                     const Tensor &indices) const {
+Tensor
+CPUIndexSelectOperation::execute_index_select(const Tensor &input, int dim,
+                                              const Tensor &indices) const {
     if (input.device() != Device::CPU || indices.device() != Device::CPU) {
         throw DeviceError::cpu_only("CPU IndexSelect");
     }
