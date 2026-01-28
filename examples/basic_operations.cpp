@@ -17,7 +17,7 @@ int main() {
     // Broadcasting and element-wise ops
     auto scaled = (x * 2.0f + 1.0f).relu();
 
-    std::cout << result.repr() << std::endl;
+    std::cout << result << std::endl;
 
     return 0;
 }

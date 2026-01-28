@@ -415,9 +415,11 @@ class Tensor {
     static Tensor full(const Shape &shape, const T &value,
                        Device device = Device::CPU,
                        MemoryOrder order = MemoryOrder::RowMajor) {
-        auto tensor = Tensor(shape, dtype_of_v<T>, device, order);
-        if (device == Device::CPU) {
-            tensor.fill(value);
+        // Always create and fill on CPU first, then transfer to target device
+        auto tensor = Tensor(shape, dtype_of_v<T>, Device::CPU, order);
+        tensor.fill(value);
+        if (device == Device::GPU) {
+            return tensor.to(device, order);
         }
         return tensor;
     }

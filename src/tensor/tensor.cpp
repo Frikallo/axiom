@@ -983,9 +983,11 @@ bool Tensor::same_memory_order(const Tensor &other) const {
 
 Tensor Tensor::zeros(const Shape &shape, DType dtype, Device device,
                      MemoryOrder order) {
-    auto tensor = Tensor(shape, dtype, device, order);
-    if (device == Device::CPU) {
-        std::memset(tensor.data(), 0, tensor.nbytes());
+    // Always create and initialize on CPU first, then transfer to target device
+    auto tensor = Tensor(shape, dtype, Device::CPU, order);
+    std::memset(tensor.data(), 0, tensor.nbytes());
+    if (device == Device::GPU) {
+        return tensor.to(device, order);
     }
     return tensor;
 }
@@ -997,52 +999,54 @@ Tensor Tensor::zeros(std::initializer_list<size_t> shape, DType dtype,
 
 Tensor Tensor::ones(const Shape &shape, DType dtype, Device device,
                     MemoryOrder order) {
-    auto tensor = Tensor(shape, dtype, device, order);
-    if (device == Device::CPU) {
-        switch (dtype) {
-        case DType::Bool:
-            tensor.fill<bool>(true);
-            break;
-        case DType::Int8:
-            tensor.fill<int8_t>(1);
-            break;
-        case DType::Int16:
-            tensor.fill<int16_t>(1);
-            break;
-        case DType::Int32:
-            tensor.fill<int32_t>(1);
-            break;
-        case DType::Int64:
-            tensor.fill<int64_t>(1);
-            break;
-        case DType::UInt8:
-            tensor.fill<uint8_t>(1);
-            break;
-        case DType::UInt16:
-            tensor.fill<uint16_t>(1);
-            break;
-        case DType::UInt32:
-            tensor.fill<uint32_t>(1);
-            break;
-        case DType::UInt64:
-            tensor.fill<uint64_t>(1);
-            break;
-        case DType::Float16:
-            tensor.fill<float16_t>(float16_t(1.0f));
-            break;
-        case DType::Float32:
-            tensor.fill<float>(1.0f);
-            break;
-        case DType::Float64:
-            tensor.fill<double>(1.0);
-            break;
-        case DType::Complex64:
-            tensor.fill<complex64_t>(complex64_t(1.0f, 0.0f));
-            break;
-        case DType::Complex128:
-            tensor.fill<complex128_t>(complex128_t(1.0, 0.0));
-            break;
-        }
+    // Always create and initialize on CPU first, then transfer to target device
+    auto tensor = Tensor(shape, dtype, Device::CPU, order);
+    switch (dtype) {
+    case DType::Bool:
+        tensor.fill<bool>(true);
+        break;
+    case DType::Int8:
+        tensor.fill<int8_t>(1);
+        break;
+    case DType::Int16:
+        tensor.fill<int16_t>(1);
+        break;
+    case DType::Int32:
+        tensor.fill<int32_t>(1);
+        break;
+    case DType::Int64:
+        tensor.fill<int64_t>(1);
+        break;
+    case DType::UInt8:
+        tensor.fill<uint8_t>(1);
+        break;
+    case DType::UInt16:
+        tensor.fill<uint16_t>(1);
+        break;
+    case DType::UInt32:
+        tensor.fill<uint32_t>(1);
+        break;
+    case DType::UInt64:
+        tensor.fill<uint64_t>(1);
+        break;
+    case DType::Float16:
+        tensor.fill<float16_t>(float16_t(1.0f));
+        break;
+    case DType::Float32:
+        tensor.fill<float>(1.0f);
+        break;
+    case DType::Float64:
+        tensor.fill<double>(1.0);
+        break;
+    case DType::Complex64:
+        tensor.fill<complex64_t>(complex64_t(1.0f, 0.0f));
+        break;
+    case DType::Complex128:
+        tensor.fill<complex128_t>(complex128_t(1.0, 0.0));
+        break;
+    }
+    if (device == Device::GPU) {
+        return tensor.to(device, order);
     }
     return tensor;
 }
@@ -1185,39 +1189,40 @@ void Tensor::manual_seed(uint64_t seed) { axiom::manual_seed(seed); }
 
 Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
                      MemoryOrder order) {
-    auto tensor = Tensor(shape, dtype, device, order);
+    // Always create and initialize on CPU first, then transfer to target device
+    auto tensor = Tensor(shape, dtype, Device::CPU, order);
+    auto &rng = RandomGenerator::instance();
 
-    if (device == Device::CPU) {
-        auto &rng = RandomGenerator::instance();
-
-        switch (dtype) {
-        case DType::Float32: {
-            float *data = tensor.typed_data<float>();
-            for (size_t i = 0; i < tensor.size(); ++i) {
-                data[i] = rng.normal<float>();
-            }
-            break;
+    switch (dtype) {
+    case DType::Float32: {
+        float *data = tensor.typed_data<float>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = rng.normal<float>();
         }
-        case DType::Float64: {
-            double *data = tensor.typed_data<double>();
-            for (size_t i = 0; i < tensor.size(); ++i) {
-                data[i] = rng.normal<double>();
-            }
-            break;
+        break;
+    }
+    case DType::Float64: {
+        double *data = tensor.typed_data<double>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = rng.normal<double>();
         }
-        case DType::Float16: {
-            float16_t *data = tensor.typed_data<float16_t>();
-            for (size_t i = 0; i < tensor.size(); ++i) {
-                data[i] = float16_t(rng.normal<float>());
-            }
-            break;
+        break;
+    }
+    case DType::Float16: {
+        float16_t *data = tensor.typed_data<float16_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = float16_t(rng.normal<float>());
         }
-        default:
-            throw TypeError("randn only supports floating point types, got " +
-                            axiom::dtype_name(dtype));
-        }
+        break;
+    }
+    default:
+        throw TypeError("randn only supports floating point types, got " +
+                        axiom::dtype_name(dtype));
     }
 
+    if (device == Device::GPU) {
+        return tensor.to(device, order);
+    }
     return tensor;
 }
 

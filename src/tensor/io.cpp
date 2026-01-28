@@ -620,6 +620,9 @@ std::string to_string(const Tensor &tensor) {
     std::vector<size_t> coords(t_cpu.ndim(), 0);
     print_recursive(ss, t_cpu, coords, 0, 3);
 
+    // Add tensor.repr() to the string
+    ss << " " << t_cpu.repr();
+
     return ss.str();
 }
 
