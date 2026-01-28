@@ -143,6 +143,228 @@ void test_softmax_gpu() {
 }
 
 // ============================================================================
+// ReLU Tests
+// ============================================================================
+
+void test_relu_cpu() {
+    std::vector<float> data = {-2.0f, -1.0f, 0.0f, 1.0f, 2.0f};
+    auto t = Tensor::from_data(data.data(), {5});
+
+    auto result = ops::relu(t);
+
+    ASSERT(result.shape() == Shape{5}, "Shape should be preserved");
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+
+    // ReLU: max(0, x)
+    ASSERT(std::abs(out[0]) < 1e-5f, "ReLU(-2) should be 0");
+    ASSERT(std::abs(out[1]) < 1e-5f, "ReLU(-1) should be 0");
+    ASSERT(std::abs(out[2]) < 1e-5f, "ReLU(0) should be 0");
+    ASSERT(std::abs(out[3] - 1.0f) < 1e-5f, "ReLU(1) should be 1");
+    ASSERT(std::abs(out[4] - 2.0f) < 1e-5f, "ReLU(2) should be 2");
+}
+
+void test_relu_fluent() {
+    std::vector<float> data = {-1.0f, 0.0f, 1.0f};
+    auto t = Tensor::from_data(data.data(), {3});
+
+    // Test fluent API
+    auto result = t.relu();
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+
+    ASSERT(std::abs(out[0]) < 1e-5f, "ReLU(-1) should be 0");
+    ASSERT(std::abs(out[1]) < 1e-5f, "ReLU(0) should be 0");
+    ASSERT(std::abs(out[2] - 1.0f) < 1e-5f, "ReLU(1) should be 1");
+}
+
+void test_relu_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+
+    std::vector<float> data = {-1.0f, 0.0f, 1.0f};
+    auto t = Tensor::from_data(data.data(), {3}).gpu();
+
+    auto result = t.relu();
+
+    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+
+    ASSERT(std::abs(out[0]) < 1e-5f, "ReLU(-1) should be 0");
+    ASSERT(std::abs(out[2] - 1.0f) < 1e-5f, "ReLU(1) should be 1");
+}
+
+// ============================================================================
+// Sigmoid Tests
+// ============================================================================
+
+void test_sigmoid_cpu() {
+    std::vector<float> data = {-2.0f, 0.0f, 2.0f};
+    auto t = Tensor::from_data(data.data(), {3});
+
+    auto result = t.sigmoid();
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+
+    // sigmoid(0) = 0.5
+    ASSERT(std::abs(out[1] - 0.5f) < 1e-5f, "sigmoid(0) should be 0.5");
+
+    // sigmoid(-x) + sigmoid(x) = 1
+    ASSERT(std::abs(out[0] + out[2] - 1.0f) < 1e-4f,
+           "sigmoid(-x) + sigmoid(x) should be 1");
+
+    // All values should be in (0, 1)
+    ASSERT(out[0] > 0 && out[0] < 1, "sigmoid should be in (0, 1)");
+    ASSERT(out[2] > 0 && out[2] < 1, "sigmoid should be in (0, 1)");
+}
+
+void test_sigmoid_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+
+    std::vector<float> data = {0.0f};
+    auto t = Tensor::from_data(data.data(), {1}).gpu();
+
+    auto result = t.sigmoid();
+
+    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+    ASSERT(std::abs(out[0] - 0.5f) < 1e-5f, "sigmoid(0) should be 0.5");
+}
+
+// ============================================================================
+// Tanh Tests
+// ============================================================================
+
+void test_tanh_cpu() {
+    std::vector<float> data = {-1.0f, 0.0f, 1.0f};
+    auto t = Tensor::from_data(data.data(), {3});
+
+    auto result = t.tanh();
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+
+    // tanh(0) = 0
+    ASSERT(std::abs(out[1]) < 1e-5f, "tanh(0) should be 0");
+
+    // tanh is odd: tanh(-x) = -tanh(x)
+    ASSERT(std::abs(out[0] + out[2]) < 1e-5f, "tanh should be odd function");
+
+    // All values should be in (-1, 1)
+    ASSERT(out[0] > -1 && out[0] < 1, "tanh should be in (-1, 1)");
+    ASSERT(out[2] > -1 && out[2] < 1, "tanh should be in (-1, 1)");
+}
+
+void test_tanh_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+
+    std::vector<float> data = {0.0f};
+    auto t = Tensor::from_data(data.data(), {1}).gpu();
+
+    auto result = t.tanh();
+
+    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+    ASSERT(std::abs(out[0]) < 1e-5f, "tanh(0) should be 0");
+}
+
+// ============================================================================
+// SiLU Tests
+// ============================================================================
+
+void test_silu_cpu() {
+    std::vector<float> data = {-1.0f, 0.0f, 1.0f};
+    auto t = Tensor::from_data(data.data(), {3});
+
+    auto result = t.silu();
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+
+    // SiLU(0) = 0 * sigmoid(0) = 0
+    ASSERT(std::abs(out[1]) < 1e-5f, "SiLU(0) should be 0");
+
+    // SiLU(1) = 1 * sigmoid(1) ~= 0.731
+    ASSERT(std::abs(out[2] - 0.731f) < 0.01f, "SiLU(1) should be ~0.731");
+}
+
+void test_silu_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+
+    std::vector<float> data = {0.0f, 1.0f};
+    auto t = Tensor::from_data(data.data(), {2}).gpu();
+
+    auto result = t.silu();
+
+    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+    ASSERT(std::abs(out[0]) < 1e-5f, "SiLU(0) should be 0");
+}
+
+// ============================================================================
+// Fluent API Chaining Tests
+// ============================================================================
+
+void test_fluent_chaining() {
+    std::vector<float> data = {-2.0f, -1.0f, 0.0f, 1.0f, 2.0f};
+    auto t = Tensor::from_data(data.data(), {5});
+
+    // Chain: (x * 2).relu().sigmoid()
+    auto result = (t * 2.0f).relu().sigmoid();
+
+    ASSERT(result.shape() == Shape{5}, "Shape should be preserved");
+
+    auto result_cpu = result.cpu();
+    const float *out = result_cpu.typed_data<float>();
+
+    // After *2: {-4, -2, 0, 2, 4}
+    // After relu: {0, 0, 0, 2, 4}
+    // After sigmoid: {0.5, 0.5, 0.5, ~0.88, ~0.98}
+    ASSERT(std::abs(out[0] - 0.5f) < 1e-5f, "sigmoid(relu(-4)) should be 0.5");
+    ASSERT(std::abs(out[1] - 0.5f) < 1e-5f, "sigmoid(relu(-2)) should be 0.5");
+    ASSERT(std::abs(out[2] - 0.5f) < 1e-5f, "sigmoid(relu(0)) should be 0.5");
+    ASSERT(out[3] > 0.85f && out[3] < 0.92f, "sigmoid(2) should be ~0.88");
+    ASSERT(out[4] > 0.95f, "sigmoid(4) should be > 0.95");
+}
+
+void test_fluent_chaining_gpu() {
+    if (!system::should_run_gpu_tests()) {
+        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
+        return;
+    }
+
+    std::vector<float> data = {-1.0f, 0.0f, 1.0f};
+    auto t = Tensor::from_data(data.data(), {3}).gpu();
+
+    auto result = (t + 1.0f).relu().gelu();
+
+    ASSERT(result.device() == Device::GPU, "Result should stay on GPU");
+    ASSERT(result.shape() == Shape{3}, "Shape should be preserved");
+}
+
+// ============================================================================
 // GELU Tests
 // ============================================================================
 
@@ -323,6 +545,32 @@ int main() {
 
     std::cout << "=== Activation and Reduction Tests ===" << std::endl
               << std::endl;
+
+    // ReLU tests
+    std::cout << "--- ReLU Tests ---" << std::endl;
+    RUN_TEST(test_relu_cpu);
+    RUN_TEST(test_relu_fluent);
+    RUN_TEST(test_relu_gpu);
+
+    // Sigmoid tests
+    std::cout << "--- Sigmoid Tests ---" << std::endl;
+    RUN_TEST(test_sigmoid_cpu);
+    RUN_TEST(test_sigmoid_gpu);
+
+    // Tanh tests
+    std::cout << "--- Tanh Tests ---" << std::endl;
+    RUN_TEST(test_tanh_cpu);
+    RUN_TEST(test_tanh_gpu);
+
+    // SiLU tests
+    std::cout << "--- SiLU Tests ---" << std::endl;
+    RUN_TEST(test_silu_cpu);
+    RUN_TEST(test_silu_gpu);
+
+    // Fluent chaining tests
+    std::cout << "--- Fluent Chaining Tests ---" << std::endl;
+    RUN_TEST(test_fluent_chaining);
+    RUN_TEST(test_fluent_chaining_gpu);
 
     // Softmax tests
     std::cout << "--- Softmax Tests ---" << std::endl;

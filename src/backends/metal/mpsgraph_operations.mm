@@ -1300,6 +1300,29 @@ static MPSGraphTensor* gelu_op(MPSGraph* graph, MPSGraphTensor* x) {
     return [graph multiplicationWithPrimaryTensor:half_x secondaryTensor:inner name:nil];
 }
 
+static MPSGraphTensor* relu_op(MPSGraph* graph, MPSGraphTensor* x) {
+    return [graph reLUWithTensor:x name:nil];
+}
+
+static MPSGraphTensor* leaky_relu_op(MPSGraph* graph, MPSGraphTensor* x) {
+    // Default alpha = 0.01
+    return [graph leakyReLUWithTensor:x alpha:0.01 name:nil];
+}
+
+static MPSGraphTensor* sigmoid_op(MPSGraph* graph, MPSGraphTensor* x) {
+    return [graph sigmoidWithTensor:x name:nil];
+}
+
+static MPSGraphTensor* tanh_op(MPSGraph* graph, MPSGraphTensor* x) {
+    return [graph tanhWithTensor:x name:nil];
+}
+
+static MPSGraphTensor* silu_op(MPSGraph* graph, MPSGraphTensor* x) {
+    // SiLU(x) = x * sigmoid(x)
+    MPSGraphTensor* sig = [graph sigmoidWithTensor:x name:nil];
+    return [graph multiplicationWithPrimaryTensor:x secondaryTensor:sig name:nil];
+}
+
 // ============================================================================
 // MPSGraph Masking Operations Implementation
 // ============================================================================
@@ -1774,6 +1797,18 @@ void register_mpsgraph_operations() {
     // GELU operation
     OperationRegistry::register_operation(OpType::GELU, Device::GPU,
         std::make_unique<MPSGraphUnaryOperation>(OpType::GELU, "gelu", gelu_op));
+
+    // Activation operations
+    OperationRegistry::register_operation(OpType::ReLU, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::ReLU, "relu", relu_op));
+    OperationRegistry::register_operation(OpType::LeakyReLU, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::LeakyReLU, "leaky_relu", leaky_relu_op));
+    OperationRegistry::register_operation(OpType::Sigmoid, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Sigmoid, "sigmoid", sigmoid_op));
+    OperationRegistry::register_operation(OpType::Tanh, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Tanh, "tanh", tanh_op));
+    OperationRegistry::register_operation(OpType::SiLU, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::SiLU, "silu", silu_op));
 
     // LogicalNot operation
     OperationRegistry::register_operation(OpType::LogicalNot, Device::GPU,

@@ -816,6 +816,29 @@ Tensor Tensor::argmin(int axis, bool keep_dims) const {
     return ops::argmin(*this, axis, keep_dims);
 }
 
+// Unary math operations
+Tensor Tensor::abs() const { return ops::abs(*this); }
+Tensor Tensor::sqrt() const { return ops::sqrt(*this); }
+Tensor Tensor::exp() const { return ops::exp(*this); }
+Tensor Tensor::log() const { return ops::log(*this); }
+Tensor Tensor::sin() const { return ops::sin(*this); }
+Tensor Tensor::cos() const { return ops::cos(*this); }
+Tensor Tensor::tan() const { return ops::tan(*this); }
+
+// Activation operations
+Tensor Tensor::relu() const { return ops::relu(*this); }
+Tensor Tensor::leaky_relu(float negative_slope) const {
+    return ops::leaky_relu(*this, negative_slope);
+}
+Tensor Tensor::gelu() const { return ops::gelu(*this); }
+Tensor Tensor::silu() const { return ops::silu(*this); }
+Tensor Tensor::sigmoid() const { return ops::sigmoid(*this); }
+Tensor Tensor::tanh() const { return ops::tanh(*this); }
+Tensor Tensor::softmax(int axis) const { return ops::softmax(*this, axis); }
+Tensor Tensor::log_softmax(int axis) const {
+    return ops::log_softmax(*this, axis);
+}
+
 Tensor Tensor::copy(MemoryOrder order) const {
     auto new_tensor = Tensor(shape_, dtype_, device(), order);
 

@@ -144,6 +144,8 @@ Integer types only.
 | `ops::tan(a)` | - | ✓ | ✓ |
 | `ops::erf(a)` | - | ✓ | ✓ |
 
+**Fluent API:** `tensor.abs()`, `tensor.sqrt()`, `tensor.exp()`, `tensor.log()`, `tensor.sin()`, `tensor.cos()`, `tensor.tan()`
+
 ## Complex Operations
 
 Complex64 (`std::complex<float>`) and Complex128 (`std::complex<double>`) are fully supported on CPU. GPU operations automatically fall back to CPU for stability.
@@ -168,9 +170,24 @@ Complex64 (`std::complex<float>`) and Complex128 (`std::complex<double>`) are fu
 
 | Function | Description | CPU | GPU |
 |----------|-------------|-----|-----|
+| `ops::relu(a)` | Rectified Linear Unit | ✓ | ✓ |
+| `ops::leaky_relu(a, slope)` | Leaky ReLU (default slope=0.01) | ✓ | ✓ |
+| `ops::sigmoid(a)` | Logistic sigmoid | ✓ | ✓ |
+| `ops::tanh(a)` | Hyperbolic tangent | ✓ | ✓ |
+| `ops::silu(a)` | SiLU/Swish: x * sigmoid(x) | ✓ | ✓ |
 | `ops::gelu(a)` | Gaussian Error Linear Unit | ✓ | ✓ |
 | `ops::softmax(a, axis)` | Softmax (default axis=-1) | ✓ | ✓ |
 | `ops::log_softmax(a, axis)` | Log-softmax (default axis=-1) | ✓ | ✓ |
+
+**Fluent API:** All activations are available as member functions for chaining:
+
+```cpp
+auto output = x.relu();
+auto output = (x * 2.0f + 1.0f).relu().sigmoid();
+auto output = x.gelu().softmax(-1);
+```
+
+Member functions: `tensor.relu()`, `tensor.leaky_relu(slope)`, `tensor.sigmoid()`, `tensor.tanh()`, `tensor.silu()`, `tensor.gelu()`, `tensor.softmax(axis)`, `tensor.log_softmax(axis)`
 
 ## Reduction Operations
 
@@ -225,14 +242,14 @@ Intuitive masking operations for clean, readable code.
 **Examples:**
 
 ```cpp
-// ReLU in one line
-auto relu = x.masked_fill(x < 0, 0.0f);
-
 // Get all positive values
 auto positives = x.masked_select(x > 0);
 
 // Attention masking
 auto masked_scores = scores.masked_fill(!mask, -1e9f);
+
+// Clamp values to range
+auto clamped = x.masked_fill(x < 0, 0.0f).masked_fill(x > 1, 1.0f);
 ```
 
 **Scalar Comparison Operators:**

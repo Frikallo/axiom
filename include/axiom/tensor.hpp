@@ -275,6 +275,29 @@ class Tensor {
     Tensor argmax(int axis = -1, bool keep_dims = false) const;
     Tensor argmin(int axis = -1, bool keep_dims = false) const;
 
+    // =========================================================================
+    // Unary and activation operations (fluent API)
+    // =========================================================================
+
+    // Math operations
+    Tensor abs() const;
+    Tensor sqrt() const;
+    Tensor exp() const;
+    Tensor log() const;
+    Tensor sin() const;
+    Tensor cos() const;
+    Tensor tan() const;
+
+    // Activation functions
+    Tensor relu() const;
+    Tensor leaky_relu(float negative_slope = 0.01f) const;
+    Tensor gelu() const;
+    Tensor silu() const; // SiLU/Swish: x * sigmoid(x)
+    Tensor sigmoid() const;
+    Tensor tanh() const;
+    Tensor softmax(int axis = -1) const;
+    Tensor log_softmax(int axis = -1) const;
+
     // Memory operations
     Tensor copy(MemoryOrder order = MemoryOrder::RowMajor) const;
     Tensor clone() const { return copy(); }

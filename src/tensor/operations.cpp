@@ -291,6 +291,14 @@ std::map<std::pair<OpType, Device>, std::unique_ptr<Operation>> &
 OperationRegistry::get_registry() {
     static std::map<std::pair<OpType, Device>, std::unique_ptr<Operation>>
         registry;
+    static bool initialized = false;
+    if (!initialized) {
+        initialized = true; // Set first to prevent recursion
+        backends::cpu::register_cpu_operations();
+#ifdef __APPLE__
+        backends::metal::register_metal_operations();
+#endif
+    }
     return registry;
 }
 
@@ -1149,6 +1157,29 @@ Tensor real(const Tensor &input) { return input.real(); }
 Tensor imag(const Tensor &input) { return input.imag(); }
 
 // Activation operations
+Tensor relu(const Tensor &input) {
+    return execute_unary_operation(OpType::ReLU, input);
+}
+
+Tensor leaky_relu(const Tensor &input, float negative_slope) {
+    // For non-default slopes, we need a custom implementation
+    // For now, use the registered default (0.01)
+    (void)negative_slope; // TODO: support custom slopes
+    return execute_unary_operation(OpType::LeakyReLU, input);
+}
+
+Tensor silu(const Tensor &input) {
+    return execute_unary_operation(OpType::SiLU, input);
+}
+
+Tensor sigmoid(const Tensor &input) {
+    return execute_unary_operation(OpType::Sigmoid, input);
+}
+
+Tensor tanh(const Tensor &input) {
+    return execute_unary_operation(OpType::Tanh, input);
+}
+
 Tensor gelu(const Tensor &input) {
     return execute_unary_operation(OpType::GELU, input);
 }

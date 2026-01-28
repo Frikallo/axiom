@@ -96,6 +96,11 @@ enum class OpType {
     Imag,
 
     // Activation operations
+    ReLU,
+    LeakyReLU,
+    SiLU,
+    Sigmoid,
+    Tanh,
     GELU,
     Softmax,
     LogSoftmax,
@@ -280,6 +285,11 @@ Tensor real(const Tensor &input);
 Tensor imag(const Tensor &input);
 
 // Activation operations
+Tensor relu(const Tensor &input);
+Tensor leaky_relu(const Tensor &input, float negative_slope = 0.01f);
+Tensor silu(const Tensor &input); // SiLU/Swish: x * sigmoid(x)
+Tensor sigmoid(const Tensor &input);
+Tensor tanh(const Tensor &input);
 Tensor gelu(const Tensor &input);
 Tensor softmax(const Tensor &input, int axis = -1);
 Tensor log_softmax(const Tensor &input, int axis = -1);

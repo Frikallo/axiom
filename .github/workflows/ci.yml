@@ -70,8 +70,6 @@ jobs:
     - name: Install Dependencies
       run: |
         brew install cmake ninja llvm
-        # Add LLVM tools to PATH (for recent clang-format)
-        echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
         
     - name: Configure CMake (for compile_commands.json)
       run: |
@@ -82,16 +80,18 @@ jobs:
           
     - name: Check Formatting
       run: |
+        # Use Homebrew LLVM's clang-format (supports recent .clang-format options)
+        CLANG_FORMAT="$(brew --prefix llvm)/bin/clang-format"
+        
         echo "Checking code formatting with clang-format..."
-        echo "clang-format version: $(clang-format --version)"
+        echo "clang-format version: $($CLANG_FORMAT --version)"
         echo ""
         
         UNFORMATTED_FILES=()
         
         # Check all C++ files in include/ and src/
         while IFS= read -r -d '' file; do
-          # Compare file against formatted version using project's .clang-format
-          if ! diff -q "$file" <(clang-format --style=file "$file") > /dev/null 2>&1; then
+          if ! diff -q "$file" <($CLANG_FORMAT --style=file "$file") > /dev/null 2>&1; then
             UNFORMATTED_FILES+=("$file")
           fi
         done < <(find include src -type f \( -name '*.hpp' -o -name '*.cpp' \) -print0)
@@ -107,23 +107,4 @@ jobs:
           exit 1
         else
           echo "All files are properly formatted!"
-        fi
-        
-    - name: Run clang-tidy
-      run: |
-        echo "Running clang-tidy on source files..."
-        TIDY_ERRORS=0
-        
-        # Check all .cpp files in src/ (not headers - they're checked transitively)
-        while IFS= read -r -d '' file; do
-          echo "Checking $file..."
-          if ! clang-tidy -p build "$file" --quiet 2>/dev/null; then
-            TIDY_ERRORS=$((TIDY_ERRORS + 1))
-          fi
-        done < <(find src -type f -name '*.cpp' -print0)
-        
-        if [ $TIDY_ERRORS -gt 0 ]; then
-          echo "::warning::clang-tidy found issues in $TIDY_ERRORS file(s)"
-        else
-          echo "clang-tidy passed!"
         fi

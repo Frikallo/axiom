@@ -2228,6 +2228,26 @@ void register_cpu_operations() {
         std::make_unique<CPUUnaryOperation<GELUFunc>>(OpType::GELU, "gelu",
                                                       GELUFunc{}));
     OperationRegistry::register_operation(
+        OpType::ReLU, Device::CPU,
+        std::make_unique<CPUUnaryOperation<ReLUFunc>>(OpType::ReLU, "relu",
+                                                      ReLUFunc{}));
+    OperationRegistry::register_operation(
+        OpType::LeakyReLU, Device::CPU,
+        std::make_unique<CPUUnaryOperation<LeakyReLUFunc>>(
+            OpType::LeakyReLU, "leaky_relu", LeakyReLUFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Sigmoid, Device::CPU,
+        std::make_unique<CPUUnaryOperation<SigmoidFunc>>(
+            OpType::Sigmoid, "sigmoid", SigmoidFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Tanh, Device::CPU,
+        std::make_unique<CPUUnaryOperation<TanhFunc>>(OpType::Tanh, "tanh",
+                                                      TanhFunc{}));
+    OperationRegistry::register_operation(
+        OpType::SiLU, Device::CPU,
+        std::make_unique<CPUUnaryOperation<SiLUFunc>>(OpType::SiLU, "silu",
+                                                      SiLUFunc{}));
+    OperationRegistry::register_operation(
         OpType::Conj, Device::CPU,
         std::make_unique<CPUUnaryOperation<ConjFunc>>(OpType::Conj, "conj",
                                                       ConjFunc{}));

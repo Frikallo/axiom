@@ -510,6 +510,52 @@ struct GELUFunc {
     }
 };
 
+struct ReLUFunc {
+    template <typename T> T operator()(const T &a) const {
+        return a > T{0} ? a : T{0};
+    }
+};
+
+struct LeakyReLUFunc {
+    float negative_slope = 0.01f;
+    template <typename T> T operator()(const T &a) const {
+        return a > T{0} ? a : static_cast<T>(negative_slope) * a;
+    }
+};
+
+struct SigmoidFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return static_cast<T>(1) / (static_cast<T>(1) + std::exp(-a));
+        } else {
+            double da = static_cast<double>(a);
+            return static_cast<T>(1.0 / (1.0 + std::exp(-da)));
+        }
+    }
+};
+
+struct TanhFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::tanh(a);
+        } else {
+            return static_cast<T>(std::tanh(static_cast<double>(a)));
+        }
+    }
+};
+
+struct SiLUFunc {
+    template <typename T> T operator()(const T &a) const {
+        // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
+        if constexpr (std::is_floating_point_v<T>) {
+            return a / (static_cast<T>(1) + std::exp(-a));
+        } else {
+            double da = static_cast<double>(a);
+            return static_cast<T>(da / (1.0 + std::exp(-da)));
+        }
+    }
+};
+
 struct ConjFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_same_v<T, std::complex<float>> ||
