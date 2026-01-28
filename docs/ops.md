@@ -172,14 +172,14 @@ Integer types only.
 
 | Function | Description | CPU | GPU |
 |----------|-------------|-----|-----|
-| `ops::sign(a)` / `tensor.sign()` | Element-wise sign (-1, 0, 1) | ✓ | - |
-| `ops::floor(a)` / `tensor.floor()` | Round down to nearest integer | ✓ | - |
-| `ops::ceil(a)` / `tensor.ceil()` | Round up to nearest integer | ✓ | - |
-| `ops::trunc(a)` / `tensor.trunc()` | Truncate to integer toward zero | ✓ | - |
-| `ops::round(a, decimals)` / `tensor.round(decimals)` | Round to given decimals | ✓ | - |
-| `ops::reciprocal(a)` / `tensor.reciprocal()` | Element-wise 1/x | ✓ | - |
-| `ops::square(a)` / `tensor.square()` | Element-wise x² | ✓ | - |
-| `ops::cbrt(a)` / `tensor.cbrt()` | Cube root | ✓ | - |
+| `ops::sign(a)` / `tensor.sign()` | Element-wise sign (-1, 0, 1) | ✓ | ✓ |
+| `ops::floor(a)` / `tensor.floor()` | Round down to nearest integer | ✓ | ✓ |
+| `ops::ceil(a)` / `tensor.ceil()` | Round up to nearest integer | ✓ | ✓ |
+| `ops::trunc(a)` / `tensor.trunc()` | Truncate to integer toward zero | ✓ | ✓ |
+| `ops::round(a, decimals)` / `tensor.round(decimals)` | Round to given decimals | ✓ | ✓ |
+| `ops::reciprocal(a)` / `tensor.reciprocal()` | Element-wise 1/x | ✓ | ✓ |
+| `ops::square(a)` / `tensor.square()` | Element-wise x² | ✓ | ✓ |
+| `ops::cbrt(a)` / `tensor.cbrt()` | Cube root | ✓ | ✓ |
 
 ## Element Testing Operations
 
@@ -187,9 +187,9 @@ Returns Bool tensors.
 
 | Function | Description | CPU | GPU |
 |----------|-------------|-----|-----|
-| `ops::isnan(a)` / `tensor.isnan()` | Test for NaN | ✓ | - |
-| `ops::isinf(a)` / `tensor.isinf()` | Test for Inf | ✓ | - |
-| `ops::isfinite(a)` / `tensor.isfinite()` | Test for finite values | ✓ | - |
+| `ops::isnan(a)` / `tensor.isnan()` | Test for NaN | ✓ | ✓ |
+| `ops::isinf(a)` / `tensor.isinf()` | Test for Inf | ✓ | ✓ |
+| `ops::isfinite(a)` / `tensor.isfinite()` | Test for finite values | ✓ | ✓ |
 
 ## Clipping Operations
 
@@ -254,7 +254,7 @@ Member functions: `tensor.relu()`, `tensor.leaky_relu(slope)`, `tensor.sigmoid()
 | `ops::argmin(a, axis, keep_dims)` | ✓ | ✓ |
 | `ops::any(a, axis, keep_dims)` | ✓ | ✓ |
 | `ops::all(a, axis, keep_dims)` | ✓ | ✓ |
-| `ops::prod(a, axis, keep_dims)` | ✓ | - |
+| `ops::prod(a, axis, keep_dims)` | ✓ | ✓ |
 
 Member functions: `tensor.sum()`, `tensor.mean()`, `tensor.max()`, `tensor.min()`, `tensor.argmax()`, `tensor.argmin()`, `tensor.prod()`, `tensor.any()`, `tensor.all()`
 
@@ -492,14 +492,14 @@ All operations use MPSGraph on Metal GPU for automatic kernel fusion and Apple S
 | Bitwise | ✓ | ✓ | Integer types only |
 | Math | ✓ | ✓ | |
 | Unary | ✓ | ✓ | |
-| NumPy Math | ✓ | - | sign, floor, ceil, trunc, round, reciprocal, square, cbrt |
-| Element Tests | ✓ | - | isnan, isinf, isfinite |
+| NumPy Math | ✓ | ✓ | sign, floor, ceil, trunc, round, reciprocal, square, cbrt |
+| Element Tests | ✓ | ✓ | isnan, isinf, isfinite |
 | Clipping | ✓ | ✓ | clip/clamp |
 | Complex | ✓ | (CPU) | GPU falls back to CPU |
 | Activations | ✓ | ✓ | |
 | Reductions | ✓ | ✓ | sum, mean, max, min, any, all |
 | Statistical | ✓ | ✓ | var, std, ptp (composition-based) |
-| prod Reduction | ✓ | - | Product reduction |
+| prod Reduction | ✓ | ✓ | Product reduction |
 | MatMul | ✓ | ✓ | Including batched |
 | Where | ✓ | ✓ | |
 | Masking | ✓ | ✓ | |

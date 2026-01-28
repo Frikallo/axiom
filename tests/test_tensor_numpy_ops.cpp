@@ -387,13 +387,22 @@ int main(int argc, char **argv) {
     RUN_TEST(test_chunk, axiom::Device::CPU);
 
     if (axiom::system::should_run_gpu_tests()) {
-        std::cout << "\n--- Running GPU tests (stacking only - new ops "
-                     "CPU-only for now) ---\n"
-                  << std::endl;
-        // Note: sign, floor, ceil, trunc, reciprocal, square, cbrt, prod are
-        // CPU-only for now clip uses existing ops (min/max) so should work on
-        // GPU
+        std::cout << "\n--- Running GPU tests ---\n" << std::endl;
+
+        // NumPy-like math ops
+        RUN_TEST(test_sign, axiom::Device::GPU);
+        RUN_TEST(test_floor_ceil_trunc, axiom::Device::GPU);
+        RUN_TEST(test_reciprocal, axiom::Device::GPU);
+        RUN_TEST(test_square_cbrt, axiom::Device::GPU);
+        RUN_TEST(test_isnan_isinf_isfinite, axiom::Device::GPU);
         RUN_TEST(test_clip, axiom::Device::GPU);
+
+        // Reductions
+        RUN_TEST(test_prod, axiom::Device::GPU);
+        RUN_TEST(test_var_std, axiom::Device::GPU);
+        RUN_TEST(test_ptp, axiom::Device::GPU);
+
+        // Stacking
         RUN_TEST(test_concatenate, axiom::Device::GPU);
         RUN_TEST(test_concatenate_2d, axiom::Device::GPU);
         RUN_TEST(test_stack, axiom::Device::GPU);

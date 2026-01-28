@@ -427,8 +427,12 @@ MPSGraphUnaryOperation::MPSGraphUnaryOperation(ops::OpType op_type,
     : MPSGraphOperation(op_type, std::move(op_name)), op_block_(op_block) {}
 
 Tensor MPSGraphUnaryOperation::execute_unary(const Tensor& input) const {
-    // Logical NOT outputs Bool, others preserve input dtype
-    DType output_dtype = (op_type_ == ops::OpType::LogicalNot) ? DType::Bool : input.dtype();
+    // Operations that output Bool regardless of input dtype
+    bool outputs_bool = (op_type_ == ops::OpType::LogicalNot ||
+                         op_type_ == ops::OpType::IsNaN ||
+                         op_type_ == ops::OpType::IsInf ||
+                         op_type_ == ops::OpType::IsFinite);
+    DType output_dtype = outputs_bool ? DType::Bool : input.dtype();
     return executeMPSGraphUnaryOp(input, output_dtype, op_block_);
 }
 
@@ -613,6 +617,64 @@ static MPSGraphTensor* tan_op(MPSGraph* graph, MPSGraphTensor* a) {
     return [graph tanWithTensor:a name:nil];
 }
 
+// NumPy-like math operations
+static MPSGraphTensor* sign_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph signWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* floor_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph floorWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* ceil_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph ceilWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* trunc_op(MPSGraph* graph, MPSGraphTensor* a) {
+    // truncateWithTensor rounds toward zero
+    return [graph truncateWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* round_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph roundWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* reciprocal_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph reciprocalWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* square_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph squareWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* cbrt_op(MPSGraph* graph, MPSGraphTensor* a) {
+    // cbrt(x) = x^(1/3) = sign(x) * |x|^(1/3) to handle negative numbers
+    // MPSGraph pow only works for non-negative bases with fractional exponents
+    MPSGraphTensor* abs_a = [graph absoluteWithTensor:a name:nil];
+    MPSGraphTensor* one_third = [graph constantWithScalar:(1.0/3.0)
+                                                  dataType:a.dataType];
+    MPSGraphTensor* abs_result = [graph powerWithPrimaryTensor:abs_a
+                                               secondaryTensor:one_third
+                                                          name:nil];
+    MPSGraphTensor* sign_a = [graph signWithTensor:a name:nil];
+    return [graph multiplicationWithPrimaryTensor:sign_a
+                                  secondaryTensor:abs_result
+                                             name:nil];
+}
+
+// Element-wise testing operations (return Bool)
+static MPSGraphTensor* isnan_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph isNaNWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* isinf_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph isInfiniteWithTensor:a name:nil];
+}
+
+static MPSGraphTensor* isfinite_op(MPSGraph* graph, MPSGraphTensor* a) {
+    return [graph isFiniteWithTensor:a name:nil];
+}
+
 // ============================================================================
 // Reduction Operations (migrated from custom Metal kernels)
 // ============================================================================
@@ -693,6 +755,9 @@ static Tensor executeReduction(const Tensor& input_raw, const std::vector<int>& 
                                                               name:nil];
                 break;
             }
+            case ops::OpType::Prod:
+                result_tensor = [graph reductionProductWithTensor:input_tensor axes:mps_axes name:nil];
+                break;
             default:
                 throw RuntimeError::not_implemented("Reduction operation");
         }
@@ -1813,6 +1878,36 @@ void register_mpsgraph_operations() {
     // LogicalNot operation
     OperationRegistry::register_operation(OpType::LogicalNot, Device::GPU,
         std::make_unique<MPSGraphUnaryOperation>(OpType::LogicalNot, "logical_not", logical_not_op));
+
+    // NumPy-like math operations
+    OperationRegistry::register_operation(OpType::Sign, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Sign, "sign", sign_op));
+    OperationRegistry::register_operation(OpType::Floor, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Floor, "floor", floor_op));
+    OperationRegistry::register_operation(OpType::Ceil, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Ceil, "ceil", ceil_op));
+    OperationRegistry::register_operation(OpType::Trunc, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Trunc, "trunc", trunc_op));
+    OperationRegistry::register_operation(OpType::Round, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Round, "round", round_op));
+    OperationRegistry::register_operation(OpType::Reciprocal, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Reciprocal, "reciprocal", reciprocal_op));
+    OperationRegistry::register_operation(OpType::Square, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Square, "square", square_op));
+    OperationRegistry::register_operation(OpType::Cbrt, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::Cbrt, "cbrt", cbrt_op));
+
+    // Element-wise testing operations
+    OperationRegistry::register_operation(OpType::IsNaN, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::IsNaN, "isnan", isnan_op));
+    OperationRegistry::register_operation(OpType::IsInf, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::IsInf, "isinf", isinf_op));
+    OperationRegistry::register_operation(OpType::IsFinite, Device::GPU,
+        std::make_unique<MPSGraphUnaryOperation>(OpType::IsFinite, "isfinite", isfinite_op));
+
+    // Product reduction
+    OperationRegistry::register_operation(OpType::Prod, Device::GPU,
+        std::make_unique<MPSGraphReductionOperation>(OpType::Prod, "prod"));
 }
 
 } // namespace metal

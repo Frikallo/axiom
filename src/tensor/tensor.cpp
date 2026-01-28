@@ -658,23 +658,8 @@ Tensor Tensor::flip(const std::vector<int> &axes) const {
         norm_axes.push_back(norm);
     }
 
-    // Create new strides with reversed sign for flipped axes
-    // and calculate new offset to point to the last element along flipped dims
-    Strides new_strides = strides_;
-    size_t new_offset = offset_;
-
-    for (int ax : norm_axes) {
-        if (shape_[ax] > 1) {
-            // Offset moves to the "last" element along this axis
-            new_offset += (shape_[ax] - 1) * strides_[ax];
-            // Stride becomes negative (but stored as size_t, we use a trick)
-            // For a proper implementation, we need to handle this specially
-            // in iteration. For now, we'll use a copy-based approach.
-        }
-    }
-
-    // For view-based flip with negative strides, we need signed strides
-    // which our current implementation doesn't support. Use copy instead.
+    // Note: A view-based flip would require signed strides, which our current
+    // implementation doesn't support. Using a copy-based approach instead.
     Tensor result(shape_, dtype_, device(), memory_order_);
 
     if (device() == Device::CPU) {
