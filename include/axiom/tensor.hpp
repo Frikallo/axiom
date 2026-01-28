@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -19,6 +20,18 @@ namespace axiom {
 namespace io {
 struct SerializationOptions;
 }
+} // namespace axiom
+
+// Forward declarations for expression templates
+namespace axiom {
+namespace expr {
+template <typename Derived> class ExprBase;
+class TensorRef;
+template <typename T> class ScalarExpr;
+template <typename Op, typename LHS, typename RHS> class BinaryExpr;
+template <typename Op, typename Operand> class UnaryExpr;
+template <typename LHS, typename RHS> class MatMulExpr;
+} // namespace expr
 } // namespace axiom
 
 namespace axiom {
@@ -62,6 +75,11 @@ class Tensor {
     Tensor &operator=(const Tensor &other);
     Tensor(Tensor &&other) noexcept;
     Tensor &operator=(Tensor &&other) noexcept;
+
+    // Note: Expression templates work via implicit conversion
+    // Expressions like (a + b) * c have operator Tensor() which
+    // allows them to be assigned to Tensor variables directly:
+    //   Tensor d = (a + b) * c;  // Works via implicit conversion
 
     // Core attributes
     const Shape &shape() const { return shape_; }

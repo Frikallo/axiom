@@ -83,7 +83,11 @@ set(AXIOM_SOURCES
     src/tensor/random.cpp
     src/tensor/system.cpp
     src/tensor/indexing.cpp
-    
+
+    # Expression templates (lazy evaluation)
+    src/expr/cpu_eval.cpp
+    src/expr/aliasing.cpp
+
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
     src/backends/cpu/cpu_operations.cpp
@@ -98,14 +102,16 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/kernels.metal
+        src/expr/gpu_eval.mm
     )
-    
+
     set_source_files_properties(
         src/backends/metal/metal_storage.mm
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/kernels.metal
+        src/expr/gpu_eval.mm
         PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"
     )

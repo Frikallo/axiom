@@ -332,7 +332,8 @@ void test_fluent_chaining() {
     auto t = Tensor::from_data(data.data(), {5});
 
     // Chain: (x * 2).relu().sigmoid()
-    auto result = (t * 2.0f).relu().sigmoid();
+    // Expression templates now support fluent chaining - still lazy!
+    Tensor result = (t * 2.0f).relu().sigmoid();
 
     ASSERT(result.shape() == Shape{5}, "Shape should be preserved");
 
@@ -358,7 +359,8 @@ void test_fluent_chaining_gpu() {
     std::vector<float> data = {-1.0f, 0.0f, 1.0f};
     auto t = Tensor::from_data(data.data(), {3}).gpu();
 
-    auto result = (t + 1.0f).relu().gelu();
+    // Expression templates support fluent chaining - still lazy!
+    Tensor result = (t + 1.0f).relu().gelu();
 
     ASSERT(result.device() == Device::GPU, "Result should stay on GPU");
     ASSERT(result.shape() == Shape{3}, "Shape should be preserved");

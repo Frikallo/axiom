@@ -14,4 +14,15 @@
 #include "axiom/storage.hpp"
 #include "axiom/system.hpp"
 #include "axiom/tensor.hpp"
+
+// Expression templates for lazy evaluation
+#include "axiom/expr/base.hpp"
+#include "axiom/expr/binary.hpp"
+#include "axiom/expr/cpu_fused.hpp"
+#include "axiom/expr/fluent.hpp"
+#include "axiom/expr/matmul.hpp"
+#include "axiom/expr/traits.hpp"
+#include "axiom/expr/unary.hpp"
+
+// Tensor operators (uses expression templates for lazy evaluation)
 #include "axiom/tensor_operators.hpp"
