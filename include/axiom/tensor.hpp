@@ -86,6 +86,7 @@ class Tensor {
     bool is_view() const { return !flags_.owndata || offset_ > 0; }
     bool owns_data() const { return flags_.owndata && offset_ == 0; }
     bool has_zero_stride() const; // True if any stride is 0 (broadcast view)
+    bool has_negative_stride() const; // True if any stride < 0 (flipped view)
     bool shares_storage(const Tensor &other) const {
         return storage_.get() == other.storage_.get();
     }
@@ -121,10 +122,13 @@ class Tensor {
         if (device() != Device::CPU) {
             throw DeviceError::cpu_only("item()");
         }
-        size_t byte_offset = ShapeUtils::linear_index(indices, strides_);
+        // Compute byte offset with signed arithmetic for negative strides
+        int64_t byte_offset = 0;
+        for (size_t i = 0; i < indices.size(); ++i) {
+            byte_offset += static_cast<int64_t>(indices[i]) * strides_[i];
+        }
         const T *data_ptr = reinterpret_cast<const T *>(
-            static_cast<const uint8_t *>(storage_->data()) + offset_ +
-            byte_offset);
+            static_cast<const uint8_t *>(data()) + byte_offset);
         return *data_ptr;
     }
 
@@ -137,9 +141,13 @@ class Tensor {
         if (!flags_.writeable) {
             throw MemoryError("Tensor is not writeable");
         }
-        size_t byte_offset = ShapeUtils::linear_index(indices, strides_);
-        T *data_ptr = reinterpret_cast<T *>(
-            static_cast<uint8_t *>(storage_->data()) + offset_ + byte_offset);
+        // Compute byte offset with signed arithmetic for negative strides
+        int64_t byte_offset = 0;
+        for (size_t i = 0; i < indices.size(); ++i) {
+            byte_offset += static_cast<int64_t>(indices[i]) * strides_[i];
+        }
+        T *data_ptr =
+            reinterpret_cast<T *>(static_cast<uint8_t *>(data()) + byte_offset);
         *data_ptr = value;
     }
 

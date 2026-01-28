@@ -51,6 +51,15 @@ void Tensor::update_contiguity_flags() {
         return;
     }
 
+    // Tensors with negative strides are never contiguous
+    for (int64_t s : strides_) {
+        if (s < 0) {
+            flags_.c_contiguous = false;
+            flags_.f_contiguous = false;
+            return;
+        }
+    }
+
     auto c_strides = ShapeUtils::calculate_strides(shape_, itemsize(),
                                                    MemoryOrder::RowMajor);
     flags_.c_contiguous = (strides_ == c_strides);
@@ -104,8 +113,10 @@ Tensor::Tensor(std::shared_ptr<Storage> storage, const Shape &shape,
     if (!shape_.empty()) {
         for (size_t i = 0; i < shape_.size(); ++i) {
             if (shape_[i] > 1) {
-                required_size =
-                    std::max(required_size, (shape_[i] - 1) * strides_[i]);
+                // Use absolute value of stride for size calculation
+                required_size = std::max(
+                    required_size, static_cast<size_t>((shape_[i] - 1) *
+                                                       std::abs(strides_[i])));
             }
         }
         required_size += dtype_size(dtype_);
@@ -161,14 +172,31 @@ void *Tensor::data() {
     if (!storage_) {
         return nullptr;
     }
-    return static_cast<uint8_t *>(storage_->data()) + offset_;
+    // For negative strides, adjust base pointer to account for flipped view
+    // The data pointer should point to the "first" element in iteration order
+    size_t adjustment = 0;
+    for (size_t i = 0; i < shape_.size(); ++i) {
+        if (strides_[i] < 0 && shape_[i] > 1) {
+            adjustment += static_cast<size_t>((shape_[i] - 1) * (-strides_[i]));
+        }
+    }
+    return static_cast<uint8_t *>(storage_->data()) + offset_ + adjustment;
 }
 
 const void *Tensor::data() const {
     if (!storage_) {
         return nullptr;
     }
-    return static_cast<const uint8_t *>(storage_->data()) + offset_;
+    // For negative strides, adjust base pointer to account for flipped view
+    // The data pointer should point to the "first" element in iteration order
+    size_t adjustment = 0;
+    for (size_t i = 0; i < shape_.size(); ++i) {
+        if (strides_[i] < 0 && shape_[i] > 1) {
+            adjustment += static_cast<size_t>((shape_[i] - 1) * (-strides_[i]));
+        }
+    }
+    return static_cast<const uint8_t *>(storage_->data()) + offset_ +
+           adjustment;
 }
 
 Tensor Tensor::slice(const std::vector<Slice> &slice_args) const {
@@ -549,9 +577,11 @@ Tensor Tensor::flatten(int start_dim, int end_dim) const {
     bool can_view = true;
     if (end_dim > start_dim) {
         // Check that strides are contiguous in the flattened region
+        // Also cannot create view if any stride is negative
         for (int i = start_dim; i < end_dim; ++i) {
-            if (strides_[i] !=
-                static_cast<size_t>(shape_[i + 1]) * strides_[i + 1]) {
+            if (strides_[i] < 0 || strides_[i + 1] < 0 ||
+                strides_[i] !=
+                    static_cast<int64_t>(shape_[i + 1]) * strides_[i + 1]) {
                 can_view = false;
                 break;
             }
@@ -658,41 +688,15 @@ Tensor Tensor::flip(const std::vector<int> &axes) const {
         norm_axes.push_back(norm);
     }
 
-    // Note: A view-based flip would require signed strides, which our current
-    // implementation doesn't support. Using a copy-based approach instead.
-    Tensor result(shape_, dtype_, device(), memory_order_);
-
-    if (device() == Device::CPU) {
-        std::vector<size_t> coords(ndim(), 0);
-        for (size_t i = 0; i < size(); ++i) {
-            // Calculate flipped source coordinates
-            std::vector<size_t> src_coords = coords;
-            for (int ax : norm_axes) {
-                src_coords[ax] = shape_[ax] - 1 - coords[ax];
-            }
-
-            size_t src_offset = ShapeUtils::linear_index(src_coords, strides_);
-            size_t dst_offset =
-                ShapeUtils::linear_index(coords, result.strides());
-
-            std::memcpy(static_cast<uint8_t *>(result.data()) + dst_offset,
-                        static_cast<const uint8_t *>(data()) + src_offset,
-                        itemsize());
-
-            // Increment coordinates
-            for (int j = static_cast<int>(ndim()) - 1; j >= 0; --j) {
-                if (++coords[j] < shape_[j])
-                    break;
-                coords[j] = 0;
-            }
-        }
-    } else {
-        // GPU: go through CPU
-        auto cpu_flipped = cpu().flip(axes);
-        result = cpu_flipped.to(device());
+    // Zero-copy flip: negate strides for flipped axes
+    // The data() method handles the pointer adjustment for negative strides
+    Strides new_strides = strides_;
+    for (int ax : norm_axes) {
+        new_strides[ax] = -new_strides[ax];
     }
 
-    return result;
+    return Tensor(storage_, shape_, new_strides, dtype_, offset_,
+                  memory_order_);
 }
 
 Tensor Tensor::rot90(int k, const std::vector<int> &axes) const {
@@ -1753,8 +1757,16 @@ Tensor operator-(const Tensor &tensor) { return ops::negate(tensor); }
 // ============================================================================
 
 bool Tensor::has_zero_stride() const {
-    for (size_t s : strides_) {
+    for (int64_t s : strides_) {
         if (s == 0)
+            return true;
+    }
+    return false;
+}
+
+bool Tensor::has_negative_stride() const {
+    for (int64_t s : strides_) {
+        if (s < 0)
             return true;
     }
     return false;
@@ -1932,6 +1944,8 @@ std::string Tensor::debug_info() const {
     oss << "  Is view: " << (is_view() ? "yes" : "no") << "\n";
     oss << "  Owns data: " << (owns_data() ? "yes" : "no") << "\n";
     oss << "  Has zero stride: " << (has_zero_stride() ? "yes" : "no") << "\n";
+    oss << "  Has negative stride: " << (has_negative_stride() ? "yes" : "no")
+        << "\n";
     oss << "  Storage offset: " << offset_ << " bytes\n";
     if (is_floating_dtype(dtype_) && device() == Device::CPU && size() > 0) {
         oss << "  Has NaN: " << (has_nan() ? "yes" : "no") << "\n";

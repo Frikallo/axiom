@@ -23,15 +23,15 @@ Strides ShapeUtils::calculate_strides(const Shape &shape, size_t itemsize,
 
     if (order == MemoryOrder::RowMajor) {
         // Row-major (C-style): last dimension has stride of itemsize
-        strides.back() = itemsize;
-        for (int i = shape.size() - 2; i >= 0; --i) {
-            strides[i] = strides[i + 1] * shape[i + 1];
+        strides.back() = static_cast<int64_t>(itemsize);
+        for (int i = static_cast<int>(shape.size()) - 2; i >= 0; --i) {
+            strides[i] = strides[i + 1] * static_cast<int64_t>(shape[i + 1]);
         }
     } else {
         // Column-major (Fortran-style): first dimension has stride of itemsize
-        strides[0] = itemsize;
+        strides[0] = static_cast<int64_t>(itemsize);
         for (size_t i = 1; i < shape.size(); ++i) {
-            strides[i] = strides[i - 1] * shape[i - 1];
+            strides[i] = strides[i - 1] * static_cast<int64_t>(shape[i - 1]);
         }
     }
 
@@ -100,12 +100,12 @@ size_t ShapeUtils::linear_index(const std::vector<size_t> &indices,
                          std::to_string(strides.size()) + ")");
     }
 
-    size_t linear_idx = 0;
+    int64_t linear_idx = 0;
     for (size_t i = 0; i < indices.size(); ++i) {
-        linear_idx += indices[i] * strides[i];
+        linear_idx += static_cast<int64_t>(indices[i]) * strides[i];
     }
 
-    return linear_idx;
+    return static_cast<size_t>(linear_idx);
 }
 
 std::vector<size_t> ShapeUtils::unravel_index(size_t linear_idx,

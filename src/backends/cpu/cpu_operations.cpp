@@ -112,7 +112,10 @@ void CPUBinaryOperation<Func>::execute_binary_typed(const Tensor &lhs,
                                                     Tensor &result) const {
     auto broadcast_info = ops::compute_broadcast_info(lhs.shape(), rhs.shape());
 
-    if (broadcast_info.needs_broadcast) {
+    // Use strided iteration if broadcast is needed OR if either tensor is
+    // non-contiguous (including negative strides from flip operations)
+    if (broadcast_info.needs_broadcast || !lhs.is_contiguous() ||
+        !rhs.is_contiguous()) {
         execute_binary_broadcast<T>(lhs, rhs, result, broadcast_info);
     } else {
         execute_binary_same_shape<T>(lhs, rhs, result);
@@ -217,12 +220,15 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(
     std::vector<size_t> result_coords(ndim, 0);
 
     for (size_t i = 0; i < total_elements; ++i) {
-        size_t lhs_byte_offset = 0;
-        size_t rhs_byte_offset = 0;
+        // Use signed arithmetic for negative stride support
+        int64_t lhs_byte_offset = 0;
+        int64_t rhs_byte_offset = 0;
 
         for (size_t j = 0; j < ndim; ++j) {
-            lhs_byte_offset += result_coords[j] * lhs_bcast_strides[j];
-            rhs_byte_offset += result_coords[j] * rhs_bcast_strides[j];
+            lhs_byte_offset +=
+                static_cast<int64_t>(result_coords[j]) * lhs_bcast_strides[j];
+            rhs_byte_offset +=
+                static_cast<int64_t>(result_coords[j]) * rhs_bcast_strides[j];
         }
 
         const auto &lhs_val = *reinterpret_cast<const InputT *>(
@@ -335,12 +341,14 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(
     std::vector<size_t> coords(lhs_ndim, 0);
 
     for (size_t i = 0; i < total_elements; ++i) {
-        size_t lhs_byte_offset = 0;
-        size_t rhs_byte_offset = 0;
+        // Use signed arithmetic for negative stride support
+        int64_t lhs_byte_offset = 0;
+        int64_t rhs_byte_offset = 0;
 
         for (size_t j = 0; j < lhs_ndim; ++j) {
-            lhs_byte_offset += coords[j] * lhs_strides[j];
-            rhs_byte_offset += coords[j] * rhs_bcast_strides[j];
+            lhs_byte_offset += static_cast<int64_t>(coords[j]) * lhs_strides[j];
+            rhs_byte_offset +=
+                static_cast<int64_t>(coords[j]) * rhs_bcast_strides[j];
         }
 
         T &lhs_val = *reinterpret_cast<T *>(
@@ -426,12 +434,15 @@ void CPUComplexBinaryOperation::execute_complex_typed(const Tensor &lhs,
     std::vector<size_t> result_coords(ndim, 0);
 
     for (size_t i = 0; i < total_elements; ++i) {
-        size_t lhs_byte_offset = 0;
-        size_t rhs_byte_offset = 0;
+        // Use signed arithmetic for negative stride support
+        int64_t lhs_byte_offset = 0;
+        int64_t rhs_byte_offset = 0;
 
         for (size_t j = 0; j < ndim; ++j) {
-            lhs_byte_offset += result_coords[j] * lhs_bcast_strides[j];
-            rhs_byte_offset += result_coords[j] * rhs_bcast_strides[j];
+            lhs_byte_offset +=
+                static_cast<int64_t>(result_coords[j]) * lhs_bcast_strides[j];
+            rhs_byte_offset +=
+                static_cast<int64_t>(result_coords[j]) * rhs_bcast_strides[j];
         }
 
         const T &lhs_val = *reinterpret_cast<const T *>(
@@ -1054,12 +1065,15 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor &a,
         // Iterate over batch dimensions
         std::vector<size_t> batch_coords(batch_ndim, 0);
         for (size_t batch_idx = 0; batch_idx < batch_size; ++batch_idx) {
-            // Compute batch offsets
-            size_t a_batch_off = 0, b_batch_off = 0, c_batch_off = 0;
+            // Compute batch offsets (signed for negative stride support)
+            int64_t a_batch_off = 0, b_batch_off = 0, c_batch_off = 0;
             for (size_t i = 0; i < batch_ndim; ++i) {
-                a_batch_off += batch_coords[i] * a_batch_strides[i];
-                b_batch_off += batch_coords[i] * b_batch_strides[i];
-                c_batch_off += batch_coords[i] * c_batch_strides[i];
+                a_batch_off +=
+                    static_cast<int64_t>(batch_coords[i]) * a_batch_strides[i];
+                b_batch_off +=
+                    static_cast<int64_t>(batch_coords[i]) * b_batch_strides[i];
+                c_batch_off +=
+                    static_cast<int64_t>(batch_coords[i]) * c_batch_strides[i];
             }
 
             matmul_2d<T>(a_base + a_batch_off, b_base + b_batch_off,
@@ -1467,17 +1481,19 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
     std::vector<size_t> coords(output_shape.size(), 0);
 
     for (size_t i = 0; i < numel; ++i) {
-        // Compute byte offsets for each input
-        size_t cond_offset = 0;
-        size_t a_offset = 0;
-        size_t b_offset = 0;
-        size_t result_offset = 0;
+        // Compute byte offsets for each input (signed for negative stride
+        // support)
+        int64_t cond_offset = 0;
+        int64_t a_offset = 0;
+        int64_t b_offset = 0;
+        int64_t result_offset = 0;
 
         for (size_t d = 0; d < output_shape.size(); ++d) {
-            cond_offset += coords[d] * cond_strides[d];
-            a_offset += coords[d] * a_strides[d];
-            b_offset += coords[d] * b_strides[d];
-            result_offset += coords[d] * result_strides[d];
+            cond_offset += static_cast<int64_t>(coords[d]) * cond_strides[d];
+            a_offset += static_cast<int64_t>(coords[d]) * a_strides[d];
+            b_offset += static_cast<int64_t>(coords[d]) * b_strides[d];
+            result_offset +=
+                static_cast<int64_t>(coords[d]) * result_strides[d];
         }
 
         // Get condition value (handle different condition dtypes)

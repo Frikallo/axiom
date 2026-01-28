@@ -353,6 +353,188 @@ void test_chunk(axiom::Device device) {
 
 // ==================================
 //
+//      FLIP OPERATIONS TESTS
+//
+// ==================================
+
+void test_flip_1d_zero_copy(axiom::Device device) {
+    // Test that flip returns a zero-copy view with negative strides
+    auto data =
+        std::vector<float>({0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f});
+    auto a = axiom::Tensor::from_data<float>(data.data(), {8}).to(device);
+    auto b = a.flip(0);
+
+    // Verify flip is zero-copy (shares storage)
+    ASSERT(a.shares_storage(b), "flipped tensor should share storage");
+
+    // Verify flip has negative stride
+    ASSERT(b.has_negative_stride(),
+           "flipped tensor should have negative stride");
+
+    // Verify flipped tensor is not contiguous
+    ASSERT(!b.is_contiguous(), "flipped tensor should not be contiguous");
+
+    if (device == axiom::Device::CPU) {
+        // Verify values are correct
+        // a = [0, 1, 2, 3, 4, 5, 6, 7]
+        // b = [7, 6, 5, 4, 3, 2, 1, 0]
+        ASSERT(std::abs(b.item<float>({0}) - 7.0f) < 1e-5, "b[0] should be 7");
+        ASSERT(std::abs(b.item<float>({7}) - 0.0f) < 1e-5, "b[7] should be 0");
+        ASSERT(std::abs(b.item<float>({3}) - 4.0f) < 1e-5, "b[3] should be 4");
+    }
+}
+
+void test_flip_2d(axiom::Device device) {
+    // Test 2D flip along different axes
+    auto data = std::vector<float>({1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    auto a = axiom::Tensor::from_data<float>(data.data(), {2, 3}).to(device);
+    // a = [[1, 2, 3],
+    //      [4, 5, 6]]
+
+    // Flip along axis 0 (rows)
+    auto b = a.flip(0);
+    ASSERT(a.shares_storage(b), "flip(0) should share storage");
+    ASSERT(b.has_negative_stride(), "flip(0) should have negative stride");
+
+    if (device == axiom::Device::CPU) {
+        // b = [[4, 5, 6],
+        //      [1, 2, 3]]
+        ASSERT(std::abs(b.item<float>({0, 0}) - 4.0f) < 1e-5,
+               "b[0,0] should be 4");
+        ASSERT(std::abs(b.item<float>({0, 2}) - 6.0f) < 1e-5,
+               "b[0,2] should be 6");
+        ASSERT(std::abs(b.item<float>({1, 0}) - 1.0f) < 1e-5,
+               "b[1,0] should be 1");
+    }
+
+    // Flip along axis 1 (cols)
+    auto c = a.flip(1);
+    ASSERT(a.shares_storage(c), "flip(1) should share storage");
+
+    if (device == axiom::Device::CPU) {
+        // c = [[3, 2, 1],
+        //      [6, 5, 4]]
+        ASSERT(std::abs(c.item<float>({0, 0}) - 3.0f) < 1e-5,
+               "c[0,0] should be 3");
+        ASSERT(std::abs(c.item<float>({1, 2}) - 4.0f) < 1e-5,
+               "c[1,2] should be 4");
+    }
+}
+
+void test_flipud_fliplr(axiom::Device device) {
+    auto data = std::vector<float>({1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    auto a = axiom::Tensor::from_data<float>(data.data(), {2, 3}).to(device);
+
+    // flipud = flip(0)
+    auto ud = a.flipud();
+    ASSERT(a.shares_storage(ud), "flipud should share storage");
+
+    // fliplr = flip(1)
+    auto lr = a.fliplr();
+    ASSERT(a.shares_storage(lr), "fliplr should share storage");
+
+    if (device == axiom::Device::CPU) {
+        // Same value checks as test_flip_2d
+        ASSERT(std::abs(ud.item<float>({0, 0}) - 4.0f) < 1e-5,
+               "flipud[0,0] should be 4");
+        ASSERT(std::abs(lr.item<float>({0, 0}) - 3.0f) < 1e-5,
+               "fliplr[0,0] should be 3");
+    }
+}
+
+void test_flip_multi_axis(axiom::Device device) {
+    // Test flipping multiple axes at once
+    auto data = std::vector<float>({1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    auto a = axiom::Tensor::from_data<float>(data.data(), {2, 3}).to(device);
+
+    // Flip both axes
+    auto b = a.flip({0, 1});
+    ASSERT(a.shares_storage(b), "multi-axis flip should share storage");
+
+    if (device == axiom::Device::CPU) {
+        // b = [[6, 5, 4],
+        //      [3, 2, 1]]
+        ASSERT(std::abs(b.item<float>({0, 0}) - 6.0f) < 1e-5,
+               "b[0,0] should be 6");
+        ASSERT(std::abs(b.item<float>({1, 2}) - 1.0f) < 1e-5,
+               "b[1,2] should be 1");
+    }
+}
+
+void test_flip_operations_on_flipped(axiom::Device device) {
+    // Test that arithmetic operations work on flipped tensors
+    auto data1 = std::vector<float>({1.0f, 2.0f, 3.0f, 4.0f});
+    auto data2 = std::vector<float>({10.0f, 20.0f, 30.0f, 40.0f});
+    auto a = axiom::Tensor::from_data<float>(data1.data(), {4}).to(device);
+    auto b = axiom::Tensor::from_data<float>(data2.data(), {4}).to(device);
+
+    // Flip a: [4, 3, 2, 1]
+    auto a_flip = a.flip(0);
+
+    // Add flipped tensor to normal tensor
+    // [4, 3, 2, 1] + [10, 20, 30, 40] = [14, 23, 32, 41]
+    auto result = axiom::ops::add(a_flip, b);
+
+    if (device == axiom::Device::CPU) {
+        ASSERT(std::abs(result.item<float>({0}) - 14.0f) < 1e-5,
+               "result[0] should be 14");
+        ASSERT(std::abs(result.item<float>({1}) - 23.0f) < 1e-5,
+               "result[1] should be 23");
+        ASSERT(std::abs(result.item<float>({2}) - 32.0f) < 1e-5,
+               "result[2] should be 32");
+        ASSERT(std::abs(result.item<float>({3}) - 41.0f) < 1e-5,
+               "result[3] should be 41");
+    }
+}
+
+void test_flip_contiguous_copy(axiom::Device device) {
+    // Test that ascontiguousarray() correctly materializes a flipped tensor
+    auto data = std::vector<float>({1.0f, 2.0f, 3.0f, 4.0f});
+    auto a = axiom::Tensor::from_data<float>(data.data(), {4}).to(device);
+    auto b = a.flip(0);
+
+    // b is a view (non-contiguous with negative stride)
+    ASSERT(!b.is_contiguous(), "flipped should not be contiguous");
+    ASSERT(a.shares_storage(b), "should share storage before copy");
+
+    // Make contiguous copy
+    auto c = b.ascontiguousarray();
+    ASSERT(c.is_contiguous(), "ascontiguousarray result should be contiguous");
+    ASSERT(!a.shares_storage(c), "contiguous copy should not share storage");
+
+    if (device == axiom::Device::CPU) {
+        // Verify values are preserved
+        ASSERT(std::abs(c.item<float>({0}) - 4.0f) < 1e-5, "c[0] should be 4");
+        ASSERT(std::abs(c.item<float>({3}) - 1.0f) < 1e-5, "c[3] should be 1");
+    }
+}
+
+void test_rot90(axiom::Device device) {
+    // Test rot90 which uses flip internally
+    auto data = std::vector<float>({1.0f, 2.0f, 3.0f, 4.0f});
+    auto a = axiom::Tensor::from_data<float>(data.data(), {2, 2}).to(device);
+    // a = [[1, 2],
+    //      [3, 4]]
+
+    // 90 degree rotation = flip + transpose
+    auto b = a.rot90(1, {0, 1});
+    // Expected: [[2, 4],
+    //            [1, 3]]
+
+    if (device == axiom::Device::CPU) {
+        ASSERT(std::abs(b.item<float>({0, 0}) - 2.0f) < 1e-5,
+               "b[0,0] should be 2");
+        ASSERT(std::abs(b.item<float>({0, 1}) - 4.0f) < 1e-5,
+               "b[0,1] should be 4");
+        ASSERT(std::abs(b.item<float>({1, 0}) - 1.0f) < 1e-5,
+               "b[1,0] should be 1");
+        ASSERT(std::abs(b.item<float>({1, 1}) - 3.0f) < 1e-5,
+               "b[1,1] should be 3");
+    }
+}
+
+// ==================================
+//
 //      MAIN
 //
 // ==================================
@@ -386,6 +568,15 @@ int main(int argc, char **argv) {
     RUN_TEST(test_split, axiom::Device::CPU);
     RUN_TEST(test_chunk, axiom::Device::CPU);
 
+    std::cout << "\n=== Flip Operations (Zero-Copy) ===\n" << std::endl;
+    RUN_TEST(test_flip_1d_zero_copy, axiom::Device::CPU);
+    RUN_TEST(test_flip_2d, axiom::Device::CPU);
+    RUN_TEST(test_flipud_fliplr, axiom::Device::CPU);
+    RUN_TEST(test_flip_multi_axis, axiom::Device::CPU);
+    RUN_TEST(test_flip_operations_on_flipped, axiom::Device::CPU);
+    RUN_TEST(test_flip_contiguous_copy, axiom::Device::CPU);
+    RUN_TEST(test_rot90, axiom::Device::CPU);
+
     if (axiom::system::should_run_gpu_tests()) {
         std::cout << "\n--- Running GPU tests ---\n" << std::endl;
 
@@ -407,6 +598,12 @@ int main(int argc, char **argv) {
         RUN_TEST(test_concatenate_2d, axiom::Device::GPU);
         RUN_TEST(test_stack, axiom::Device::GPU);
         RUN_TEST(test_vstack_hstack, axiom::Device::GPU);
+
+        // Flip operations (GPU materializes via ensureContiguous)
+        RUN_TEST(test_flip_1d_zero_copy, axiom::Device::GPU);
+        RUN_TEST(test_flip_2d, axiom::Device::GPU);
+        RUN_TEST(test_flipud_fliplr, axiom::Device::GPU);
+        RUN_TEST(test_flip_operations_on_flipped, axiom::Device::GPU);
     }
 
     std::cout << "\n----------------------------------\n";

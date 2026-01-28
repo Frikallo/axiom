@@ -5,7 +5,7 @@
 namespace axiom {
 
 using Shape = std::vector<size_t>;
-using Strides = std::vector<size_t>;
+using Strides = std::vector<int64_t>;
 
 enum class MemoryOrder {
     RowMajor, // Row-major (C-style) - default
