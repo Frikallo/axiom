@@ -22,14 +22,36 @@ Quick reference for all operations in Axiom. All operations support both CPU and
 | `tensor.reshape(shape)` | Reshape (view if possible) |
 | `tensor.view(shape)` | View with new shape (contiguous only) |
 | `tensor.flatten(start, end)` | Flatten dimensions |
+| `tensor.ravel()` | Flatten to 1D (alias for flatten) |
 | `tensor.transpose()` | Swap last two dimensions |
 | `tensor.transpose(axes)` | Permute dimensions |
+| `tensor.T()` | Transpose alias (like NumPy) |
+| `tensor.swapaxes(axis1, axis2)` | Swap two axes |
+| `tensor.moveaxis(source, dest)` | Move axis to new position |
 | `tensor.squeeze(axis)` | Remove size-1 dimensions |
 | `tensor.unsqueeze(axis)` | Add size-1 dimension |
 | `tensor.expand(shape)` | Broadcast expand (zero-copy) |
 | `tensor.repeat(repeats)` | Repeat with data copy |
+| `tensor.flip(axis)` | Reverse along axis |
+| `tensor.flipud()` | Flip vertically (axis 0) |
+| `tensor.fliplr()` | Flip horizontally (axis 1) |
+| `tensor.rot90(k, axes)` | Rotate 90 degrees k times |
+| `tensor.roll(shift, axis)` | Roll elements along axis |
+| `tensor.diagonal(offset, axis1, axis2)` | Extract diagonal |
+| `tensor.trace(offset, axis1, axis2)` | Sum of diagonal |
 | `tensor.rearrange(pattern)` | Einops-style reshape |
 | `tensor.reduce(pattern, reduction)` | Einops-style reduce |
+
+## Scalar Extraction
+
+| Function | Description |
+|----------|-------------|
+| `tensor.item<T>()` | Extract single element as C++ type |
+
+```cpp
+auto x = Tensor::full({1}, 3.14f);
+float val = x.item<float>();  // 3.14
+```
 
 ## Einops Operations
 
@@ -146,6 +168,37 @@ Integer types only.
 
 **Fluent API:** `tensor.abs()`, `tensor.sqrt()`, `tensor.exp()`, `tensor.log()`, `tensor.sin()`, `tensor.cos()`, `tensor.tan()`
 
+## NumPy-like Math Operations
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `ops::sign(a)` / `tensor.sign()` | Element-wise sign (-1, 0, 1) | ✓ | - |
+| `ops::floor(a)` / `tensor.floor()` | Round down to nearest integer | ✓ | - |
+| `ops::ceil(a)` / `tensor.ceil()` | Round up to nearest integer | ✓ | - |
+| `ops::trunc(a)` / `tensor.trunc()` | Truncate to integer toward zero | ✓ | - |
+| `ops::round(a, decimals)` / `tensor.round(decimals)` | Round to given decimals | ✓ | - |
+| `ops::reciprocal(a)` / `tensor.reciprocal()` | Element-wise 1/x | ✓ | - |
+| `ops::square(a)` / `tensor.square()` | Element-wise x² | ✓ | - |
+| `ops::cbrt(a)` / `tensor.cbrt()` | Cube root | ✓ | - |
+
+## Element Testing Operations
+
+Returns Bool tensors.
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `ops::isnan(a)` / `tensor.isnan()` | Test for NaN | ✓ | - |
+| `ops::isinf(a)` / `tensor.isinf()` | Test for Inf | ✓ | - |
+| `ops::isfinite(a)` / `tensor.isfinite()` | Test for finite values | ✓ | - |
+
+## Clipping Operations
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `ops::clip(a, min, max)` | Clip values to range | ✓ | ✓ |
+| `tensor.clip(min, max)` | Fluent API (tensor or scalar) | ✓ | ✓ |
+| `tensor.clamp(min, max)` | Alias for clip | ✓ | ✓ |
+
 ## Complex Operations
 
 Complex64 (`std::complex<float>`) and Complex128 (`std::complex<double>`) are fully supported on CPU. GPU operations automatically fall back to CPU for stability.
@@ -201,10 +254,29 @@ Member functions: `tensor.relu()`, `tensor.leaky_relu(slope)`, `tensor.sigmoid()
 | `ops::argmin(a, axis, keep_dims)` | ✓ | ✓ |
 | `ops::any(a, axis, keep_dims)` | ✓ | ✓ |
 | `ops::all(a, axis, keep_dims)` | ✓ | ✓ |
+| `ops::prod(a, axis, keep_dims)` | ✓ | - |
 
-Member functions: `tensor.sum()`, `tensor.mean()`, `tensor.max()`, `tensor.min()`, `tensor.argmax()`, `tensor.argmin()`
+Member functions: `tensor.sum()`, `tensor.mean()`, `tensor.max()`, `tensor.min()`, `tensor.argmax()`, `tensor.argmin()`, `tensor.prod()`, `tensor.any()`, `tensor.all()`
 
 **Boolean reductions:** `any` returns true if any element is non-zero; `all` returns true if all elements are non-zero.
+
+## Statistical Operations
+
+Composition-based operations (no additional backend ops needed).
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `tensor.var(axis, ddof, keep_dims)` | Variance (ddof: delta degrees of freedom) | ✓ | ✓ |
+| `tensor.std(axis, ddof, keep_dims)` | Standard deviation | ✓ | ✓ |
+| `tensor.ptp(axis, keep_dims)` | Peak-to-peak (max - min) | ✓ | ✓ |
+
+## Comparison/Testing Methods
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `tensor.isclose(other, rtol, atol)` | Element-wise approximate equality | ✓ | ✓ |
+| `tensor.allclose(other, rtol, atol)` | True if all elements close | ✓ | ✓ |
+| `tensor.array_equal(other)` | True if exact element-wise equality | ✓ | ✓ |
 
 ## Matrix Multiplication
 
@@ -321,6 +393,66 @@ Returns `std::pair<Tensor, Tensor>` containing (output, mask). Scale factor `1/(
 | `Complex64` | `std::complex<float>` | 8 |
 | `Complex128` | `std::complex<double>` | 16 |
 
+## Stacking and Concatenation
+
+Join tensors along existing or new axes. Designed for Pythonic ergonomics with initializer list support.
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `Tensor::concatenate(tensors, axis)` | Join along existing axis | ✓ | ✓ |
+| `Tensor::cat(tensors, axis)` | Alias for concatenate | ✓ | ✓ |
+| `Tensor::stack(tensors, axis)` | Stack along new axis | ✓ | ✓ |
+| `Tensor::vstack(tensors)` | Stack vertically (axis 0) | ✓ | ✓ |
+| `Tensor::hstack(tensors)` | Stack horizontally (axis 1) | ✓ | ✓ |
+| `Tensor::dstack(tensors)` | Stack depth-wise (axis 2) | ✓ | ✓ |
+| `Tensor::column_stack(tensors)` | Stack 1D as columns | ✓ | ✓ |
+| `tensor.cat(other, axis)` | Member function for chaining | ✓ | ✓ |
+
+**Examples:**
+
+```cpp
+auto a = Tensor::arange(3);  // [0, 1, 2]
+auto b = Tensor::arange(3);  // [0, 1, 2]
+
+// All of these create [0, 1, 2, 0, 1, 2]:
+auto c1 = Tensor::cat({a, b}, 0);           // Initializer list
+auto c2 = Tensor::concatenate({a, b}, 0);   // Vector overload
+auto c3 = a.cat(b, 0);                      // Member function
+
+// Stack creates new dimension: shape (2, 3)
+auto stacked = Tensor::stack({a, b}, 0);
+
+// vstack for matrices (equivalent to np.vstack)
+auto row1 = Tensor::ones({1, 3});
+auto row2 = Tensor::zeros({1, 3});
+auto matrix = Tensor::vstack({row1, row2});  // shape (2, 3)
+```
+
+## Splitting Operations
+
+Split tensors into sub-tensors.
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `tensor.split(sections, axis)` | Split into n equal parts | ✓ | ✓ |
+| `tensor.split(indices, axis)` | Split at given indices | ✓ | ✓ |
+| `tensor.chunk(n_chunks, axis)` | Chunk into n parts (may be unequal) | ✓ | ✓ |
+| `tensor.vsplit(sections)` | Split along axis 0 | ✓ | ✓ |
+| `tensor.hsplit(sections)` | Split along axis 1 | ✓ | ✓ |
+| `tensor.dsplit(sections)` | Split along axis 2 | ✓ | ✓ |
+
+**Examples:**
+
+```cpp
+auto x = Tensor::arange(6);  // [0, 1, 2, 3, 4, 5]
+
+// Split into 3 equal parts
+auto parts = x.split(3);  // [[0,1], [2,3], [4,5]]
+
+// Chunk into 4 parts (some may be smaller)
+auto chunks = x.chunk(4);  // [[0,1], [2,3], [4], [5]]
+```
+
 ## File I/O
 
 | Function | Description |
@@ -360,13 +492,20 @@ All operations use MPSGraph on Metal GPU for automatic kernel fusion and Apple S
 | Bitwise | ✓ | ✓ | Integer types only |
 | Math | ✓ | ✓ | |
 | Unary | ✓ | ✓ | |
+| NumPy Math | ✓ | - | sign, floor, ceil, trunc, round, reciprocal, square, cbrt |
+| Element Tests | ✓ | - | isnan, isinf, isfinite |
+| Clipping | ✓ | ✓ | clip/clamp |
 | Complex | ✓ | (CPU) | GPU falls back to CPU |
 | Activations | ✓ | ✓ | |
-| Reductions | ✓ | ✓ | All dtypes supported |
+| Reductions | ✓ | ✓ | sum, mean, max, min, any, all |
+| Statistical | ✓ | ✓ | var, std, ptp (composition-based) |
+| prod Reduction | ✓ | - | Product reduction |
 | MatMul | ✓ | ✓ | Including batched |
 | Where | ✓ | ✓ | |
 | Masking | ✓ | ✓ | |
 | Indexing | ✓ | ✓ | Supports negative indices |
+| Stacking | ✓ | ✓ | cat, stack, vstack, hstack, dstack |
+| Splitting | ✓ | ✓ | split, chunk |
 | Einops | ✓ | ✓ | |
 | Normalization | ✓ | ✓ | LayerNorm, RMSNorm |
 | Dropout | ✓ | ✓ | With reproducible masks |

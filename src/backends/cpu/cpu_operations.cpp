@@ -487,16 +487,20 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
     // Check if this is an abs operation - complex abs returns real type
     bool is_abs_op = (op_type_ == ops::OpType::Abs);
     bool is_logical_not = (op_type_ == ops::OpType::LogicalNot);
+    bool is_element_test =
+        (op_type_ == ops::OpType::IsNaN || op_type_ == ops::OpType::IsInf ||
+         op_type_ == ops::OpType::IsFinite);
 
     // Unary ops usually return the same dtype as input, except:
     // - abs on complex returns the corresponding real type
     // - logical_not always returns Bool
+    // - isnan/isinf/isfinite always return Bool
     DType result_dtype = input.dtype();
     if (is_abs_op && is_complex_dtype(input.dtype())) {
         result_dtype = (input.dtype() == DType::Complex64) ? DType::Float32
                                                            : DType::Float64;
     }
-    if (is_logical_not) {
+    if (is_logical_not || is_element_test) {
         result_dtype = DType::Bool;
     }
 
@@ -531,6 +535,41 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
         default:
             throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
                                                "logical_not");
+        }
+        return result;
+    }
+
+    // Special handling for element tests (isnan, isinf, isfinite) - always
+    // outputs Bool
+    if (is_element_test) {
+        bool *out_data = result.typed_data<bool>();
+        switch (input.dtype()) {
+#define DISPATCH_ELEMENT_TEST(DTYPE, CTYPE)                                    \
+    case DTYPE: {                                                              \
+        const CTYPE *in_data = input.typed_data<CTYPE>();                      \
+        for (size_t i = 0; i < input.size(); ++i) {                            \
+            out_data[i] = func_(in_data[i]);                                   \
+        }                                                                      \
+        break;                                                                 \
+    }
+            DISPATCH_ELEMENT_TEST(DType::Float16, float16_t)
+            DISPATCH_ELEMENT_TEST(DType::Float32, float)
+            DISPATCH_ELEMENT_TEST(DType::Float64, double)
+            // For integer types, isnan/isinf return false, isfinite returns
+            // true
+            DISPATCH_ELEMENT_TEST(DType::Bool, bool)
+            DISPATCH_ELEMENT_TEST(DType::Int8, int8_t)
+            DISPATCH_ELEMENT_TEST(DType::Int16, int16_t)
+            DISPATCH_ELEMENT_TEST(DType::Int32, int32_t)
+            DISPATCH_ELEMENT_TEST(DType::Int64, int64_t)
+            DISPATCH_ELEMENT_TEST(DType::UInt8, uint8_t)
+            DISPATCH_ELEMENT_TEST(DType::UInt16, uint16_t)
+            DISPATCH_ELEMENT_TEST(DType::UInt32, uint32_t)
+            DISPATCH_ELEMENT_TEST(DType::UInt64, uint64_t)
+#undef DISPATCH_ELEMENT_TEST
+        default:
+            throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                               name());
         }
         return result;
     }
@@ -2256,6 +2295,52 @@ void register_cpu_operations() {
         std::make_unique<CPUUnaryOperation<LogicalNotFunc>>(
             OpType::LogicalNot, "logical_not", LogicalNotFunc{}));
 
+    // NumPy-like math operations
+    OperationRegistry::register_operation(
+        OpType::Sign, Device::CPU,
+        std::make_unique<CPUUnaryOperation<SignFunc>>(OpType::Sign, "sign",
+                                                      SignFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Floor, Device::CPU,
+        std::make_unique<CPUUnaryOperation<FloorFunc>>(OpType::Floor, "floor",
+                                                       FloorFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Ceil, Device::CPU,
+        std::make_unique<CPUUnaryOperation<CeilFunc>>(OpType::Ceil, "ceil",
+                                                      CeilFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Trunc, Device::CPU,
+        std::make_unique<CPUUnaryOperation<TruncFunc>>(OpType::Trunc, "trunc",
+                                                       TruncFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Round, Device::CPU,
+        std::make_unique<CPUUnaryOperation<RoundFunc>>(OpType::Round, "round",
+                                                       RoundFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Reciprocal, Device::CPU,
+        std::make_unique<CPUUnaryOperation<ReciprocalFunc>>(
+            OpType::Reciprocal, "reciprocal", ReciprocalFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Square, Device::CPU,
+        std::make_unique<CPUUnaryOperation<SquareFunc>>(
+            OpType::Square, "square", SquareFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Cbrt, Device::CPU,
+        std::make_unique<CPUUnaryOperation<CbrtFunc>>(OpType::Cbrt, "cbrt",
+                                                      CbrtFunc{}));
+    OperationRegistry::register_operation(
+        OpType::IsNaN, Device::CPU,
+        std::make_unique<CPUUnaryOperation<IsNaNFunc>>(OpType::IsNaN, "isnan",
+                                                       IsNaNFunc{}));
+    OperationRegistry::register_operation(
+        OpType::IsInf, Device::CPU,
+        std::make_unique<CPUUnaryOperation<IsInfFunc>>(OpType::IsInf, "isinf",
+                                                       IsInfFunc{}));
+    OperationRegistry::register_operation(
+        OpType::IsFinite, Device::CPU,
+        std::make_unique<CPUUnaryOperation<IsFiniteFunc>>(
+            OpType::IsFinite, "isfinite", IsFiniteFunc{}));
+
     // Register reduction operations
     OperationRegistry::register_operation(
         OpType::Sum, Device::CPU,
@@ -2281,6 +2366,10 @@ void register_cpu_operations() {
         OpType::All, Device::CPU,
         std::make_unique<CPUReductionOperation<AllFunc>>(OpType::All, "all",
                                                          AllFunc{}));
+    OperationRegistry::register_operation(
+        OpType::Prod, Device::CPU,
+        std::make_unique<CPUReductionOperation<ProdFunc>>(OpType::Prod, "prod",
+                                                          ProdFunc{}));
 
     // Register argmax/argmin operations
     OperationRegistry::register_operation(

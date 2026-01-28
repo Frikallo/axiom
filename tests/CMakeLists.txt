@@ -505,3 +505,28 @@ set_tests_properties(tensor_logical_bitwise
     PROPERTIES
         TIMEOUT 30
 )
+
+# NumPy-like operations tests
+add_executable(test_tensor_numpy_ops
+    test_tensor_numpy_ops.cpp
+)
+
+target_link_libraries(test_tensor_numpy_ops
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_numpy_ops
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_numpy_ops
+    COMMAND test_tensor_numpy_ops
+)
+
+set_tests_properties(tensor_numpy_ops
+    PROPERTIES
+        TIMEOUT 30
+)

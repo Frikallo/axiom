@@ -194,6 +194,36 @@ class Tensor {
     Tensor view(const Shape &new_shape) const;
     Tensor flatten(int start_dim = 0, int end_dim = -1) const;
 
+    // NumPy-like aliases and view operations
+    Tensor T() const { return transpose(); }
+    Tensor ravel() const { return flatten(); }
+    Tensor negative() const;
+    Tensor flipud() const;
+    Tensor fliplr() const;
+    Tensor swapaxes(int axis1, int axis2) const;
+    Tensor moveaxis(int source, int destination) const;
+    Tensor flip(int axis) const;
+    Tensor flip(const std::vector<int> &axes) const;
+    Tensor rot90(int k = 1, const std::vector<int> &axes = {0, 1}) const;
+    Tensor roll(int64_t shift, int axis = -1) const;
+    Tensor roll(const std::vector<int64_t> &shifts,
+                const std::vector<int> &axes) const;
+    Tensor diagonal(int offset = 0, int axis1 = 0, int axis2 = 1) const;
+    Tensor trace(int offset = 0, int axis1 = 0, int axis2 = 1) const;
+
+    // Scalar extraction for single-element tensors
+    template <typename T> T item() const {
+        if (size() != 1) {
+            throw ValueError("item() requires tensor with exactly 1 element, "
+                             "got " +
+                             std::to_string(size()));
+        }
+        if (device() != Device::CPU) {
+            return cpu().item<T>();
+        }
+        return *reinterpret_cast<const T *>(data());
+    }
+
     // Expand and repeat operations
     // expand: Zero-copy view using 0-stride for broadcasted dims
     // Only works when expanding dims of size 1
@@ -275,6 +305,23 @@ class Tensor {
     Tensor argmax(int axis = -1, bool keep_dims = false) const;
     Tensor argmin(int axis = -1, bool keep_dims = false) const;
 
+    // Additional reductions
+    Tensor prod(int axis = -1, bool keep_dims = false) const;
+    Tensor prod(const std::vector<int> &axes, bool keep_dims = false) const;
+    Tensor any(int axis = -1, bool keep_dims = false) const;
+    Tensor any(const std::vector<int> &axes, bool keep_dims = false) const;
+    Tensor all(int axis = -1, bool keep_dims = false) const;
+    Tensor all(const std::vector<int> &axes, bool keep_dims = false) const;
+
+    // Statistical operations (composition-based)
+    Tensor var(int axis = -1, int ddof = 0, bool keep_dims = false) const;
+    Tensor var(const std::vector<int> &axes, int ddof = 0,
+               bool keep_dims = false) const;
+    Tensor std(int axis = -1, int ddof = 0, bool keep_dims = false) const;
+    Tensor std(const std::vector<int> &axes, int ddof = 0,
+               bool keep_dims = false) const;
+    Tensor ptp(int axis = -1, bool keep_dims = false) const; // peak-to-peak
+
     // =========================================================================
     // Unary and activation operations (fluent API)
     // =========================================================================
@@ -287,6 +334,31 @@ class Tensor {
     Tensor sin() const;
     Tensor cos() const;
     Tensor tan() const;
+
+    // NumPy-like math operations
+    Tensor sign() const;
+    Tensor floor() const;
+    Tensor ceil() const;
+    Tensor trunc() const;
+    Tensor round(int decimals = 0) const;
+    Tensor reciprocal() const;
+    Tensor square() const;
+    Tensor cbrt() const;
+
+    // Element-wise testing operations (return Bool tensor)
+    Tensor isnan() const;
+    Tensor isinf() const;
+    Tensor isfinite() const;
+
+    // Clipping operations
+    Tensor clip(const Tensor &min_val, const Tensor &max_val) const;
+    Tensor clip(double min_val, double max_val) const;
+    Tensor clamp(const Tensor &min_val, const Tensor &max_val) const {
+        return clip(min_val, max_val);
+    }
+    Tensor clamp(double min_val, double max_val) const {
+        return clip(min_val, max_val);
+    }
 
     // Activation functions
     Tensor relu() const;
@@ -331,6 +403,13 @@ class Tensor {
     bool same_dtype(const Tensor &other) const;
     bool same_device(const Tensor &other) const;
     bool same_memory_order(const Tensor &other) const;
+
+    // Comparison/testing methods (NumPy-like)
+    Tensor isclose(const Tensor &other, double rtol = 1e-5,
+                   double atol = 1e-8) const;
+    bool allclose(const Tensor &other, double rtol = 1e-5,
+                  double atol = 1e-8) const;
+    bool array_equal(const Tensor &other) const;
 
     // Safety rails / debugging
     bool has_nan() const;
@@ -483,6 +562,93 @@ class Tensor {
 
     static DType result_type(const Tensor &a, const Tensor &b) {
         return type_conversion::promote_dtypes(a.dtype(), b.dtype());
+    }
+
+    // =========================================================================
+    // Stacking and Concatenation (Static Methods with Pythonic DX)
+    // =========================================================================
+
+    // Concatenate tensors along an existing axis
+    // Usage: Tensor::concatenate({a, b, c}, axis)
+    static Tensor concatenate(const std::vector<Tensor> &tensors, int axis = 0);
+
+    // Short alias for concatenate - mimics np.concatenate / torch.cat
+    // Usage: Tensor::cat({a, b, c}, axis)
+    static Tensor cat(const std::vector<Tensor> &tensors, int axis = 0) {
+        return concatenate(tensors, axis);
+    }
+
+    // Initializer list version for even more ergonomic syntax
+    // Usage: Tensor::cat({a, b, c})
+    static Tensor cat(std::initializer_list<Tensor> tensors, int axis = 0) {
+        return concatenate(std::vector<Tensor>(tensors), axis);
+    }
+
+    // Stack tensors along a NEW axis (creates a new dimension)
+    // Usage: Tensor::stack({a, b, c}, axis)
+    static Tensor stack(const std::vector<Tensor> &tensors, int axis = 0);
+
+    // Initializer list version
+    static Tensor stack(std::initializer_list<Tensor> tensors, int axis = 0) {
+        return stack(std::vector<Tensor>(tensors), axis);
+    }
+
+    // Convenience aliases for common stacking patterns (like NumPy)
+    // vstack: Stack arrays vertically (row wise) - axis 0
+    static Tensor vstack(const std::vector<Tensor> &tensors);
+    static Tensor vstack(std::initializer_list<Tensor> tensors) {
+        return vstack(std::vector<Tensor>(tensors));
+    }
+
+    // hstack: Stack arrays horizontally (column wise) - axis 1
+    static Tensor hstack(const std::vector<Tensor> &tensors);
+    static Tensor hstack(std::initializer_list<Tensor> tensors) {
+        return hstack(std::vector<Tensor>(tensors));
+    }
+
+    // dstack: Stack arrays depth-wise (along third axis) - axis 2
+    static Tensor dstack(const std::vector<Tensor> &tensors);
+    static Tensor dstack(std::initializer_list<Tensor> tensors) {
+        return dstack(std::vector<Tensor>(tensors));
+    }
+
+    // column_stack: Stack 1D arrays as columns into a 2D array
+    static Tensor column_stack(const std::vector<Tensor> &tensors);
+    static Tensor column_stack(std::initializer_list<Tensor> tensors) {
+        return column_stack(std::vector<Tensor>(tensors));
+    }
+
+    // row_stack: Alias for vstack
+    static Tensor row_stack(const std::vector<Tensor> &tensors) {
+        return vstack(tensors);
+    }
+    static Tensor row_stack(std::initializer_list<Tensor> tensors) {
+        return vstack(std::vector<Tensor>(tensors));
+    }
+
+    // Split operations
+    // Split into n equal sections
+    std::vector<Tensor> split(size_t sections, int axis = 0) const;
+    // Split at given indices
+    std::vector<Tensor> split(const std::vector<size_t> &indices,
+                              int axis = 0) const;
+    // Chunk into n parts (may be unequal if not divisible)
+    std::vector<Tensor> chunk(size_t n_chunks, int axis = 0) const;
+
+    // vsplit, hsplit, dsplit shortcuts
+    std::vector<Tensor> vsplit(size_t sections) const {
+        return split(sections, 0);
+    }
+    std::vector<Tensor> hsplit(size_t sections) const {
+        return split(sections, 1);
+    }
+    std::vector<Tensor> dsplit(size_t sections) const {
+        return split(sections, 2);
+    }
+
+    // Member function for chaining: a.cat(b, axis)
+    Tensor cat(const Tensor &other, int axis = 0) const {
+        return concatenate({*this, other}, axis);
     }
 
     static Tensor ascontiguousarray(const Tensor &tensor) {

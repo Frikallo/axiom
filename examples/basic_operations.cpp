@@ -19,5 +19,29 @@ int main() {
 
     std::cout << result << std::endl;
 
+    // Benchmark matmul of huge tensors on GPU
+    auto a = Tensor::randn({1000, 1000}, DType::Float16, Device::GPU);
+    auto b = Tensor::randn({1000, 1000}, DType::Float16, Device::GPU);
+    auto start = std::chrono::high_resolution_clock::now();
+    auto c = a.matmul(b);
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cout << "Matmul of 1000x1000 tensors on GPU took "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end -
+                                                                       start)
+                     .count()
+              << "ms" << std::endl;
+
+    // Benchmark matmul of huge tensors on CPU
+    auto a_cpu = Tensor::randn({1000, 1000}, DType::Float16, Device::CPU);
+    auto b_cpu = Tensor::randn({1000, 1000}, DType::Float16, Device::CPU);
+    auto start_cpu = std::chrono::high_resolution_clock::now();
+    auto c_cpu = a_cpu.matmul(b_cpu);
+    auto end_cpu = std::chrono::high_resolution_clock::now();
+    std::cout << "Matmul of 1000x1000 tensors on CPU took "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(
+                     end_cpu - start_cpu)
+                     .count()
+              << "ms" << std::endl;
+
     return 0;
 }

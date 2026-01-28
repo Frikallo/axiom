@@ -576,6 +576,347 @@ Tensor Tensor::flatten(int start_dim, int end_dim) const {
     }
 }
 
+// ============================================================================
+// NumPy-like aliases and view operations
+// ============================================================================
+
+Tensor Tensor::negative() const { return -(*this); }
+
+Tensor Tensor::flipud() const { return flip(0); }
+
+Tensor Tensor::fliplr() const { return flip(1); }
+
+Tensor Tensor::swapaxes(int axis1, int axis2) const {
+    int ndims = static_cast<int>(ndim());
+    // Normalize negative axes
+    if (axis1 < 0)
+        axis1 += ndims;
+    if (axis2 < 0)
+        axis2 += ndims;
+
+    if (axis1 < 0 || axis1 >= ndims || axis2 < 0 || axis2 >= ndims) {
+        throw ShapeError("swapaxes: axis out of range for tensor with " +
+                         std::to_string(ndims) + " dimensions");
+    }
+
+    if (axis1 == axis2) {
+        return *this;
+    }
+
+    // Build permutation
+    std::vector<int> axes(ndims);
+    for (int i = 0; i < ndims; ++i) {
+        axes[i] = i;
+    }
+    std::swap(axes[axis1], axes[axis2]);
+
+    return transpose(axes);
+}
+
+Tensor Tensor::moveaxis(int source, int destination) const {
+    int ndims = static_cast<int>(ndim());
+    // Normalize negative axes
+    if (source < 0)
+        source += ndims;
+    if (destination < 0)
+        destination += ndims;
+
+    if (source < 0 || source >= ndims || destination < 0 ||
+        destination >= ndims) {
+        throw ShapeError("moveaxis: axis out of range for tensor with " +
+                         std::to_string(ndims) + " dimensions");
+    }
+
+    if (source == destination) {
+        return *this;
+    }
+
+    // Build permutation: remove source, insert at destination
+    std::vector<int> axes;
+    for (int i = 0; i < ndims; ++i) {
+        if (i != source) {
+            axes.push_back(i);
+        }
+    }
+    axes.insert(axes.begin() + destination, source);
+
+    return transpose(axes);
+}
+
+Tensor Tensor::flip(int axis) const { return flip(std::vector<int>{axis}); }
+
+Tensor Tensor::flip(const std::vector<int> &axes) const {
+    int ndims = static_cast<int>(ndim());
+
+    // Normalize and validate axes
+    std::vector<int> norm_axes;
+    for (int ax : axes) {
+        int norm = ax < 0 ? ax + ndims : ax;
+        if (norm < 0 || norm >= ndims) {
+            throw ShapeError::invalid_axis(ax, ndim());
+        }
+        norm_axes.push_back(norm);
+    }
+
+    // Create new strides with reversed sign for flipped axes
+    // and calculate new offset to point to the last element along flipped dims
+    Strides new_strides = strides_;
+    size_t new_offset = offset_;
+
+    for (int ax : norm_axes) {
+        if (shape_[ax] > 1) {
+            // Offset moves to the "last" element along this axis
+            new_offset += (shape_[ax] - 1) * strides_[ax];
+            // Stride becomes negative (but stored as size_t, we use a trick)
+            // For a proper implementation, we need to handle this specially
+            // in iteration. For now, we'll use a copy-based approach.
+        }
+    }
+
+    // For view-based flip with negative strides, we need signed strides
+    // which our current implementation doesn't support. Use copy instead.
+    Tensor result(shape_, dtype_, device(), memory_order_);
+
+    if (device() == Device::CPU) {
+        std::vector<size_t> coords(ndim(), 0);
+        for (size_t i = 0; i < size(); ++i) {
+            // Calculate flipped source coordinates
+            std::vector<size_t> src_coords = coords;
+            for (int ax : norm_axes) {
+                src_coords[ax] = shape_[ax] - 1 - coords[ax];
+            }
+
+            size_t src_offset = ShapeUtils::linear_index(src_coords, strides_);
+            size_t dst_offset =
+                ShapeUtils::linear_index(coords, result.strides());
+
+            std::memcpy(static_cast<uint8_t *>(result.data()) + dst_offset,
+                        static_cast<const uint8_t *>(data()) + src_offset,
+                        itemsize());
+
+            // Increment coordinates
+            for (int j = static_cast<int>(ndim()) - 1; j >= 0; --j) {
+                if (++coords[j] < shape_[j])
+                    break;
+                coords[j] = 0;
+            }
+        }
+    } else {
+        // GPU: go through CPU
+        auto cpu_flipped = cpu().flip(axes);
+        result = cpu_flipped.to(device());
+    }
+
+    return result;
+}
+
+Tensor Tensor::rot90(int k, const std::vector<int> &axes) const {
+    if (axes.size() != 2) {
+        throw ShapeError("rot90 requires exactly 2 axes");
+    }
+
+    int ndims = static_cast<int>(ndim());
+    int ax0 = axes[0] < 0 ? axes[0] + ndims : axes[0];
+    int ax1 = axes[1] < 0 ? axes[1] + ndims : axes[1];
+
+    if (ax0 < 0 || ax0 >= ndims || ax1 < 0 || ax1 >= ndims) {
+        throw ShapeError("rot90: axes out of range");
+    }
+    if (ax0 == ax1) {
+        throw ShapeError("rot90: axes must be different");
+    }
+
+    // Normalize k to [0, 3]
+    k = ((k % 4) + 4) % 4;
+
+    if (k == 0) {
+        return *this;
+    }
+
+    Tensor result = *this;
+    for (int i = 0; i < k; ++i) {
+        // One 90-degree rotation = flip along ax1, then swap axes
+        result = result.flip(ax1).swapaxes(ax0, ax1);
+    }
+
+    return result;
+}
+
+Tensor Tensor::roll(int64_t shift, int axis) const {
+    if (axis == -1) {
+        // Roll over flattened tensor, then reshape back
+        auto flat = flatten();
+        auto rolled = flat.roll(shift, 0);
+        return rolled.reshape(shape_);
+    }
+
+    int ndims = static_cast<int>(ndim());
+    int norm_axis = axis < 0 ? axis + ndims : axis;
+    if (norm_axis < 0 || norm_axis >= ndims) {
+        throw ShapeError::invalid_axis(axis, ndim());
+    }
+
+    int64_t axis_size = static_cast<int64_t>(shape_[norm_axis]);
+    if (axis_size == 0)
+        return *this;
+
+    // Normalize shift to [0, axis_size)
+    shift = ((shift % axis_size) + axis_size) % axis_size;
+    if (shift == 0)
+        return *this;
+
+    Tensor result(shape_, dtype_, device(), memory_order_);
+
+    if (device() == Device::CPU) {
+        std::vector<size_t> coords(ndim(), 0);
+        for (size_t i = 0; i < size(); ++i) {
+            // Calculate rolled source coordinate
+            std::vector<size_t> src_coords = coords;
+            int64_t src_idx = static_cast<int64_t>(coords[norm_axis]) - shift;
+            if (src_idx < 0)
+                src_idx += axis_size;
+            src_coords[norm_axis] = static_cast<size_t>(src_idx);
+
+            size_t src_offset = ShapeUtils::linear_index(src_coords, strides_);
+            size_t dst_offset =
+                ShapeUtils::linear_index(coords, result.strides());
+
+            std::memcpy(static_cast<uint8_t *>(result.data()) + dst_offset,
+                        static_cast<const uint8_t *>(data()) + src_offset,
+                        itemsize());
+
+            // Increment coordinates
+            for (int j = static_cast<int>(ndim()) - 1; j >= 0; --j) {
+                if (++coords[j] < shape_[j])
+                    break;
+                coords[j] = 0;
+            }
+        }
+    } else {
+        auto cpu_rolled = cpu().roll(shift, axis);
+        result = cpu_rolled.to(device());
+    }
+
+    return result;
+}
+
+Tensor Tensor::roll(const std::vector<int64_t> &shifts,
+                    const std::vector<int> &axes) const {
+    if (shifts.size() != axes.size()) {
+        throw ValueError("roll: shifts and axes must have same length");
+    }
+
+    Tensor result = *this;
+    for (size_t i = 0; i < shifts.size(); ++i) {
+        result = result.roll(shifts[i], axes[i]);
+    }
+    return result;
+}
+
+Tensor Tensor::diagonal(int offset, int axis1, int axis2) const {
+    int ndims = static_cast<int>(ndim());
+    if (ndims < 2) {
+        throw ShapeError("diagonal requires tensor with at least 2 dimensions");
+    }
+
+    // Normalize axes
+    if (axis1 < 0)
+        axis1 += ndims;
+    if (axis2 < 0)
+        axis2 += ndims;
+
+    if (axis1 < 0 || axis1 >= ndims || axis2 < 0 || axis2 >= ndims) {
+        throw ShapeError("diagonal: axes out of range");
+    }
+    if (axis1 == axis2) {
+        throw ShapeError("diagonal: axis1 and axis2 must be different");
+    }
+
+    // Make axis1 < axis2 for simplicity
+    if (axis1 > axis2) {
+        std::swap(axis1, axis2);
+        offset = -offset;
+    }
+
+    int64_t n1 = static_cast<int64_t>(shape_[axis1]);
+    int64_t n2 = static_cast<int64_t>(shape_[axis2]);
+
+    // Calculate diagonal length
+    int64_t diag_size;
+    if (offset >= 0) {
+        diag_size = std::max(int64_t(0), std::min(n1, n2 - offset));
+    } else {
+        diag_size = std::max(int64_t(0), std::min(n1 + offset, n2));
+    }
+
+    // Build output shape: remove axis1 and axis2, add diagonal dimension at end
+    Shape out_shape;
+    for (int i = 0; i < ndims; ++i) {
+        if (i != axis1 && i != axis2) {
+            out_shape.push_back(shape_[i]);
+        }
+    }
+    out_shape.push_back(static_cast<size_t>(diag_size));
+
+    Tensor result(out_shape, dtype_, device(), memory_order_);
+
+    if (diag_size == 0) {
+        return result;
+    }
+
+    if (device() == Device::CPU) {
+        size_t out_size = result.size();
+        std::vector<size_t> out_coords(result.ndim(), 0);
+
+        for (size_t i = 0; i < out_size; ++i) {
+            // Build input coordinates from output coordinates
+            std::vector<size_t> in_coords;
+            size_t out_idx = 0;
+            for (int j = 0; j < ndims; ++j) {
+                if (j == axis1 || j == axis2) {
+                    in_coords.push_back(0); // Placeholder
+                } else {
+                    in_coords.push_back(out_coords[out_idx++]);
+                }
+            }
+
+            // Diagonal index is the last dimension of output
+            size_t diag_idx = out_coords[result.ndim() - 1];
+            if (offset >= 0) {
+                in_coords[axis1] = diag_idx;
+                in_coords[axis2] = diag_idx + offset;
+            } else {
+                in_coords[axis1] = diag_idx - offset;
+                in_coords[axis2] = diag_idx;
+            }
+
+            size_t src_offset = ShapeUtils::linear_index(in_coords, strides_);
+            size_t dst_offset =
+                ShapeUtils::linear_index(out_coords, result.strides());
+
+            std::memcpy(static_cast<uint8_t *>(result.data()) + dst_offset,
+                        static_cast<const uint8_t *>(data()) + src_offset,
+                        itemsize());
+
+            // Increment output coordinates
+            for (int j = static_cast<int>(result.ndim()) - 1; j >= 0; --j) {
+                if (++out_coords[j] < result.shape()[j])
+                    break;
+                out_coords[j] = 0;
+            }
+        }
+    } else {
+        auto cpu_diag = cpu().diagonal(offset, axis1, axis2);
+        result = cpu_diag.to(device());
+    }
+
+    return result;
+}
+
+Tensor Tensor::trace(int offset, int axis1, int axis2) const {
+    return diagonal(offset, axis1, axis2).sum(-1);
+}
+
 Tensor Tensor::expand(const Shape &new_shape) const {
     // expand creates a view by setting stride to 0 for expanded dimensions
     // Only dimensions of size 1 can be expanded
@@ -816,6 +1157,86 @@ Tensor Tensor::argmin(int axis, bool keep_dims) const {
     return ops::argmin(*this, axis, keep_dims);
 }
 
+// Additional reduction member functions
+Tensor Tensor::prod(int axis, bool keep_dims) const {
+    if (axis == -1) {
+        return ops::prod(*this, {}, keep_dims);
+    }
+    return ops::prod(*this, {axis}, keep_dims);
+}
+
+Tensor Tensor::prod(const std::vector<int> &axes, bool keep_dims) const {
+    return ops::prod(*this, axes, keep_dims);
+}
+
+Tensor Tensor::any(int axis, bool keep_dims) const {
+    if (axis == -1) {
+        return ops::any(*this, {}, keep_dims);
+    }
+    return ops::any(*this, {axis}, keep_dims);
+}
+
+Tensor Tensor::any(const std::vector<int> &axes, bool keep_dims) const {
+    return ops::any(*this, axes, keep_dims);
+}
+
+Tensor Tensor::all(int axis, bool keep_dims) const {
+    if (axis == -1) {
+        return ops::all(*this, {}, keep_dims);
+    }
+    return ops::all(*this, {axis}, keep_dims);
+}
+
+Tensor Tensor::all(const std::vector<int> &axes, bool keep_dims) const {
+    return ops::all(*this, axes, keep_dims);
+}
+
+// Statistical operations (composition-based)
+Tensor Tensor::var(int axis, int ddof, bool keep_dims) const {
+    if (axis == -1) {
+        return var(std::vector<int>{}, ddof, keep_dims);
+    }
+    return var(std::vector<int>{axis}, ddof, keep_dims);
+}
+
+Tensor Tensor::var(const std::vector<int> &axes, int ddof,
+                   bool keep_dims) const {
+    // var = mean((x - mean(x))^2) with ddof correction
+    auto m = mean(axes.empty() ? std::vector<int>{} : axes, true);
+    auto centered = ops::subtract(*this, m);
+    auto sq = ops::square(centered);
+    auto sum_sq = sq.sum(axes.empty() ? std::vector<int>{} : axes, keep_dims);
+
+    // Calculate reduction size
+    size_t n = 1;
+    if (axes.empty()) {
+        n = size();
+    } else {
+        for (int ax : axes) {
+            int norm_ax = ax < 0 ? ax + static_cast<int>(ndim()) : ax;
+            n *= shape_[norm_ax];
+        }
+    }
+
+    auto divisor =
+        Tensor::full({1}, static_cast<float>(n - ddof), sum_sq.device());
+    return ops::divide(sum_sq, divisor);
+}
+
+Tensor Tensor::std(int axis, int ddof, bool keep_dims) const {
+    return var(axis, ddof, keep_dims).sqrt();
+}
+
+Tensor Tensor::std(const std::vector<int> &axes, int ddof,
+                   bool keep_dims) const {
+    return var(axes, ddof, keep_dims).sqrt();
+}
+
+Tensor Tensor::ptp(int axis, bool keep_dims) const {
+    // ptp = max - min (peak-to-peak)
+    return ops::subtract(max(axis, keep_dims), min(axis, keep_dims));
+}
+
 // Unary math operations
 Tensor Tensor::abs() const { return ops::abs(*this); }
 Tensor Tensor::sqrt() const { return ops::sqrt(*this); }
@@ -824,6 +1245,32 @@ Tensor Tensor::log() const { return ops::log(*this); }
 Tensor Tensor::sin() const { return ops::sin(*this); }
 Tensor Tensor::cos() const { return ops::cos(*this); }
 Tensor Tensor::tan() const { return ops::tan(*this); }
+
+// NumPy-like math operations
+Tensor Tensor::sign() const { return ops::sign(*this); }
+Tensor Tensor::floor() const { return ops::floor(*this); }
+Tensor Tensor::ceil() const { return ops::ceil(*this); }
+Tensor Tensor::trunc() const { return ops::trunc(*this); }
+Tensor Tensor::round(int decimals) const { return ops::round(*this, decimals); }
+Tensor Tensor::reciprocal() const { return ops::reciprocal(*this); }
+Tensor Tensor::square() const { return ops::square(*this); }
+Tensor Tensor::cbrt() const { return ops::cbrt(*this); }
+
+// Element-wise testing operations
+Tensor Tensor::isnan() const { return ops::isnan(*this); }
+Tensor Tensor::isinf() const { return ops::isinf(*this); }
+Tensor Tensor::isfinite() const { return ops::isfinite(*this); }
+
+// Clipping operations
+Tensor Tensor::clip(const Tensor &min_val, const Tensor &max_val) const {
+    return ops::clip(*this, min_val, max_val);
+}
+
+Tensor Tensor::clip(double min_val, double max_val) const {
+    auto min_tensor = Tensor::full({1}, static_cast<float>(min_val), device());
+    auto max_tensor = Tensor::full({1}, static_cast<float>(max_val), device());
+    return ops::clip(*this, min_tensor, max_tensor);
+}
 
 // Activation operations
 Tensor Tensor::relu() const { return ops::relu(*this); }
@@ -979,6 +1426,32 @@ bool Tensor::same_device(const Tensor &other) const {
 
 bool Tensor::same_memory_order(const Tensor &other) const {
     return memory_order_ == other.memory_order_;
+}
+
+// Comparison/testing methods (NumPy-like)
+Tensor Tensor::isclose(const Tensor &other, double rtol, double atol) const {
+    // |a - b| <= atol + rtol * |b|
+    auto diff = ops::subtract(*this, other).abs();
+    auto atol_tensor = Tensor::full({1}, static_cast<float>(atol), device());
+    auto rtol_tensor = Tensor::full({1}, static_cast<float>(rtol), device());
+    auto threshold =
+        ops::add(atol_tensor, ops::multiply(rtol_tensor, other.abs()));
+    return ops::less_equal(diff, threshold);
+}
+
+bool Tensor::allclose(const Tensor &other, double rtol, double atol) const {
+    auto close = isclose(other, rtol, atol);
+    auto all_result = close.all();
+    return all_result.item<bool>();
+}
+
+bool Tensor::array_equal(const Tensor &other) const {
+    if (!same_shape(other)) {
+        return false;
+    }
+    auto eq = ops::equal(*this, other);
+    auto all_result = eq.all();
+    return all_result.item<bool>();
 }
 
 Tensor Tensor::zeros(const Shape &shape, DType dtype, Device device,
@@ -1529,6 +2002,349 @@ Tensor Tensor::conj() const {
     }
 
     return ops::conj(*this);
+}
+
+// ============================================================================
+// Stacking and Concatenation Operations
+// ============================================================================
+
+Tensor Tensor::concatenate(const std::vector<Tensor> &tensors, int axis) {
+    if (tensors.empty()) {
+        throw ValueError("concatenate requires at least one tensor");
+    }
+
+    const Tensor &first = tensors[0];
+    int ndim = static_cast<int>(first.ndim());
+
+    // Normalize axis
+    int norm_axis = axis < 0 ? axis + ndim : axis;
+    if (norm_axis < 0 || norm_axis >= ndim) {
+        throw ValueError("axis " + std::to_string(axis) +
+                         " out of bounds for tensor of dimension " +
+                         std::to_string(ndim));
+    }
+
+    // Validate all tensors have compatible shapes
+    DType result_dtype = first.dtype();
+    Device result_device = first.device();
+
+    for (size_t i = 1; i < tensors.size(); ++i) {
+        const Tensor &t = tensors[i];
+        if (t.ndim() != first.ndim()) {
+            throw ShapeError(
+                "concatenate: all tensors must have same number of dimensions");
+        }
+        for (int d = 0; d < ndim; ++d) {
+            if (d != norm_axis && t.shape()[d] != first.shape()[d]) {
+                throw ShapeError(
+                    "concatenate: shapes don't match on dimension " +
+                    std::to_string(d));
+            }
+        }
+        // Promote dtype if needed
+        result_dtype = ops::promote_types(result_dtype, t.dtype());
+        // Use GPU if any tensor is on GPU
+        if (t.device() == Device::GPU) {
+            result_device = Device::GPU;
+        }
+    }
+
+    // Calculate output shape
+    Shape result_shape = first.shape();
+    size_t total_concat_dim = 0;
+    for (const auto &t : tensors) {
+        total_concat_dim += t.shape()[norm_axis];
+    }
+    result_shape[norm_axis] = total_concat_dim;
+
+    // Create result tensor
+    Tensor result(result_shape, result_dtype, result_device);
+
+    // Copy data from each tensor
+    size_t concat_offset = 0;
+    for (const auto &t : tensors) {
+        Tensor src = t.astype(result_dtype);
+        if (src.device() != result_device) {
+            src = src.to(result_device);
+        }
+
+        // Create slice range for this tensor
+        std::vector<Slice> slices;
+        for (int d = 0; d < ndim; ++d) {
+            if (d == norm_axis) {
+                slices.push_back(
+                    Slice(static_cast<int64_t>(concat_offset),
+                          static_cast<int64_t>(concat_offset + t.shape()[d])));
+            } else {
+                slices.push_back(Slice()); // Full range
+            }
+        }
+
+        // Get view of destination and copy
+        Tensor dest_view = result.slice(slices);
+
+        // Copy data element by element (could be optimized)
+        if (result_device == Device::CPU && src.is_contiguous() &&
+            dest_view.is_contiguous()) {
+            std::memcpy(dest_view.data(), src.data(), src.nbytes());
+        } else if (result_device == Device::CPU) {
+            // Non-contiguous copy
+            size_t total_elements = src.size();
+            std::vector<size_t> coords(ndim, 0);
+            for (size_t i = 0; i < total_elements; ++i) {
+                size_t src_offset =
+                    ShapeUtils::linear_index(coords, src.strides());
+                size_t dst_offset =
+                    ShapeUtils::linear_index(coords, dest_view.strides());
+                std::memcpy(
+                    static_cast<uint8_t *>(dest_view.data()) + dst_offset,
+                    static_cast<const uint8_t *>(src.data()) + src_offset,
+                    src.itemsize());
+
+                // Increment coordinates
+                for (int j = ndim - 1; j >= 0; --j) {
+                    if (++coords[j] < src.shape()[j])
+                        break;
+                    coords[j] = 0;
+                }
+            }
+        } else {
+            // GPU: use CPU fallback for now
+            auto cpu_result = concatenate(
+                [&]() {
+                    std::vector<Tensor> cpu_tensors;
+                    for (const auto &tensor : tensors) {
+                        cpu_tensors.push_back(tensor.cpu());
+                    }
+                    return cpu_tensors;
+                }(),
+                axis);
+            return cpu_result.to(result_device);
+        }
+
+        concat_offset += t.shape()[norm_axis];
+    }
+
+    return result;
+}
+
+Tensor Tensor::stack(const std::vector<Tensor> &tensors, int axis) {
+    if (tensors.empty()) {
+        throw ValueError("stack requires at least one tensor");
+    }
+
+    // All tensors must have the same shape
+    const Shape &first_shape = tensors[0].shape();
+    for (size_t i = 1; i < tensors.size(); ++i) {
+        if (tensors[i].shape() != first_shape) {
+            throw ShapeError("stack: all tensors must have the same shape");
+        }
+    }
+
+    // Normalize axis (can be in range [0, ndim])
+    int ndim = static_cast<int>(first_shape.size());
+    int norm_axis = axis < 0 ? axis + ndim + 1 : axis;
+    if (norm_axis < 0 || norm_axis > ndim) {
+        throw ValueError("axis " + std::to_string(axis) +
+                         " out of bounds for stack");
+    }
+
+    // unsqueeze each tensor at the stack axis, then concatenate
+    std::vector<Tensor> expanded;
+    expanded.reserve(tensors.size());
+    for (const auto &t : tensors) {
+        expanded.push_back(t.unsqueeze(norm_axis));
+    }
+
+    return concatenate(expanded, norm_axis);
+}
+
+Tensor Tensor::vstack(const std::vector<Tensor> &tensors) {
+    if (tensors.empty()) {
+        throw ValueError("vstack requires at least one tensor");
+    }
+
+    // Handle 1D arrays - stack along new first axis
+    if (tensors[0].ndim() == 1) {
+        return stack(tensors, 0);
+    }
+
+    // For 2D and above, concatenate along axis 0
+    return concatenate(tensors, 0);
+}
+
+Tensor Tensor::hstack(const std::vector<Tensor> &tensors) {
+    if (tensors.empty()) {
+        throw ValueError("hstack requires at least one tensor");
+    }
+
+    // Handle 1D arrays - concatenate along axis 0
+    if (tensors[0].ndim() == 1) {
+        return concatenate(tensors, 0);
+    }
+
+    // For 2D and above, concatenate along axis 1
+    return concatenate(tensors, 1);
+}
+
+Tensor Tensor::dstack(const std::vector<Tensor> &tensors) {
+    if (tensors.empty()) {
+        throw ValueError("dstack requires at least one tensor");
+    }
+
+    // Expand 1D and 2D arrays to 3D
+    std::vector<Tensor> expanded;
+    expanded.reserve(tensors.size());
+
+    for (const auto &t : tensors) {
+        if (t.ndim() == 1) {
+            // Shape (N,) -> (1, N, 1)
+            expanded.push_back(t.reshape({1, t.shape()[0], 1}));
+        } else if (t.ndim() == 2) {
+            // Shape (M, N) -> (M, N, 1)
+            expanded.push_back(t.unsqueeze(2));
+        } else {
+            expanded.push_back(t);
+        }
+    }
+
+    return concatenate(expanded, 2);
+}
+
+Tensor Tensor::column_stack(const std::vector<Tensor> &tensors) {
+    if (tensors.empty()) {
+        throw ValueError("column_stack requires at least one tensor");
+    }
+
+    // 1D arrays become columns, 2D arrays are stacked as-is
+    std::vector<Tensor> columns;
+    columns.reserve(tensors.size());
+
+    for (const auto &t : tensors) {
+        if (t.ndim() == 1) {
+            // Shape (N,) -> (N, 1)
+            columns.push_back(t.reshape({t.size(), 1}));
+        } else {
+            columns.push_back(t);
+        }
+    }
+
+    return concatenate(columns, 1);
+}
+
+std::vector<Tensor> Tensor::split(size_t sections, int axis) const {
+    int ndim_val = static_cast<int>(ndim());
+    int norm_axis = axis < 0 ? axis + ndim_val : axis;
+
+    if (norm_axis < 0 || norm_axis >= ndim_val) {
+        throw ValueError("axis " + std::to_string(axis) + " out of bounds");
+    }
+
+    size_t axis_size = shape_[norm_axis];
+    if (axis_size % sections != 0) {
+        throw ValueError("split: tensor size " + std::to_string(axis_size) +
+                         " not divisible by " + std::to_string(sections));
+    }
+
+    size_t section_size = axis_size / sections;
+    std::vector<Tensor> result;
+    result.reserve(sections);
+
+    for (size_t i = 0; i < sections; ++i) {
+        std::vector<Slice> slices;
+        for (int d = 0; d < ndim_val; ++d) {
+            if (d == norm_axis) {
+                slices.push_back(
+                    Slice(static_cast<int64_t>(i * section_size),
+                          static_cast<int64_t>((i + 1) * section_size)));
+            } else {
+                slices.push_back(Slice());
+            }
+        }
+        result.push_back(slice(slices));
+    }
+
+    return result;
+}
+
+std::vector<Tensor> Tensor::split(const std::vector<size_t> &indices,
+                                  int axis) const {
+    int ndim_val = static_cast<int>(ndim());
+    int norm_axis = axis < 0 ? axis + ndim_val : axis;
+
+    if (norm_axis < 0 || norm_axis >= ndim_val) {
+        throw ValueError("axis " + std::to_string(axis) + " out of bounds");
+    }
+
+    std::vector<Tensor> result;
+    size_t prev_idx = 0;
+
+    for (size_t idx : indices) {
+        std::vector<Slice> slices;
+        for (int d = 0; d < ndim_val; ++d) {
+            if (d == norm_axis) {
+                slices.push_back(Slice(static_cast<int64_t>(prev_idx),
+                                       static_cast<int64_t>(idx)));
+            } else {
+                slices.push_back(Slice());
+            }
+        }
+        result.push_back(slice(slices));
+        prev_idx = idx;
+    }
+
+    // Final section from last index to end
+    std::vector<Slice> slices;
+    for (int d = 0; d < ndim_val; ++d) {
+        if (d == norm_axis) {
+            slices.push_back(Slice(static_cast<int64_t>(prev_idx),
+                                   static_cast<int64_t>(shape_[norm_axis])));
+        } else {
+            slices.push_back(Slice());
+        }
+    }
+    result.push_back(slice(slices));
+
+    return result;
+}
+
+std::vector<Tensor> Tensor::chunk(size_t n_chunks, int axis) const {
+    int ndim_val = static_cast<int>(ndim());
+    int norm_axis = axis < 0 ? axis + ndim_val : axis;
+
+    if (norm_axis < 0 || norm_axis >= ndim_val) {
+        throw ValueError("axis " + std::to_string(axis) + " out of bounds");
+    }
+
+    size_t axis_size = shape_[norm_axis];
+    size_t base_chunk_size = axis_size / n_chunks;
+    size_t remainder = axis_size % n_chunks;
+
+    std::vector<Tensor> result;
+    result.reserve(n_chunks);
+
+    size_t start = 0;
+    for (size_t i = 0; i < n_chunks; ++i) {
+        // First 'remainder' chunks get one extra element
+        size_t chunk_size = base_chunk_size + (i < remainder ? 1 : 0);
+        size_t end = start + chunk_size;
+
+        if (chunk_size > 0) {
+            std::vector<Slice> slices;
+            for (int d = 0; d < ndim_val; ++d) {
+                if (d == norm_axis) {
+                    slices.push_back(Slice(static_cast<int64_t>(start),
+                                           static_cast<int64_t>(end)));
+                } else {
+                    slices.push_back(Slice());
+                }
+            }
+            result.push_back(slice(slices));
+        }
+        start = end;
+    }
+
+    return result;
 }
 
 } // namespace axiom

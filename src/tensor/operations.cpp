@@ -86,6 +86,28 @@ static std::string op_type_name(OpType op) {
         return "tan";
     case OpType::Erf:
         return "erf";
+    case OpType::Sign:
+        return "sign";
+    case OpType::Floor:
+        return "floor";
+    case OpType::Ceil:
+        return "ceil";
+    case OpType::Trunc:
+        return "trunc";
+    case OpType::Round:
+        return "round";
+    case OpType::Reciprocal:
+        return "reciprocal";
+    case OpType::Square:
+        return "square";
+    case OpType::Cbrt:
+        return "cbrt";
+    case OpType::IsNaN:
+        return "isnan";
+    case OpType::IsInf:
+        return "isinf";
+    case OpType::IsFinite:
+        return "isfinite";
     case OpType::Conj:
         return "conj";
     case OpType::Real:
@@ -114,6 +136,8 @@ static std::string op_type_name(OpType op) {
         return "any";
     case OpType::All:
         return "all";
+    case OpType::Prod:
+        return "prod";
     case OpType::MatMul:
         return "matmul";
     case OpType::BatchMatMul:
@@ -1143,6 +1167,66 @@ Tensor erf(const Tensor &input) {
     return execute_unary_operation(OpType::Erf, input);
 }
 
+// NumPy-like math operations
+Tensor sign(const Tensor &input) {
+    return execute_unary_operation(OpType::Sign, input);
+}
+
+Tensor floor(const Tensor &input) {
+    return execute_unary_operation(OpType::Floor, input);
+}
+
+Tensor ceil(const Tensor &input) {
+    return execute_unary_operation(OpType::Ceil, input);
+}
+
+Tensor trunc(const Tensor &input) {
+    return execute_unary_operation(OpType::Trunc, input);
+}
+
+Tensor round(const Tensor &input, int decimals) {
+    if (decimals == 0) {
+        return execute_unary_operation(OpType::Round, input);
+    }
+    // For non-zero decimals: round(x * 10^d) / 10^d
+    double scale = std::pow(10.0, decimals);
+    auto scale_tensor = Tensor::full({1}, static_cast<float>(scale));
+    auto scaled = multiply(input, scale_tensor);
+    auto rounded = execute_unary_operation(OpType::Round, scaled);
+    auto inv_scale_tensor = Tensor::full({1}, static_cast<float>(1.0 / scale));
+    return multiply(rounded, inv_scale_tensor);
+}
+
+Tensor reciprocal(const Tensor &input) {
+    return execute_unary_operation(OpType::Reciprocal, input);
+}
+
+Tensor square(const Tensor &input) {
+    return execute_unary_operation(OpType::Square, input);
+}
+
+Tensor cbrt(const Tensor &input) {
+    return execute_unary_operation(OpType::Cbrt, input);
+}
+
+// Element-wise testing operations
+Tensor isnan(const Tensor &input) {
+    return execute_unary_operation(OpType::IsNaN, input);
+}
+
+Tensor isinf(const Tensor &input) {
+    return execute_unary_operation(OpType::IsInf, input);
+}
+
+Tensor isfinite(const Tensor &input) {
+    return execute_unary_operation(OpType::IsFinite, input);
+}
+
+// Clipping operation (composition-based, no new backend op)
+Tensor clip(const Tensor &input, const Tensor &min_val, const Tensor &max_val) {
+    return maximum(minimum(input, max_val), min_val);
+}
+
 // Complex operations
 Tensor conj(const Tensor &input) {
     if (!is_complex_dtype(input.dtype())) {
@@ -1246,6 +1330,10 @@ Tensor any(const Tensor &input, const std::vector<int> &axis, bool keep_dims) {
 
 Tensor all(const Tensor &input, const std::vector<int> &axis, bool keep_dims) {
     return execute_reduction_operation(OpType::All, input, axis, keep_dims);
+}
+
+Tensor prod(const Tensor &input, const std::vector<int> &axis, bool keep_dims) {
+    return execute_reduction_operation(OpType::Prod, input, axis, keep_dims);
 }
 
 void execute_binary_inplace(OpType op_type, Tensor &lhs, const Tensor &rhs) {

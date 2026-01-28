@@ -567,6 +567,138 @@ struct ConjFunc {
     }
 };
 
+// NumPy-like math operations
+struct SignFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_same_v<T, bool>) {
+            return a; // bool: true->true, false->false
+        } else if constexpr (std::is_unsigned_v<T>) {
+            // Unsigned types can only be 0 or positive
+            return a > T{0} ? T{1} : T{0};
+        } else if (a > T{0}) {
+            return T{1};
+        } else if (a < T{0}) {
+            return static_cast<T>(-1);
+        } else {
+            return T{0};
+        }
+    }
+};
+
+struct FloorFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::floor(a);
+        } else if constexpr (std::is_same_v<T, half_float::half>) {
+            return static_cast<T>(std::floor(static_cast<float>(a)));
+        } else {
+            return a; // Integer types are already "floored"
+        }
+    }
+};
+
+struct CeilFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::ceil(a);
+        } else if constexpr (std::is_same_v<T, half_float::half>) {
+            return static_cast<T>(std::ceil(static_cast<float>(a)));
+        } else {
+            return a; // Integer types are already "ceiled"
+        }
+    }
+};
+
+struct TruncFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::trunc(a);
+        } else if constexpr (std::is_same_v<T, half_float::half>) {
+            return static_cast<T>(std::trunc(static_cast<float>(a)));
+        } else {
+            return a; // Integer types are already truncated
+        }
+    }
+};
+
+struct RoundFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::round(a);
+        } else if constexpr (std::is_same_v<T, half_float::half>) {
+            return static_cast<T>(std::round(static_cast<float>(a)));
+        } else {
+            return a; // Integer types are already rounded
+        }
+    }
+};
+
+struct ReciprocalFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return T{1} / a;
+        } else if constexpr (std::is_same_v<T, half_float::half>) {
+            return static_cast<T>(1.0f / static_cast<float>(a));
+        } else {
+            // Integer division: 1/a (truncated)
+            return (a != T{0}) ? (T{1} / a) : T{0};
+        }
+    }
+};
+
+struct SquareFunc {
+    template <typename T> T operator()(const T &a) const { return a * a; }
+};
+
+struct CbrtFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::cbrt(a);
+        } else if constexpr (std::is_same_v<T, half_float::half>) {
+            return static_cast<T>(std::cbrt(static_cast<float>(a)));
+        } else {
+            return static_cast<T>(std::cbrt(static_cast<double>(a)));
+        }
+    }
+};
+
+// Element-wise testing operations (return bool)
+struct IsNaNFunc {
+    template <typename T> bool operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::isnan(a);
+        } else if constexpr (std::is_same_v<T, half_float::half>) {
+            return std::isnan(static_cast<float>(a));
+        } else {
+            return false; // Integer types cannot be NaN
+        }
+    }
+};
+
+struct IsInfFunc {
+    template <typename T> bool operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::isinf(a);
+        } else if constexpr (std::is_same_v<T, half_float::half>) {
+            return std::isinf(static_cast<float>(a));
+        } else {
+            return false; // Integer types cannot be Inf
+        }
+    }
+};
+
+struct IsFiniteFunc {
+    template <typename T> bool operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::isfinite(a);
+        } else if constexpr (std::is_same_v<T, half_float::half>) {
+            return std::isfinite(static_cast<float>(a));
+        } else {
+            return true; // Integer types are always finite
+        }
+    }
+};
+
 // Reduction operations
 struct SumFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
@@ -654,6 +786,13 @@ struct AllFunc {
         return static_cast<bool>(a) && static_cast<bool>(b);
     }
     template <typename T> static T identity() { return T(1); } // true
+};
+
+struct ProdFunc {
+    template <typename T> T operator()(const T &a, const T &b) const {
+        return a * b;
+    }
+    template <typename T> static T identity() { return T{1}; }
 };
 
 // ============================================================================

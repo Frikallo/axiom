@@ -90,6 +90,21 @@ enum class OpType {
     Tan,
     Erf,
 
+    // NumPy-like math operations
+    Sign,
+    Floor,
+    Ceil,
+    Trunc,
+    Round,
+    Reciprocal,
+    Square,
+    Cbrt,
+
+    // Element-wise testing operations (return Bool)
+    IsNaN,
+    IsInf,
+    IsFinite,
+
     // Complex operations
     Conj,
     Real,
@@ -114,6 +129,7 @@ enum class OpType {
     ArgMin,
     Any,
     All,
+    Prod,
 
     // Matrix operations
     MatMul,
@@ -279,6 +295,24 @@ Tensor cos(const Tensor &input);
 Tensor tan(const Tensor &input);
 Tensor erf(const Tensor &input);
 
+// NumPy-like math operations
+Tensor sign(const Tensor &input);
+Tensor floor(const Tensor &input);
+Tensor ceil(const Tensor &input);
+Tensor trunc(const Tensor &input);
+Tensor round(const Tensor &input, int decimals = 0);
+Tensor reciprocal(const Tensor &input);
+Tensor square(const Tensor &input);
+Tensor cbrt(const Tensor &input);
+
+// Element-wise testing operations (return Bool tensor)
+Tensor isnan(const Tensor &input);
+Tensor isinf(const Tensor &input);
+Tensor isfinite(const Tensor &input);
+
+// Clipping operation
+Tensor clip(const Tensor &input, const Tensor &min_val, const Tensor &max_val);
+
 // Complex operations
 Tensor conj(const Tensor &input);
 Tensor real(const Tensor &input);
@@ -316,6 +350,8 @@ Tensor any(const Tensor &input, const std::vector<int> &axis = {},
            bool keep_dims = false);
 Tensor all(const Tensor &input, const std::vector<int> &axis = {},
            bool keep_dims = false);
+Tensor prod(const Tensor &input, const std::vector<int> &axis = {},
+            bool keep_dims = false);
 
 // Matrix multiplication operations
 // matmul: General matrix multiplication with broadcasting of batch dimensions
