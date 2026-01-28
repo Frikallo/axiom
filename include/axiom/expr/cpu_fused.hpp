@@ -26,7 +26,7 @@ namespace expr {
 
 #ifdef __ARM_NEON
 inline constexpr bool kHasNEON = true;
-inline constexpr size_t kSimdWidth = 4;  // float32x4_t
+inline constexpr size_t kSimdWidth = 4; // float32x4_t
 #else
 inline constexpr bool kHasNEON = false;
 inline constexpr size_t kSimdWidth = 1;
@@ -56,8 +56,7 @@ inline T apply_binary_op_scalar(T lhs, T rhs) {
     }
 }
 
-template <typename Op, typename T>
-inline T apply_unary_op_scalar(T val) {
+template <typename Op, typename T> inline T apply_unary_op_scalar(T val) {
     if constexpr (std::is_same_v<Op, NegOp>) {
         return -val;
     } else if constexpr (std::is_same_v<Op, AbsOp>) {
@@ -142,8 +141,7 @@ inline float32x4_t apply_binary_op_simd(float32x4_t lhs, float32x4_t rhs) {
     }
 }
 
-template <typename Op>
-inline float32x4_t apply_unary_op_simd(float32x4_t val) {
+template <typename Op> inline float32x4_t apply_unary_op_simd(float32x4_t val) {
     if constexpr (std::is_same_v<Op, NegOp>) {
         return vnegq_f32(val);
     } else if constexpr (std::is_same_v<Op, AbsOp>) {
@@ -181,35 +179,38 @@ inline float32x4_t apply_unary_op_simd(float32x4_t val) {
 
 // Forward declaration
 template <typename Expr>
-inline float32x4_t eval_simd(const Expr& expr, size_t i);
+inline float32x4_t eval_simd(const Expr &expr, size_t i);
 
 // TensorRef: load 4 elements
 template <>
-inline float32x4_t eval_simd<TensorRef>(const TensorRef& ref, size_t i) {
+inline float32x4_t eval_simd<TensorRef>(const TensorRef &ref, size_t i) {
     return vld1q_f32(ref.tensor().typed_data<float>() + i);
 }
 
 // ScalarExpr<float>: broadcast scalar to vector
 template <>
-inline float32x4_t eval_simd<ScalarExpr<float>>(const ScalarExpr<float>& scalar, size_t) {
+inline float32x4_t eval_simd<ScalarExpr<float>>(const ScalarExpr<float> &scalar,
+                                                size_t) {
     return vdupq_n_f32(scalar.value());
 }
 
 // ScalarExpr<double>: broadcast scalar to vector (cast to float)
 template <>
-inline float32x4_t eval_simd<ScalarExpr<double>>(const ScalarExpr<double>& scalar, size_t) {
+inline float32x4_t
+eval_simd<ScalarExpr<double>>(const ScalarExpr<double> &scalar, size_t) {
     return vdupq_n_f32(static_cast<float>(scalar.value()));
 }
 
 // ScalarExpr<int>: broadcast scalar to vector (cast to float)
 template <>
-inline float32x4_t eval_simd<ScalarExpr<int>>(const ScalarExpr<int>& scalar, size_t) {
+inline float32x4_t eval_simd<ScalarExpr<int>>(const ScalarExpr<int> &scalar,
+                                              size_t) {
     return vdupq_n_f32(static_cast<float>(scalar.value()));
 }
 
 // BinaryExpr: evaluate both sides and apply SIMD op
 template <typename Op, typename LHS, typename RHS>
-inline float32x4_t eval_simd(const BinaryExpr<Op, LHS, RHS>& expr, size_t i) {
+inline float32x4_t eval_simd(const BinaryExpr<Op, LHS, RHS> &expr, size_t i) {
     float32x4_t lhs = eval_simd(expr.lhs(), i);
     float32x4_t rhs = eval_simd(expr.rhs(), i);
     return apply_binary_op_simd<Op>(lhs, rhs);
@@ -217,7 +218,7 @@ inline float32x4_t eval_simd(const BinaryExpr<Op, LHS, RHS>& expr, size_t i) {
 
 // UnaryExpr: evaluate operand and apply SIMD op
 template <typename Op, typename Operand>
-inline float32x4_t eval_simd(const UnaryExpr<Op, Operand>& expr, size_t i) {
+inline float32x4_t eval_simd(const UnaryExpr<Op, Operand> &expr, size_t i) {
     float32x4_t operand = eval_simd(expr.operand(), i);
     return apply_unary_op_simd<Op>(operand);
 }
@@ -228,38 +229,40 @@ inline float32x4_t eval_simd(const UnaryExpr<Op, Operand>& expr, size_t i) {
 // Scalar Expression Evaluation (fallback and tail handling)
 // ============================================================================
 
-template <typename Expr>
-inline float eval_scalar(const Expr& expr, size_t i);
+template <typename Expr> inline float eval_scalar(const Expr &expr, size_t i);
 
 template <>
-inline float eval_scalar<TensorRef>(const TensorRef& ref, size_t i) {
+inline float eval_scalar<TensorRef>(const TensorRef &ref, size_t i) {
     return ref.tensor().typed_data<float>()[i];
 }
 
 template <>
-inline float eval_scalar<ScalarExpr<float>>(const ScalarExpr<float>& scalar, size_t) {
+inline float eval_scalar<ScalarExpr<float>>(const ScalarExpr<float> &scalar,
+                                            size_t) {
     return scalar.value();
 }
 
 template <>
-inline float eval_scalar<ScalarExpr<double>>(const ScalarExpr<double>& scalar, size_t) {
+inline float eval_scalar<ScalarExpr<double>>(const ScalarExpr<double> &scalar,
+                                             size_t) {
     return static_cast<float>(scalar.value());
 }
 
 template <>
-inline float eval_scalar<ScalarExpr<int>>(const ScalarExpr<int>& scalar, size_t) {
+inline float eval_scalar<ScalarExpr<int>>(const ScalarExpr<int> &scalar,
+                                          size_t) {
     return static_cast<float>(scalar.value());
 }
 
 template <typename Op, typename LHS, typename RHS>
-inline float eval_scalar(const BinaryExpr<Op, LHS, RHS>& expr, size_t i) {
+inline float eval_scalar(const BinaryExpr<Op, LHS, RHS> &expr, size_t i) {
     float lhs = eval_scalar(expr.lhs(), i);
     float rhs = eval_scalar(expr.rhs(), i);
     return apply_binary_op_scalar<Op>(lhs, rhs);
 }
 
 template <typename Op, typename Operand>
-inline float eval_scalar(const UnaryExpr<Op, Operand>& expr, size_t i) {
+inline float eval_scalar(const UnaryExpr<Op, Operand> &expr, size_t i) {
     float operand = eval_scalar(expr.operand(), i);
     return apply_unary_op_scalar<Op>(operand);
 }
@@ -269,8 +272,8 @@ inline float eval_scalar(const UnaryExpr<Op, Operand>& expr, size_t i) {
 // ============================================================================
 
 template <typename Expr>
-void collectTensorRefsForContiguityCheck(const Expr& expr,
-                                         std::vector<const Tensor*>& refs) {
+void collectTensorRefsForContiguityCheck(const Expr &expr,
+                                         std::vector<const Tensor *> &refs) {
     if constexpr (is_tensor_ref_v<Expr>) {
         refs.push_back(expr.tensor_ptr());
     } else if constexpr (is_scalar_expr_v<Expr>) {
@@ -286,11 +289,10 @@ void collectTensorRefsForContiguityCheck(const Expr& expr,
     }
 }
 
-template <typename Expr>
-bool allTensorsContiguousForFusion(const Expr& expr) {
-    std::vector<const Tensor*> refs;
+template <typename Expr> bool allTensorsContiguousForFusion(const Expr &expr) {
+    std::vector<const Tensor *> refs;
     collectTensorRefsForContiguityCheck(expr, refs);
-    for (const Tensor* t : refs) {
+    for (const Tensor *t : refs) {
         if (!t->is_contiguous()) {
             return false;
         }
@@ -302,8 +304,7 @@ bool allTensorsContiguousForFusion(const Expr& expr) {
 // CPU Fused Evaluation with SIMD
 // ============================================================================
 
-template <typename Expr>
-Tensor cpu_eval_fused(const Expr& expr) {
+template <typename Expr> Tensor cpu_eval_fused(const Expr &expr) {
     Shape result_shape = expr.shape();
     DType result_dtype = expr.dtype();
 
@@ -314,7 +315,7 @@ Tensor cpu_eval_fused(const Expr& expr) {
     }
 
     Tensor result(result_shape, result_dtype, Device::CPU);
-    float* out = result.typed_data<float>();
+    float *out = result.typed_data<float>();
     const size_t n = result.size();
 
 #ifdef __ARM_NEON
@@ -373,8 +374,7 @@ Tensor cpu_eval_fused(const Expr& expr) {
 // benefits from Apple Accelerate's industry-leading implementations.
 // ============================================================================
 
-template <typename Expr>
-bool shouldFuseCPU(const Expr&) {
+template <typename Expr> bool shouldFuseCPU(const Expr &) {
     // CPU fusion disabled - Accelerate is faster (see above)
     return false;
 }
