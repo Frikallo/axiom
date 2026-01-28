@@ -40,7 +40,8 @@ struct GatherStridedParams {
     uint offset;           // Byte offset into source buffer
     uint itemsize;         // Size of each element in bytes
     uint shape[MAX_DIMS];
-    uint src_strides[MAX_DIMS];  // Strides in ELEMENTS (not bytes)
+    uint src_strides[MAX_DIMS];  // Strides in ELEMENTS (not bytes), always positive
+    uint flip_mask;        // Bitmask: bit i set if axis i has negative stride (flipped)
 };
 
 template<typename T>
@@ -51,24 +52,30 @@ kernel void gather_strided(
     uint gid [[thread_position_in_grid]])
 {
     if (gid >= params.numel) return;
-    
+
     // Convert linear index to N-dimensional coordinates
     uint coords[MAX_DIMS];
     uint temp = gid;
-    
+
     #pragma unroll
     for (int i = int(params.ndim) - 1; i >= 0; --i) {
         coords[i] = temp % params.shape[i];
         temp /= params.shape[i];
     }
-    
+
     // Compute strided source offset using element strides
+    // For flipped axes (negative stride), transform coord to (shape - 1 - coord)
     uint src_idx = 0;
     #pragma unroll
     for (uint i = 0; i < params.ndim; ++i) {
-        src_idx += coords[i] * params.src_strides[i];
+        uint coord = coords[i];
+        // Check if this axis is flipped (has negative stride)
+        if (params.flip_mask & (1u << i)) {
+            coord = params.shape[i] - 1 - coord;
+        }
+        src_idx += coord * params.src_strides[i];
     }
-    
+
     // Read from strided source, write to contiguous destination
     dst[gid] = src[src_idx];
 }

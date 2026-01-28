@@ -30,7 +30,8 @@ struct GatherStridedParams {
     uint32_t offset;      // Byte offset into source buffer
     uint32_t itemsize;    // Size of each element in bytes
     uint32_t shape[kMaxDims];
-    uint32_t src_strides[kMaxDims];  // Strides in ELEMENTS (not bytes)
+    uint32_t src_strides[kMaxDims];  // Strides in ELEMENTS (not bytes), always positive
+    uint32_t flip_mask;   // Bitmask: bit i set if axis i has negative stride (flipped)
 };
 
 // ============================================================================
@@ -107,23 +108,33 @@ static Tensor makeContiguousViaGatherKernel(const Tensor& tensor) {
     params.numel = static_cast<uint32_t>(tensor.size());
     params.offset = 0;  // offset is applied via buffer offset
     params.itemsize = static_cast<uint32_t>(tensor.itemsize());
-    
+    params.flip_mask = 0;
+
     std::fill_n(params.shape, kMaxDims, 0);
     std::fill_n(params.src_strides, kMaxDims, 0);
-    
+
     for (size_t i = 0; i < tensor.ndim(); ++i) {
         params.shape[i] = static_cast<uint32_t>(tensor.shape()[i]);
-        // Strides in elements, not bytes
-        params.src_strides[i] = static_cast<uint32_t>(tensor.strides()[i] / tensor.itemsize());
+        int64_t stride = tensor.strides()[i];
+        if (stride < 0) {
+            // Mark this axis as flipped
+            params.flip_mask |= (1u << i);
+        }
+        // Use absolute value of stride in elements
+        params.src_strides[i] = static_cast<uint32_t>(std::abs(stride) / tensor.itemsize());
     }
-    
+
+    // Buffer offset is just the tensor's offset (no adjustment needed here,
+    // the kernel will handle coordinate transformation for flipped axes)
+    size_t effective_offset = tensor.offset();
+
     // Create command buffer and encoder
     id<MTLCommandQueue> command_queue = (__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue();
     id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
     id<MTLComputeCommandEncoder> command_encoder = [command_buffer computeCommandEncoder];
-    
+
     [command_encoder setComputePipelineState:pipeline_state];
-    [command_encoder setBuffer:src_buffer offset:tensor.offset() atIndex:0];
+    [command_encoder setBuffer:src_buffer offset:effective_offset atIndex:0];
     [command_encoder setBuffer:dst_buffer offset:0 atIndex:1];
     [command_encoder setBytes:&params length:sizeof(params) atIndex:2];
     
