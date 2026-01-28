@@ -5,6 +5,10 @@
 #include "axiom/shape.hpp"
 #include "axiom/tensor.hpp"
 
+// SIMD optimization headers
+#include "cpu_accelerate.hpp"
+#include "cpu_simd.hpp"
+
 namespace axiom {
 namespace backends {
 namespace cpu {
@@ -151,6 +155,99 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
         const T *rhs_data = rhs_converted.template typed_data<T>();
         T *result_data = result.template typed_data<T>();
 
+        // Tier 1: Try Accelerate (vDSP) for contiguous float32/float64
+#ifdef AXIOM_USE_ACCELERATE
+        if constexpr (std::is_same_v<T, float>) {
+            if constexpr (std::is_same_v<Func, AddFunc>) {
+                accelerate::vadd_f32(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SubtractFunc>) {
+                accelerate::vsub_f32(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, MultiplyFunc>) {
+                accelerate::vmul_f32(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, DivideFunc>) {
+                accelerate::vdiv_f32(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            }
+        }
+        if constexpr (std::is_same_v<T, double>) {
+            if constexpr (std::is_same_v<Func, AddFunc>) {
+                accelerate::vadd_f64(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SubtractFunc>) {
+                accelerate::vsub_f64(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, MultiplyFunc>) {
+                accelerate::vmul_f64(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, DivideFunc>) {
+                accelerate::vdiv_f64(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            }
+        }
+#endif // AXIOM_USE_ACCELERATE
+
+        // Tier 2: NEON SIMD for other vectorizable types
+#ifdef __ARM_NEON
+        if constexpr (simd::has_support<T>) {
+            // Use NEON vectorized operations for add/sub/mul
+            if constexpr (std::is_same_v<Func, AddFunc>) {
+                simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                        total_elements, simd::VecAdd{});
+                return;
+            } else if constexpr (std::is_same_v<Func, SubtractFunc>) {
+                simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                        total_elements, simd::VecSub{});
+                return;
+            } else if constexpr (std::is_same_v<Func, MultiplyFunc>) {
+                if constexpr (std::is_same_v<T, float> ||
+                              std::is_same_v<T, double> ||
+                              std::is_same_v<T, int32_t> ||
+                              std::is_same_v<T, uint32_t>) {
+                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                            total_elements, simd::VecMul{});
+                    return;
+                }
+            } else if constexpr (std::is_same_v<Func, DivideFunc>) {
+                if constexpr (std::is_same_v<T, float> ||
+                              std::is_same_v<T, double>) {
+                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                            total_elements, simd::VecDiv{});
+                    return;
+                }
+            } else if constexpr (std::is_same_v<Func, MaximumFunc>) {
+                if constexpr (std::is_same_v<T, float> ||
+                              std::is_same_v<T, double> ||
+                              std::is_same_v<T, int32_t> ||
+                              std::is_same_v<T, uint32_t>) {
+                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                            total_elements, simd::VecMax{});
+                    return;
+                }
+            } else if constexpr (std::is_same_v<Func, MinimumFunc>) {
+                if constexpr (std::is_same_v<T, float> ||
+                              std::is_same_v<T, double> ||
+                              std::is_same_v<T, int32_t> ||
+                              std::is_same_v<T, uint32_t>) {
+                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                            total_elements, simd::VecMin{});
+                    return;
+                }
+            }
+        }
+#endif // __ARM_NEON
+
+        // Tier 3: Scalar fallback
         for (size_t i = 0; i < total_elements; ++i) {
             result_data[i] = func_(lhs_data[i], rhs_data[i]);
         }
@@ -644,6 +741,118 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
     const T *input_data = input.template typed_data<T>();
     T *result_data = result.template typed_data<T>();
 
+    // Tier 1: Try Accelerate (vForce/vDSP) for contiguous float32/float64
+#ifdef AXIOM_USE_ACCELERATE
+    if (input.is_contiguous()) {
+        if constexpr (std::is_same_v<T, float>) {
+            if constexpr (std::is_same_v<Func, ExpFunc>) {
+                accelerate::vexp_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, LogFunc>) {
+                accelerate::vlog_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SqrtFunc>) {
+                accelerate::vsqrt_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SinFunc>) {
+                accelerate::vsin_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, CosFunc>) {
+                accelerate::vcos_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, TanFunc>) {
+                accelerate::vtan_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, TanhFunc>) {
+                accelerate::vtanh_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, AbsFunc>) {
+                accelerate::vabs_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, NegateFunc>) {
+                accelerate::vneg_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, FloorFunc>) {
+                accelerate::vfloor_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, CeilFunc>) {
+                accelerate::vceil_f32(input_data, result_data, total_elements);
+                return;
+            }
+        }
+        if constexpr (std::is_same_v<T, double>) {
+            if constexpr (std::is_same_v<Func, ExpFunc>) {
+                accelerate::vexp_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, LogFunc>) {
+                accelerate::vlog_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SqrtFunc>) {
+                accelerate::vsqrt_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SinFunc>) {
+                accelerate::vsin_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, CosFunc>) {
+                accelerate::vcos_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, TanFunc>) {
+                accelerate::vtan_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, TanhFunc>) {
+                accelerate::vtanh_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, AbsFunc>) {
+                accelerate::vabs_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, NegateFunc>) {
+                accelerate::vneg_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, FloorFunc>) {
+                accelerate::vfloor_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, CeilFunc>) {
+                accelerate::vceil_f64(input_data, result_data, total_elements);
+                return;
+            }
+        }
+    }
+#endif // AXIOM_USE_ACCELERATE
+
+    // Tier 2: NEON SIMD for vectorizable types
+#ifdef __ARM_NEON
+    if constexpr (simd::has_support<T>) {
+        if (input.is_contiguous()) {
+            if constexpr (std::is_same_v<Func, AbsFunc>) {
+                if constexpr (std::is_same_v<T, float> ||
+                              std::is_same_v<T, double> ||
+                              std::is_same_v<T, int32_t>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecAbs{});
+                    return;
+                }
+            } else if constexpr (std::is_same_v<Func, NegateFunc>) {
+                if constexpr (std::is_same_v<T, float> ||
+                              std::is_same_v<T, double> ||
+                              std::is_same_v<T, int32_t>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecNeg{});
+                    return;
+                }
+            } else if constexpr (std::is_same_v<Func, ReLUFunc>) {
+                if constexpr (std::is_same_v<T, float> ||
+                              std::is_same_v<T, double> ||
+                              std::is_same_v<T, int32_t>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecReLU{});
+                    return;
+                }
+            }
+        }
+    }
+#endif // __ARM_NEON
+
+    // Tier 3: Scalar fallback
     for (size_t i = 0; i < total_elements; ++i) {
         result_data[i] = func_(input_data[i]);
     }
@@ -802,15 +1011,77 @@ Tensor CPUReductionOperation<Func>::execute_reduction_typed(
     DType result_dtype = dtype_of_v<T>;
     DType accum_dtype = dtype_of_v<AccumT>;
 
-    // For accumulation, use Float32 if needed
-    Tensor result(result_shape, accum_dtype, Device::CPU);
-    result.fill(Func::template identity<AccumT>());
-
     std::vector<int> norm_axes = axes;
     if (norm_axes.empty()) {
         for (size_t i = 0; i < input.ndim(); ++i)
             norm_axes.push_back(static_cast<int>(i));
     }
+
+    // Fast path: Full reduction on contiguous tensor
+    bool is_full_reduction = (norm_axes.size() == input.ndim());
+
+#ifdef AXIOM_USE_ACCELERATE
+    // Use Accelerate for full contiguous reductions on float32/float64
+    if (is_full_reduction && input.is_contiguous()) {
+        if constexpr (std::is_same_v<AccumT, float>) {
+            const float *data = input.template typed_data<float>();
+            size_t n = input.size();
+            float result_val;
+
+            if constexpr (std::is_same_v<Func, SumFunc>) {
+                result_val = accelerate::vsum_f32(data, n);
+            } else if constexpr (std::is_same_v<Func, MaxFunc>) {
+                result_val = accelerate::vmax_f32(data, n);
+            } else if constexpr (std::is_same_v<Func, MinFunc>) {
+                result_val = accelerate::vmin_f32(data, n);
+            } else {
+                goto fallback_path;
+            }
+
+            if (op_type_ == ops::OpType::Mean) {
+                result_val /= static_cast<float>(n);
+            }
+
+            Shape scalar_shape = keep_dims ? Shape(input.ndim(), 1) : Shape{1};
+            Tensor result(scalar_shape, accum_dtype, Device::CPU);
+            result.template typed_data<float>()[0] = result_val;
+
+            if constexpr (use_float32_accum) {
+                return result.astype(result_dtype);
+            }
+            return result;
+        }
+        if constexpr (std::is_same_v<AccumT, double>) {
+            const double *data = input.template typed_data<double>();
+            size_t n = input.size();
+            double result_val;
+
+            if constexpr (std::is_same_v<Func, SumFunc>) {
+                result_val = accelerate::vsum_f64(data, n);
+            } else if constexpr (std::is_same_v<Func, MaxFunc>) {
+                result_val = accelerate::vmax_f64(data, n);
+            } else if constexpr (std::is_same_v<Func, MinFunc>) {
+                result_val = accelerate::vmin_f64(data, n);
+            } else {
+                goto fallback_path;
+            }
+
+            if (op_type_ == ops::OpType::Mean) {
+                result_val /= static_cast<double>(n);
+            }
+
+            Shape scalar_shape = keep_dims ? Shape(input.ndim(), 1) : Shape{1};
+            Tensor result(scalar_shape, accum_dtype, Device::CPU);
+            result.template typed_data<double>()[0] = result_val;
+            return result;
+        }
+    }
+fallback_path:
+#endif // AXIOM_USE_ACCELERATE
+
+    // For accumulation, use Float32 if needed
+    Tensor result(result_shape, accum_dtype, Device::CPU);
+    result.fill(Func::template identity<AccumT>());
 
     // If using float32 accumulation for float16, we need to convert input
     if constexpr (use_float32_accum) {
@@ -908,17 +1179,92 @@ void CPUMatMulOperation::matmul_2d(const T *a_data, const T *b_data, T *c_data,
                                    size_t a_row_stride, size_t a_col_stride,
                                    size_t b_row_stride, size_t b_col_stride,
                                    size_t c_row_stride, size_t c_col_stride) {
-    // Standard triple-loop matrix multiplication
-    // This handles arbitrary strides for transposed views
+
+#ifdef AXIOM_USE_ACCELERATE
+    // Try to use BLAS for float32/float64 if strides are compatible
+    // Only use BLAS for standard 2D matrix cases (M > 1 && N > 1)
+    // For vector cases (M=1 or N=1), the stride handling becomes tricky
+    if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) {
+        // Check if A is row-major or column-major (or transposed version)
+        bool a_row_major = (a_col_stride == 1);
+        bool a_col_major = (a_row_stride == 1);
+        bool b_row_major = (b_col_stride == 1);
+        bool b_col_major = (b_row_stride == 1);
+        bool c_row_major = (c_col_stride == 1) || (c_col_stride == 0 && N == 1);
+
+        // BLAS requires contiguous storage in some dimension
+        // Also require non-zero M, N, K and valid leading dimensions
+        if (M > 0 && N > 0 && K > 0 && (a_row_major || a_col_major) &&
+            (b_row_major || b_col_major) && c_row_major) {
+
+            // Determine transpose flags and leading dimensions for BLAS
+            bool trans_a =
+                !a_row_major; // If A is col-major, it looks transposed to BLAS
+            bool trans_b = !b_row_major;
+
+            // Leading dimensions (stride of the non-unit dimension)
+            // For row-major: lda = stride of row (number of columns in memory)
+            // For col-major: lda = stride of column (number of rows in memory)
+            size_t lda = a_row_major ? (a_row_stride > 0 ? a_row_stride : K)
+                                     : (a_col_stride > 0 ? a_col_stride : M);
+            size_t ldb = b_row_major ? (b_row_stride > 0 ? b_row_stride : N)
+                                     : (b_col_stride > 0 ? b_col_stride : K);
+            size_t ldc = (c_row_stride > 0) ? c_row_stride : N;
+
+            // BLAS requires lda >= K (or M if transposed), ldb >= N (or K if
+            // transposed), ldc >= N
+            size_t min_lda = trans_a ? M : K;
+            size_t min_ldb = trans_b ? K : N;
+            size_t min_ldc = N;
+
+            if (lda >= min_lda && ldb >= min_ldb && ldc >= min_ldc && lda > 0 &&
+                ldb > 0 && ldc > 0) {
+
+                if constexpr (std::is_same_v<T, float>) {
+                    accelerate::gemm_f32(a_data, b_data, c_data, M, N, K, lda,
+                                         ldb, ldc, trans_a, trans_b);
+                } else {
+                    accelerate::gemm_f64(a_data, b_data, c_data, M, N, K, lda,
+                                         ldb, ldc, trans_a, trans_b);
+                }
+                return;
+            }
+        }
+    }
+#endif // AXIOM_USE_ACCELERATE
+
+    // Fallback: Cache-blocked matrix multiplication for better performance
+    // Use 64x64 tile size (fits in L1 cache on Apple Silicon)
+    constexpr size_t TILE_SIZE = 64;
+
+    // Zero the output first (important since we're accumulating)
     for (size_t i = 0; i < M; ++i) {
         for (size_t j = 0; j < N; ++j) {
-            T sum = T(0);
-            for (size_t k = 0; k < K; ++k) {
-                T a_val = a_data[i * a_row_stride + k * a_col_stride];
-                T b_val = b_data[k * b_row_stride + j * b_col_stride];
-                sum += a_val * b_val;
+            c_data[i * c_row_stride + j * c_col_stride] = T(0);
+        }
+    }
+
+    // Tiled matrix multiplication
+    for (size_t i0 = 0; i0 < M; i0 += TILE_SIZE) {
+        size_t i_end = std::min(i0 + TILE_SIZE, M);
+        for (size_t k0 = 0; k0 < K; k0 += TILE_SIZE) {
+            size_t k_end = std::min(k0 + TILE_SIZE, K);
+            for (size_t j0 = 0; j0 < N; j0 += TILE_SIZE) {
+                size_t j_end = std::min(j0 + TILE_SIZE, N);
+
+                // Micro-kernel for this tile
+                for (size_t i = i0; i < i_end; ++i) {
+                    for (size_t k = k0; k < k_end; ++k) {
+                        T a_val = a_data[i * a_row_stride + k * a_col_stride];
+                        for (size_t j = j0; j < j_end; ++j) {
+                            T b_val =
+                                b_data[k * b_row_stride + j * b_col_stride];
+                            c_data[i * c_row_stride + j * c_col_stride] +=
+                                a_val * b_val;
+                        }
+                    }
+                }
             }
-            c_data[i * c_row_stride + j * c_col_stride] = sum;
         }
     }
 }
@@ -2049,7 +2395,34 @@ Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor &input,
     const T *input_data = input.typed_data<T>();
     T *result_data = result.typed_data<T>();
 
-    // Process each softmax independently
+#ifdef AXIOM_USE_ACCELERATE
+    // Use Accelerate for contiguous softmax along the last axis (common case)
+    if (input.is_contiguous() && inner_size == 1) {
+        for (size_t outer = 0; outer < outer_size; ++outer) {
+            const T *slice_in = input_data + outer * axis_size;
+            T *slice_out = result_data + outer * axis_size;
+
+            if constexpr (std::is_same_v<T, float>) {
+                if (is_log_) {
+                    accelerate::vlog_softmax_f32(slice_in, slice_out,
+                                                 axis_size);
+                } else {
+                    accelerate::vsoftmax_f32(slice_in, slice_out, axis_size);
+                }
+            } else if constexpr (std::is_same_v<T, double>) {
+                if (is_log_) {
+                    accelerate::vlog_softmax_f64(slice_in, slice_out,
+                                                 axis_size);
+                } else {
+                    accelerate::vsoftmax_f64(slice_in, slice_out, axis_size);
+                }
+            }
+        }
+        return result;
+    }
+#endif // AXIOM_USE_ACCELERATE
+
+    // Process each softmax independently (general case)
     for (size_t outer = 0; outer < outer_size; ++outer) {
         for (size_t inner = 0; inner < inner_size; ++inner) {
             // Find max for numerical stability

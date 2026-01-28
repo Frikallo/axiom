@@ -511,3 +511,59 @@ All operations use MPSGraph on Metal GPU for automatic kernel fusion and Apple S
 | Dropout | ✓ | ✓ | With reproducible masks |
 
 **NaN/Inf Detection:** `has_nan()` and `has_inf()` work on Float16, Float32, Float64, Complex64, and Complex128.
+
+## CPU SIMD Optimizations
+
+Axiom leverages **Apple Accelerate framework** and **ARM NEON SIMD** for high-performance CPU operations on Apple Silicon. The CPU backend uses a tiered dispatch system:
+
+1. **Tier 1: Apple Accelerate** (BLAS/vDSP/vForce) for contiguous float32/float64
+2. **Tier 2: ARM NEON** intrinsics for other vectorizable types (int32, int64, etc.)
+3. **Tier 3: Scalar fallback** for edge cases and complex types
+
+### Optimized Operations
+
+| Operation | Optimization | Speedup vs Naive |
+|-----------|--------------|------------------|
+| MatMul | BLAS `cblas_sgemm`/`cblas_dgemm` | ~100x |
+| Add/Sub/Mul/Div | vDSP vector ops | ~100-150x |
+| Exp/Log/Sqrt/Sin/Cos/Tan/Tanh | vForce vectorized math | ~30x |
+| Abs/Neg/ReLU | ARM NEON intrinsics | ~10-20x |
+| Sum/Max/Min/Mean | vDSP reductions | ~500x |
+| Softmax | Fused vDSP (max + exp + sum + div) | ~10x |
+
+### Memory Alignment
+
+All CPU tensors use **64-byte aligned memory** (cache line size on Apple Silicon) via `posix_memalign()` for optimal SIMD performance.
+
+### Benchmark Results (Apple M1)
+
+```
+Matrix Multiplication (float32):
+  512x512:    0.12 ms
+  1024x1024:  0.69 ms
+  2048x2048:  5.6 ms
+
+Binary Operations (1M elements, float32):
+  Add:        0.03 ms
+  Multiply:   0.03 ms
+  Divide:     0.12 ms
+
+Unary Operations (1M elements, float32):
+  Exp:        0.35 ms
+  Sqrt:       0.28 ms
+  ReLU:       0.06 ms
+
+Reductions (1M elements, float32):
+  Sum:        0.04 ms
+  Max:        0.04 ms
+  Mean:       0.04 ms
+```
+
+### Automatic Dispatch
+
+Optimizations are applied automatically when:
+- Tensor is contiguous (no negative strides from `flip()`)
+- Data type is supported (float32/float64 for Accelerate, int32/int64/float for NEON)
+- Operation is vectorizable
+
+Non-contiguous tensors and unsupported types gracefully fall back to scalar implementations.

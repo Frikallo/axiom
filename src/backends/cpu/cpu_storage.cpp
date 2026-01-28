@@ -1,6 +1,7 @@
 #include "cpu_storage.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 #include "axiom/error.hpp"
@@ -10,12 +11,47 @@ namespace backends {
 namespace cpu {
 
 // ============================================================================
+// Aligned Memory Allocation
+// ============================================================================
+
+// Custom deleter for aligned memory allocated with posix_memalign
+struct AlignedDeleter {
+    void operator()(uint8_t *ptr) const {
+        if (ptr) {
+            std::free(ptr);
+        }
+    }
+};
+
+// Allocate aligned memory (64-byte alignment for optimal SIMD/cache
+// performance)
+static std::shared_ptr<uint8_t[]> allocate_aligned(size_t size_bytes) {
+    constexpr size_t alignment = 64; // Cache line size on Apple Silicon
+
+    if (size_bytes == 0) {
+        return nullptr;
+    }
+
+    void *ptr = nullptr;
+    int result = posix_memalign(&ptr, alignment, size_bytes);
+
+    if (result != 0 || ptr == nullptr) {
+        throw MemoryError("Failed to allocate " + std::to_string(size_bytes) +
+                          " bytes of aligned memory");
+    }
+
+    // Use shared_ptr with custom deleter for proper cleanup
+    return std::shared_ptr<uint8_t[]>(static_cast<uint8_t *>(ptr),
+                                      AlignedDeleter{});
+}
+
+// ============================================================================
 // CPUStorage Implementation
 // ============================================================================
 
 CPUStorage::CPUStorage(size_t size_bytes)
-    : data_(new uint8_t[size_bytes], std::default_delete<uint8_t[]>()),
-      size_bytes_(size_bytes), offset_(0), base_storage_(nullptr) {}
+    : data_(allocate_aligned(size_bytes)), size_bytes_(size_bytes), offset_(0),
+      base_storage_(nullptr) {}
 
 void *CPUStorage::data() {
     if (data_ == nullptr) {

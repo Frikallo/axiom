@@ -36,7 +36,7 @@ if(APPLE)
     find_library(FOUNDATION_FRAMEWORK Foundation)
     find_library(MPS_FRAMEWORK MetalPerformanceShaders)
     find_library(MPSGRAPH_FRAMEWORK MetalPerformanceShadersGraph)
-    
+
     if(METAL_FRAMEWORK AND FOUNDATION_FRAMEWORK AND MPS_FRAMEWORK AND MPSGRAPH_FRAMEWORK)
         enable_language(OBJCXX)
         set(CMAKE_OBJCXX_STANDARD 20)
@@ -45,6 +45,16 @@ if(APPLE)
     else()
         message(WARNING "Metal, Foundation, MPS, or MPSGraph framework not found. GPU support will be disabled.")
         set(AXIOM_HAS_METAL OFF)
+    endif()
+
+    # Apple Accelerate framework for BLAS/vDSP optimizations
+    find_library(ACCELERATE_FRAMEWORK Accelerate REQUIRED)
+    if(ACCELERATE_FRAMEWORK)
+        set(AXIOM_HAS_ACCELERATE ON)
+        message(STATUS "Accelerate framework: found")
+    else()
+        set(AXIOM_HAS_ACCELERATE OFF)
+        message(WARNING "Accelerate framework not found. CPU optimizations will be limited.")
     endif()
 endif()
 
@@ -77,6 +87,7 @@ set(AXIOM_SOURCES
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
     src/backends/cpu/cpu_operations.cpp
+    src/backends/cpu/cpu_accelerate.cpp
 )
 
 # Add Metal backend if available
@@ -182,9 +193,26 @@ if(APPLE AND AXIOM_HAS_METAL)
             ${MPS_FRAMEWORK}
             ${MPSGRAPH_FRAMEWORK}
     )
-    
+
     # Enable Metal support
     target_compile_definitions(axiom PUBLIC AXIOM_METAL_SUPPORT)
+endif()
+
+# Apple Accelerate framework linkage
+if(APPLE AND AXIOM_HAS_ACCELERATE)
+    target_link_libraries(axiom PUBLIC ${ACCELERATE_FRAMEWORK})
+    target_compile_definitions(axiom PUBLIC AXIOM_USE_ACCELERATE)
+endif()
+
+# Fast math for aggressive floating-point optimization in Release builds
+# Use -fno-finite-math-only to allow proper NaN/Inf detection (for isnan, isinf, isfinite)
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(axiom PRIVATE
+            -ffast-math
+            -fno-finite-math-only  # Allow proper NaN/Inf handling
+        )
+    endif()
 endif()
 
 # Compiler feature requirements
@@ -285,8 +313,14 @@ if(APPLE)
     else()
         message(STATUS "  Metal support: NO (frameworks not found)")
     endif()
+    if(AXIOM_HAS_ACCELERATE)
+        message(STATUS "  Accelerate support: YES (BLAS/vDSP)")
+    else()
+        message(STATUS "  Accelerate support: NO")
+    endif()
     message(STATUS "  Target architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 else()
     message(STATUS "  Metal support: NO (not on Apple platform)")
+    message(STATUS "  Accelerate support: NO (not on Apple platform)")
 endif()
 message(STATUS "")
