@@ -303,7 +303,7 @@ void test_scalar_comparison_operators() {
     auto x = Tensor::from_data(x_data.data(), {5});
 
     // Test x > 3
-    auto gt3 = x > 3.0f;
+    Tensor gt3 = x > 3.0f; // Expression evaluates via implicit conversion
     auto gt3_cpu = gt3.cpu();
     const uint8_t *gt3_data = gt3_cpu.typed_data<uint8_t>();
     ASSERT(gt3_data[0] == 0 && gt3_data[1] == 0 && gt3_data[2] == 0,
@@ -311,7 +311,7 @@ void test_scalar_comparison_operators() {
     ASSERT(gt3_data[3] == 1 && gt3_data[4] == 1, "4,5 should be > 3");
 
     // Test x <= 2
-    auto le2 = x <= 2.0f;
+    Tensor le2 = x <= 2.0f; // Expression evaluates via implicit conversion
     auto le2_cpu = le2.cpu();
     const uint8_t *le2_data = le2_cpu.typed_data<uint8_t>();
     ASSERT(le2_data[0] == 1 && le2_data[1] == 1, "1,2 should be <= 2");
