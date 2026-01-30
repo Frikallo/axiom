@@ -496,6 +496,134 @@ struct ErfFunc {
     }
 };
 
+struct SinhFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::sinh(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
+            return std::sinh(a);
+        } else {
+            return static_cast<T>(std::sinh(static_cast<double>(a)));
+        }
+    }
+};
+
+struct CoshFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::cosh(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
+            return std::cosh(a);
+        } else {
+            return static_cast<T>(std::cosh(static_cast<double>(a)));
+        }
+    }
+};
+
+struct AsinFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::asin(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
+            return std::asin(a);
+        } else {
+            return static_cast<T>(std::asin(static_cast<double>(a)));
+        }
+    }
+};
+
+struct AcosFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::acos(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
+            return std::acos(a);
+        } else {
+            return static_cast<T>(std::acos(static_cast<double>(a)));
+        }
+    }
+};
+
+struct AtanFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::atan(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
+            return std::atan(a);
+        } else {
+            return static_cast<T>(std::atan(static_cast<double>(a)));
+        }
+    }
+};
+
+struct Log2Func {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::log2(a);
+        } else {
+            return static_cast<T>(std::log2(static_cast<double>(a)));
+        }
+    }
+};
+
+struct Log10Func {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::log10(a);
+        } else if constexpr (std::is_same_v<T, std::complex<float>> ||
+                             std::is_same_v<T, std::complex<double>>) {
+            return std::log10(a);
+        } else {
+            return static_cast<T>(std::log10(static_cast<double>(a)));
+        }
+    }
+};
+
+struct Log1pFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::log1p(a);
+        } else {
+            return static_cast<T>(std::log1p(static_cast<double>(a)));
+        }
+    }
+};
+
+struct Exp2Func {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::exp2(a);
+        } else {
+            return static_cast<T>(std::exp2(static_cast<double>(a)));
+        }
+    }
+};
+
+struct Expm1Func {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::expm1(a);
+        } else {
+            return static_cast<T>(std::expm1(static_cast<double>(a)));
+        }
+    }
+};
+
+struct RsqrtFunc {
+    template <typename T> T operator()(const T &a) const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return static_cast<T>(1) / std::sqrt(a);
+        } else {
+            return static_cast<T>(1.0 / std::sqrt(static_cast<double>(a)));
+        }
+    }
+};
+
 struct GELUFunc {
     template <typename T> T operator()(const T &a) const {
         // GELU(x) = 0.5 * x * (1 + erf(x / sqrt(2)))

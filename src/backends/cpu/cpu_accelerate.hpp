@@ -97,12 +97,97 @@ void vabs_f64(const double *input, double *output, size_t n);
 void vneg_f32(const float *input, float *output, size_t n);
 void vneg_f64(const double *input, double *output, size_t n);
 
-// Floor, ceil, round
+// Floor, ceil, round, trunc
 void vfloor_f32(const float *input, float *output, size_t n);
 void vfloor_f64(const double *input, double *output, size_t n);
 
 void vceil_f32(const float *input, float *output, size_t n);
 void vceil_f64(const double *input, double *output, size_t n);
+
+void vround_f32(const float *input, float *output, size_t n);
+void vround_f64(const double *input, double *output, size_t n);
+
+void vtrunc_f32(const float *input, float *output, size_t n);
+void vtrunc_f64(const double *input, double *output, size_t n);
+
+// Reciprocal (1/x)
+void vrecip_f32(const float *input, float *output, size_t n);
+void vrecip_f64(const double *input, double *output, size_t n);
+
+// Reciprocal square root (1/sqrt(x))
+void vrsqrt_f32(const float *input, float *output, size_t n);
+void vrsqrt_f64(const double *input, double *output, size_t n);
+
+// Square (x*x)
+void vsquare_f32(const float *input, float *output, size_t n);
+void vsquare_f64(const double *input, double *output, size_t n);
+
+// Hyperbolic functions
+void vsinh_f32(const float *input, float *output, size_t n);
+void vsinh_f64(const double *input, double *output, size_t n);
+
+void vcosh_f32(const float *input, float *output, size_t n);
+void vcosh_f64(const double *input, double *output, size_t n);
+
+// Inverse trigonometric functions
+void vasin_f32(const float *input, float *output, size_t n);
+void vasin_f64(const double *input, double *output, size_t n);
+
+void vacos_f32(const float *input, float *output, size_t n);
+void vacos_f64(const double *input, double *output, size_t n);
+
+void vatan_f32(const float *input, float *output, size_t n);
+void vatan_f64(const double *input, double *output, size_t n);
+
+// Error function
+void verf_f32(const float *input, float *output, size_t n);
+void verf_f64(const double *input, double *output, size_t n);
+
+// Cube root
+void vcbrt_f32(const float *input, float *output, size_t n);
+void vcbrt_f64(const double *input, double *output, size_t n);
+
+// Alternative logarithm bases
+void vlog2_f32(const float *input, float *output, size_t n);
+void vlog2_f64(const double *input, double *output, size_t n);
+
+void vlog10_f32(const float *input, float *output, size_t n);
+void vlog10_f64(const double *input, double *output, size_t n);
+
+// Numerically stable variants
+void vlog1p_f32(const float *input, float *output, size_t n);
+void vlog1p_f64(const double *input, double *output, size_t n);
+
+void vexpm1_f32(const float *input, float *output, size_t n);
+void vexpm1_f64(const double *input, double *output, size_t n);
+
+// 2^x
+void vexp2_f32(const float *input, float *output, size_t n);
+void vexp2_f64(const double *input, double *output, size_t n);
+
+// ============================================================================
+// vForce Binary Math Operations
+// ============================================================================
+
+// Power (a^b)
+void vpow_f32(const float *a, const float *b, float *result, size_t n);
+void vpow_f64(const double *a, const double *b, double *result, size_t n);
+
+// atan2(y, x)
+void vatan2_f32(const float *y, const float *x, float *result, size_t n);
+void vatan2_f64(const double *y, const double *x, double *result, size_t n);
+
+// Hypotenuse sqrt(a^2 + b^2)
+void vhypot_f32(const float *a, const float *b, float *result, size_t n);
+void vhypot_f64(const double *a, const double *b, double *result, size_t n);
+
+// Floating-point remainder
+void vfmod_f32(const float *a, const float *b, float *result, size_t n);
+void vfmod_f64(const double *a, const double *b, double *result, size_t n);
+
+// Copysign (magnitude of a, sign of b)
+void vcopysign_f32(const float *a, const float *b, float *result, size_t n);
+void vcopysign_f64(const double *a, const double *b, double *result, size_t n);
 
 // ============================================================================
 // vDSP Reduction Operations
@@ -123,6 +208,112 @@ double vmin_f64(const double *input, size_t n);
 // Mean (sum / n)
 float vmean_f32(const float *input, size_t n);
 double vmean_f64(const double *input, size_t n);
+
+// Sum of squares
+float vsumsq_f32(const float *input, size_t n);
+double vsumsq_f64(const double *input, size_t n);
+
+// Root mean square
+float vrms_f32(const float *input, size_t n);
+double vrms_f64(const double *input, size_t n);
+
+// Dot product
+float vdot_f32(const float *a, const float *b, size_t n);
+double vdot_f64(const double *a, const double *b, size_t n);
+
+// L2 norm (Euclidean norm)
+float vnorm2_f32(const float *input, size_t n);
+double vnorm2_f64(const double *input, size_t n);
+
+// L1 norm (sum of absolute values)
+float vnorm1_f32(const float *input, size_t n);
+double vnorm1_f64(const double *input, size_t n);
+
+// Index of maximum value (argmax)
+size_t vargmax_f32(const float *input, size_t n);
+size_t vargmax_f64(const double *input, size_t n);
+
+// Index of minimum value (argmin)
+size_t vargmin_f32(const float *input, size_t n);
+size_t vargmin_f64(const double *input, size_t n);
+
+// Index of maximum absolute value
+size_t vargmax_abs_f32(const float *input, size_t n);
+size_t vargmax_abs_f64(const double *input, size_t n);
+
+// ============================================================================
+// vDSP Vector Operations
+// ============================================================================
+
+// Clip values to range [low, high]
+void vclip_f32(const float *input, float low, float high, float *output, size_t n);
+void vclip_f64(const double *input, double low, double high, double *output, size_t n);
+
+// Threshold: output[i] = input[i] >= threshold ? input[i] : 0
+// (Useful for ReLU implementation)
+void vthreshold_f32(const float *input, float threshold, float *output, size_t n);
+void vthreshold_f64(const double *input, double threshold, double *output, size_t n);
+
+// Matrix transpose
+void vmtrans_f32(const float *input, float *output, size_t rows, size_t cols);
+void vmtrans_f64(const double *input, double *output, size_t rows, size_t cols);
+
+// Normalize vector (output = (input - mean) / std)
+void vnormalize_f32(const float *input, float *output, size_t n);
+void vnormalize_f64(const double *input, double *output, size_t n);
+
+// Linear interpolation: output = a + t * (b - a)
+void vlerp_f32(const float *a, const float *b, float t, float *output, size_t n);
+void vlerp_f64(const double *a, const double *b, double t, double *output, size_t n);
+
+// Polynomial evaluation
+void vpoly_f32(const float *input, const float *coeffs, size_t num_coeffs, float *output, size_t n);
+void vpoly_f64(const double *input, const double *coeffs, size_t num_coeffs, double *output, size_t n);
+
+// ============================================================================
+// BLAS Level 1 Operations
+// ============================================================================
+
+// AXPY: y = alpha * x + y
+void vaxpy_f32(float alpha, const float *x, float *y, size_t n);
+void vaxpy_f64(double alpha, const double *x, double *y, size_t n);
+
+// Scale: x = alpha * x
+void vscale_f32(float alpha, float *x, size_t n);
+void vscale_f64(double alpha, double *x, size_t n);
+
+// Copy: y = x
+void vcopy_f32(const float *x, float *y, size_t n);
+void vcopy_f64(const double *x, double *y, size_t n);
+
+// Swap: swap x and y
+void vswap_f32(float *x, float *y, size_t n);
+void vswap_f64(double *x, double *y, size_t n);
+
+// ============================================================================
+// BLAS Level 2 Operations (Matrix-Vector)
+// ============================================================================
+
+// GEMV: y = alpha * op(A) * x + beta * y
+// For our use: y = A @ x (alpha=1, beta=0)
+void gemv_f32(const float *A, const float *x, float *y,
+              size_t M, size_t N, size_t lda,
+              bool transpose_a);
+void gemv_f64(const double *A, const double *x, double *y,
+              size_t M, size_t N, size_t lda,
+              bool transpose_a);
+
+// ============================================================================
+// Activation Functions (Optimized)
+// ============================================================================
+
+// ReLU: max(0, x) - uses vDSP_vthr
+void vrelu_f32(const float *input, float *output, size_t n);
+void vrelu_f64(const double *input, double *output, size_t n);
+
+// Clipped ReLU: min(max(0, x), cap)
+void vrelu_clipped_f32(const float *input, float cap, float *output, size_t n);
+void vrelu_clipped_f64(const double *input, double cap, double *output, size_t n);
 
 // ============================================================================
 // Softmax Optimization Helpers

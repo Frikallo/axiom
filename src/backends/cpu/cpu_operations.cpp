@@ -174,6 +174,22 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
                 accelerate::vdiv_f32(lhs_data, rhs_data, result_data,
                                      total_elements);
                 return;
+            } else if constexpr (std::is_same_v<Func, PowerFunc>) {
+                accelerate::vpow_f32(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Atan2Func>) {
+                accelerate::vatan2_f32(lhs_data, rhs_data, result_data,
+                                       total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, HypotFunc>) {
+                accelerate::vhypot_f32(lhs_data, rhs_data, result_data,
+                                       total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, ModuloFunc>) {
+                accelerate::vfmod_f32(lhs_data, rhs_data, result_data,
+                                      total_elements);
+                return;
             }
         }
         if constexpr (std::is_same_v<T, double>) {
@@ -192,6 +208,22 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
             } else if constexpr (std::is_same_v<Func, DivideFunc>) {
                 accelerate::vdiv_f64(lhs_data, rhs_data, result_data,
                                      total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, PowerFunc>) {
+                accelerate::vpow_f64(lhs_data, rhs_data, result_data,
+                                     total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Atan2Func>) {
+                accelerate::vatan2_f64(lhs_data, rhs_data, result_data,
+                                       total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, HypotFunc>) {
+                accelerate::vhypot_f64(lhs_data, rhs_data, result_data,
+                                       total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, ModuloFunc>) {
+                accelerate::vfmod_f64(lhs_data, rhs_data, result_data,
+                                      total_elements);
                 return;
             }
         }
@@ -790,6 +822,60 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
             } else if constexpr (std::is_same_v<Func, CeilFunc>) {
                 accelerate::vceil_f32(input_data, result_data, total_elements);
                 return;
+            } else if constexpr (std::is_same_v<Func, RoundFunc>) {
+                accelerate::vround_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, TruncFunc>) {
+                accelerate::vtrunc_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, ReciprocalFunc>) {
+                accelerate::vrecip_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SquareFunc>) {
+                accelerate::vsquare_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, ErfFunc>) {
+                accelerate::verf_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, CbrtFunc>) {
+                accelerate::vcbrt_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, ReLUFunc>) {
+                accelerate::vrelu_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SinhFunc>) {
+                accelerate::vsinh_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, CoshFunc>) {
+                accelerate::vcosh_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, AsinFunc>) {
+                accelerate::vasin_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, AcosFunc>) {
+                accelerate::vacos_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, AtanFunc>) {
+                accelerate::vatan_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Log2Func>) {
+                accelerate::vlog2_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Log10Func>) {
+                accelerate::vlog10_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Log1pFunc>) {
+                accelerate::vlog1p_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Exp2Func>) {
+                accelerate::vexp2_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Expm1Func>) {
+                accelerate::vexpm1_f32(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, RsqrtFunc>) {
+                accelerate::vrsqrt_f32(input_data, result_data, total_elements);
+                return;
             }
         }
         if constexpr (std::is_same_v<T, double>) {
@@ -825,6 +911,60 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
                 return;
             } else if constexpr (std::is_same_v<Func, CeilFunc>) {
                 accelerate::vceil_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, RoundFunc>) {
+                accelerate::vround_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, TruncFunc>) {
+                accelerate::vtrunc_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, ReciprocalFunc>) {
+                accelerate::vrecip_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SquareFunc>) {
+                accelerate::vsquare_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, ErfFunc>) {
+                accelerate::verf_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, CbrtFunc>) {
+                accelerate::vcbrt_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, ReLUFunc>) {
+                accelerate::vrelu_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SinhFunc>) {
+                accelerate::vsinh_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, CoshFunc>) {
+                accelerate::vcosh_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, AsinFunc>) {
+                accelerate::vasin_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, AcosFunc>) {
+                accelerate::vacos_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, AtanFunc>) {
+                accelerate::vatan_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Log2Func>) {
+                accelerate::vlog2_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Log10Func>) {
+                accelerate::vlog10_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Log1pFunc>) {
+                accelerate::vlog1p_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Exp2Func>) {
+                accelerate::vexp2_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, Expm1Func>) {
+                accelerate::vexpm1_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, RsqrtFunc>) {
+                accelerate::vrsqrt_f64(input_data, result_data, total_elements);
                 return;
             }
         }
@@ -1659,6 +1799,21 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor &input, int axis,
     int64_t *result_data = result.typed_data<int64_t>();
     const T *input_data = input.typed_data<T>();
 
+#ifdef AXIOM_USE_ACCELERATE
+    // Fast path: Use Accelerate for full reduction on contiguous float32/float64
+    if (ndim == 1 && axis == 0 && input.is_contiguous()) {
+        if constexpr (std::is_same_v<T, float>) {
+            size_t idx = accelerate::vargmax_f32(input_data, input.size());
+            result_data[0] = static_cast<int64_t>(idx);
+            return result;
+        } else if constexpr (std::is_same_v<T, double>) {
+            size_t idx = accelerate::vargmax_f64(input_data, input.size());
+            result_data[0] = static_cast<int64_t>(idx);
+            return result;
+        }
+    }
+#endif
+
     // Calculate sizes
     size_t outer_size = 1;
     for (int i = 0; i < axis; ++i)
@@ -1772,6 +1927,21 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor &input, int axis,
     Tensor result = Tensor::zeros(output_shape, DType::Int64, Device::CPU);
     int64_t *result_data = result.typed_data<int64_t>();
     const T *input_data = input.typed_data<T>();
+
+#ifdef AXIOM_USE_ACCELERATE
+    // Fast path: Use Accelerate for full reduction on contiguous float32/float64
+    if (ndim == 1 && axis == 0 && input.is_contiguous()) {
+        if constexpr (std::is_same_v<T, float>) {
+            size_t idx = accelerate::vargmin_f32(input_data, input.size());
+            result_data[0] = static_cast<int64_t>(idx);
+            return result;
+        } else if constexpr (std::is_same_v<T, double>) {
+            size_t idx = accelerate::vargmin_f64(input_data, input.size());
+            result_data[0] = static_cast<int64_t>(idx);
+            return result;
+        }
+    }
+#endif
 
     // Calculate sizes
     size_t outer_size = 1;
