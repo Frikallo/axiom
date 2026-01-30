@@ -177,6 +177,8 @@ set_target_properties(axiom PROPERTIES
 target_include_directories(axiom
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FXdiv/include>
         $<INSTALL_INTERFACE:include>
         $<BUILD_INTERFACE:${half_SOURCE_DIR}/include>
     PRIVATE
@@ -203,6 +205,9 @@ if(APPLE AND AXIOM_HAS_ACCELERATE)
     target_link_libraries(axiom PUBLIC ${ACCELERATE_FRAMEWORK})
     target_compile_definitions(axiom PUBLIC AXIOM_USE_ACCELERATE)
 endif()
+
+# XSIMD for cross-platform SIMD operations
+target_compile_definitions(axiom PUBLIC AXIOM_USE_XSIMD)
 
 # Fast math for aggressive floating-point optimization in Release builds
 # Use -fno-finite-math-only to allow proper NaN/Inf detection (for isnan, isinf, isfinite)
@@ -322,5 +327,13 @@ if(APPLE)
 else()
     message(STATUS "  Metal support: NO (not on Apple platform)")
     message(STATUS "  Accelerate support: NO (not on Apple platform)")
+endif()
+# XSIMD architecture detection
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    message(STATUS "  XSIMD target: ARM NEON")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    message(STATUS "  XSIMD target: x86 SSE/AVX (auto-detected at compile time)")
+else()
+    message(STATUS "  XSIMD target: Scalar fallback")
 endif()
 message(STATUS "")

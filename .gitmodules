@@ -4,3 +4,6 @@
 [submodule "third_party/half"]
 	path = third_party/half
 	url = https://github.com/suruoxi/half
+[submodule "third_party/FXdiv"]
+	path = third_party/FXdiv
+	url = https://github.com/Maratyszcza/FXdiv.git

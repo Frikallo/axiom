@@ -197,10 +197,8 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
         }
 #endif // AXIOM_USE_ACCELERATE
 
-        // Tier 2: NEON SIMD for other vectorizable types
-#ifdef __ARM_NEON
+        // Tier 2: XSIMD for vectorizable types (all platforms)
         if constexpr (simd::has_support<T>) {
-            // Use NEON vectorized operations for add/sub/mul
             if constexpr (std::is_same_v<Func, AddFunc>) {
                 simd::binary_vectorized(lhs_data, rhs_data, result_data,
                                         total_elements, simd::VecAdd{});
@@ -210,42 +208,23 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
                                         total_elements, simd::VecSub{});
                 return;
             } else if constexpr (std::is_same_v<Func, MultiplyFunc>) {
-                if constexpr (std::is_same_v<T, float> ||
-                              std::is_same_v<T, double> ||
-                              std::is_same_v<T, int32_t> ||
-                              std::is_same_v<T, uint32_t>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecMul{});
-                    return;
-                }
+                simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                        total_elements, simd::VecMul{});
+                return;
             } else if constexpr (std::is_same_v<Func, DivideFunc>) {
-                if constexpr (std::is_same_v<T, float> ||
-                              std::is_same_v<T, double>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecDiv{});
-                    return;
-                }
+                simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                        total_elements, simd::VecDiv{});
+                return;
             } else if constexpr (std::is_same_v<Func, MaximumFunc>) {
-                if constexpr (std::is_same_v<T, float> ||
-                              std::is_same_v<T, double> ||
-                              std::is_same_v<T, int32_t> ||
-                              std::is_same_v<T, uint32_t>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecMax{});
-                    return;
-                }
+                simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                        total_elements, simd::VecMax{});
+                return;
             } else if constexpr (std::is_same_v<Func, MinimumFunc>) {
-                if constexpr (std::is_same_v<T, float> ||
-                              std::is_same_v<T, double> ||
-                              std::is_same_v<T, int32_t> ||
-                              std::is_same_v<T, uint32_t>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecMin{});
-                    return;
-                }
+                simd::binary_vectorized(lhs_data, rhs_data, result_data,
+                                        total_elements, simd::VecMin{});
+                return;
             }
         }
-#endif // __ARM_NEON
 
         // Tier 3: Scalar fallback
         for (size_t i = 0; i < total_elements; ++i) {
@@ -819,38 +798,67 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
     }
 #endif // AXIOM_USE_ACCELERATE
 
-    // Tier 2: NEON SIMD for vectorizable types
-#ifdef __ARM_NEON
+    // Tier 2: XSIMD for vectorizable types (all platforms)
     if constexpr (simd::has_support<T>) {
         if (input.is_contiguous()) {
             if constexpr (std::is_same_v<Func, AbsFunc>) {
-                if constexpr (std::is_same_v<T, float> ||
-                              std::is_same_v<T, double> ||
-                              std::is_same_v<T, int32_t>) {
+                // abs only makes sense for signed types
+                if constexpr (std::is_signed_v<T>) {
                     simd::unary_vectorized(input_data, result_data,
                                            total_elements, simd::VecAbs{});
                     return;
                 }
             } else if constexpr (std::is_same_v<Func, NegateFunc>) {
-                if constexpr (std::is_same_v<T, float> ||
-                              std::is_same_v<T, double> ||
-                              std::is_same_v<T, int32_t>) {
+                // negate only makes sense for signed types
+                if constexpr (std::is_signed_v<T>) {
                     simd::unary_vectorized(input_data, result_data,
                                            total_elements, simd::VecNeg{});
                     return;
                 }
             } else if constexpr (std::is_same_v<Func, ReLUFunc>) {
-                if constexpr (std::is_same_v<T, float> ||
-                              std::is_same_v<T, double> ||
-                              std::is_same_v<T, int32_t>) {
+                // ReLU only makes sense for signed types
+                if constexpr (std::is_signed_v<T>) {
                     simd::unary_vectorized(input_data, result_data,
                                            total_elements, simd::VecReLU{});
                     return;
                 }
             }
+#ifndef AXIOM_USE_ACCELERATE
+            // XSIMD math functions for non-Apple platforms
+            if constexpr (std::is_floating_point_v<T>) {
+                if constexpr (std::is_same_v<Func, ExpFunc>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecExp{});
+                    return;
+                } else if constexpr (std::is_same_v<Func, LogFunc>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecLog{});
+                    return;
+                } else if constexpr (std::is_same_v<Func, SqrtFunc>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecSqrt{});
+                    return;
+                } else if constexpr (std::is_same_v<Func, SinFunc>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecSin{});
+                    return;
+                } else if constexpr (std::is_same_v<Func, CosFunc>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecCos{});
+                    return;
+                } else if constexpr (std::is_same_v<Func, TanFunc>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecTan{});
+                    return;
+                } else if constexpr (std::is_same_v<Func, TanhFunc>) {
+                    simd::unary_vectorized(input_data, result_data,
+                                           total_elements, simd::VecTanh{});
+                    return;
+                }
+            }
+#endif // !AXIOM_USE_ACCELERATE
         }
     }
-#endif // __ARM_NEON
 
     // Tier 3: Scalar fallback
     for (size_t i = 0; i < total_elements; ++i) {
