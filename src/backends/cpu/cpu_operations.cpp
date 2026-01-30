@@ -1602,7 +1602,9 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor &a,
     }
 
     // Scalar result (rank-0 tensor) is handled naturally with empty shape
-    Tensor result = Tensor::zeros(result_shape, a.dtype(), Device::CPU);
+    // Use empty() instead of zeros() - BLAS will write all values, and fallback
+    // path zeros explicitly. This avoids unnecessary memory initialization.
+    Tensor result = Tensor::empty(result_shape, a.dtype(), Device::CPU);
 
     // Get strides for the matrix dimensions
     size_t a_itemsize = a.itemsize();
@@ -1740,6 +1742,43 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
     if (a.ndim() == 0 || b.ndim() == 0) {
         throw ShapeError("MatMul does not support 0-dimensional tensors");
     }
+
+#ifdef AXIOM_USE_ACCELERATE
+    // Fast path: Contiguous 2D float32/float64 matrices with same dtype
+    // Skip all the overhead of type promotion and complex stride handling
+    if (a.ndim() == 2 && b.ndim() == 2 && a.dtype() == b.dtype() &&
+        a.is_contiguous() && b.is_contiguous() &&
+        (a.dtype() == DType::Float32 || a.dtype() == DType::Float64)) {
+
+        size_t M = transpose_a ? a.shape()[1] : a.shape()[0];
+        size_t K_a = transpose_a ? a.shape()[0] : a.shape()[1];
+        size_t K_b = transpose_b ? b.shape()[1] : b.shape()[0];
+        size_t N = transpose_b ? b.shape()[0] : b.shape()[1];
+
+        if (K_a != K_b) {
+            throw ShapeError("MatMul dimension mismatch: A has " +
+                             std::to_string(K_a) + " columns but B has " +
+                             std::to_string(K_b) + " rows");
+        }
+
+        Tensor result = Tensor::empty({M, N}, a.dtype(), Device::CPU);
+
+        size_t lda = a.shape()[1];  // Leading dimension of A (cols)
+        size_t ldb = b.shape()[1];  // Leading dimension of B (cols)
+        size_t ldc = N;             // Leading dimension of C (cols)
+
+        if (a.dtype() == DType::Float32) {
+            accelerate::gemm_f32(a.typed_data<float>(), b.typed_data<float>(),
+                                 result.typed_data<float>(), M, N, K_a, lda, ldb,
+                                 ldc, transpose_a, transpose_b);
+        } else {
+            accelerate::gemm_f64(a.typed_data<double>(), b.typed_data<double>(),
+                                 result.typed_data<double>(), M, N, K_a, lda, ldb,
+                                 ldc, transpose_a, transpose_b);
+        }
+        return result;
+    }
+#endif
 
     // Type promote and dispatch
     DType result_dtype = ops::promote_types(a.dtype(), b.dtype());
