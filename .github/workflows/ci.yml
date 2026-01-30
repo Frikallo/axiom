@@ -29,8 +29,7 @@ jobs:
         
     - name: Install Dependencies
       run: |
-        brew install cmake ninja
-        pip3 install numpy
+        brew install cmake ninja numpy
 
     - name: Configure CMake
       run: |
