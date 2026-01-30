@@ -69,8 +69,12 @@ set(AXIOM_SOURCES
     src/tensor/storage.cpp
     src/tensor/dtype.cpp
     src/tensor/debug.cpp
-    src/tensor/io.cpp
     src/tensor/type_conversion.cpp
+
+    # IO
+    src/io/io.cpp
+    src/io/io_flatbuffers.cpp
+    src/io/io_numpy.cpp
     src/tensor/einops.cpp
     src/tensor/operations.cpp
     src/tensor/random.cpp
@@ -173,6 +177,7 @@ target_include_directories(axiom
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FXdiv/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -309,6 +314,7 @@ message(STATUS "  Build tests: ${AXIOM_BUILD_TESTS}")
 message(STATUS "  Build examples: ${AXIOM_BUILD_EXAMPLES}")
 message(STATUS "  Build benchmarks: ${AXIOM_BUILD_BENCHMARKS}")
 message(STATUS "  FP16 library: ${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16")
+message(STATUS "  FlatBuffers: ${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers")
 if(APPLE)
     if(AXIOM_HAS_METAL)
         message(STATUS "  Metal support: YES")

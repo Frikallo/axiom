@@ -530,3 +530,67 @@ set_tests_properties(tensor_numpy_ops
     PROPERTIES
         TIMEOUT 30
 )
+
+# FlatBuffers I/O tests
+add_executable(test_io_flatbuffers
+    test_io_flatbuffers.cpp
+)
+
+target_link_libraries(test_io_flatbuffers
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_io_flatbuffers
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME io_flatbuffers
+    COMMAND test_io_flatbuffers
+)
+
+set_tests_properties(io_flatbuffers
+    PROPERTIES
+        TIMEOUT 60
+)
+
+# NumPy I/O tests
+add_executable(test_io_numpy
+    test_io_numpy.cpp
+)
+
+target_link_libraries(test_io_numpy
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_io_numpy
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+# Generate NumPy test fixtures
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_FOUND)
+    add_custom_target(generate_npy_fixtures
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/generate_npy_fixtures.py
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/fixtures
+        COMMENT "Generating NumPy test fixtures"
+    )
+    add_dependencies(test_io_numpy generate_npy_fixtures)
+else()
+    message(WARNING "Python3 not found - NumPy test fixtures must be generated manually")
+endif()
+
+add_test(
+    NAME io_numpy
+    COMMAND test_io_numpy
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+set_tests_properties(io_numpy
+    PROPERTIES
+        TIMEOUT 30
+)

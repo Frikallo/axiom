@@ -6,7 +6,7 @@
 #include "axiom/debug.hpp"
 #include "axiom/dtype.hpp"
 #include "axiom/error.hpp"
-#include "axiom/io.hpp"
+#include "axiom/io/io.hpp"
 #include "axiom/numeric.hpp"
 #include "axiom/operations.hpp"
 #include "axiom/random.hpp"

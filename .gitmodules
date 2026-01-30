@@ -7,3 +7,6 @@
 [submodule "third_party/FP16"]
 	path = third_party/FP16
 	url = https://github.com/Maratyszcza/FP16
+[submodule "third_party/flatbuffers"]
+	path = third_party/flatbuffers
+	url = https://github.com/google/flatbuffers.git

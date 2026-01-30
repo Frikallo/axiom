@@ -16,9 +16,7 @@
 
 // Forward declarations for I/O functionality
 namespace axiom {
-namespace io {
-struct SerializationOptions;
-}
+namespace io {}
 } // namespace axiom
 
 namespace axiom {
@@ -435,24 +433,14 @@ class Tensor {
 
     // File I/O methods
     void save(const std::string &filename) const;
-    void save(const std::string &filename,
-              const io::SerializationOptions &options) const;
-    void save_to_stream(std::ostream &stream) const;
-    void save_to_stream(std::ostream &stream,
-                        const io::SerializationOptions &options) const;
 
-    // Static loading methods
+    // Static loading methods (auto-detects format: .axfb, .npy)
     static Tensor load(const std::string &filename,
                        Device device = Device::CPU);
-    static Tensor load_from_stream(std::istream &stream,
-                                   Device device = Device::CPU);
 
     // Archive methods (for multiple tensors)
     static void save_tensors(const std::map<std::string, Tensor> &tensors,
                              const std::string &filename);
-    static void save_tensors(const std::map<std::string, Tensor> &tensors,
-                             const std::string &filename,
-                             const io::SerializationOptions &options);
     static std::map<std::string, Tensor>
     load_tensors(const std::string &filename, Device device = Device::CPU);
     static std::vector<std::string>
