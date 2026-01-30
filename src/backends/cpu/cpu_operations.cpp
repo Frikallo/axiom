@@ -277,15 +277,18 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
             if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool>) {
                 if constexpr (std::is_same_v<Func, BitwiseAndFunc>) {
                     simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecBitwiseAnd{});
+                                            total_elements,
+                                            simd::VecBitwiseAnd{});
                     return;
                 } else if constexpr (std::is_same_v<Func, BitwiseOrFunc>) {
                     simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecBitwiseOr{});
+                                            total_elements,
+                                            simd::VecBitwiseOr{});
                     return;
                 } else if constexpr (std::is_same_v<Func, BitwiseXorFunc>) {
                     simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecBitwiseXor{});
+                                            total_elements,
+                                            simd::VecBitwiseXor{});
                     return;
                 }
             }
@@ -832,7 +835,8 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
                 accelerate::vrecip_f32(input_data, result_data, total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, SquareFunc>) {
-                accelerate::vsquare_f32(input_data, result_data, total_elements);
+                accelerate::vsquare_f32(input_data, result_data,
+                                        total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, ErfFunc>) {
                 accelerate::verf_f32(input_data, result_data, total_elements);
@@ -922,7 +926,8 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
                 accelerate::vrecip_f64(input_data, result_data, total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, SquareFunc>) {
-                accelerate::vsquare_f64(input_data, result_data, total_elements);
+                accelerate::vsquare_f64(input_data, result_data,
+                                        total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, ErfFunc>) {
                 accelerate::verf_f64(input_data, result_data, total_elements);
@@ -988,8 +993,8 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
                     return;
                 }
             } else if constexpr (std::is_same_v<Func, SquareFunc>) {
-                simd::unary_vectorized(input_data, result_data,
-                                       total_elements, simd::VecSquare{});
+                simd::unary_vectorized(input_data, result_data, total_elements,
+                                       simd::VecSquare{});
                 return;
             } else if constexpr (std::is_same_v<Func, SignFunc>) {
                 if constexpr (std::is_signed_v<T>) {
@@ -998,8 +1003,8 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
                     return;
                 }
             } else if constexpr (std::is_same_v<Func, LogicalNotFunc>) {
-                simd::unary_vectorized(input_data, result_data,
-                                       total_elements, simd::VecLogicalNot{});
+                simd::unary_vectorized(input_data, result_data, total_elements,
+                                       simd::VecLogicalNot{});
                 return;
             }
 
@@ -1029,7 +1034,8 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
                     return;
                 } else if constexpr (std::is_same_v<Func, ReciprocalFunc>) {
                     simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecReciprocal{});
+                                           total_elements,
+                                           simd::VecReciprocal{});
                     return;
                 }
 
@@ -1045,7 +1051,7 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
                     return;
                 } else
 #endif
-                if constexpr (std::is_same_v<Func, RoundFunc>) {
+                    if constexpr (std::is_same_v<Func, RoundFunc>) {
                     simd::unary_vectorized(input_data, result_data,
                                            total_elements, simd::VecRound{});
                     return;
@@ -1763,18 +1769,18 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
 
         Tensor result = Tensor::empty({M, N}, a.dtype(), Device::CPU);
 
-        size_t lda = a.shape()[1];  // Leading dimension of A (cols)
-        size_t ldb = b.shape()[1];  // Leading dimension of B (cols)
-        size_t ldc = N;             // Leading dimension of C (cols)
+        size_t lda = a.shape()[1]; // Leading dimension of A (cols)
+        size_t ldb = b.shape()[1]; // Leading dimension of B (cols)
+        size_t ldc = N;            // Leading dimension of C (cols)
 
         if (a.dtype() == DType::Float32) {
             accelerate::gemm_f32(a.typed_data<float>(), b.typed_data<float>(),
-                                 result.typed_data<float>(), M, N, K_a, lda, ldb,
-                                 ldc, transpose_a, transpose_b);
+                                 result.typed_data<float>(), M, N, K_a, lda,
+                                 ldb, ldc, transpose_a, transpose_b);
         } else {
             accelerate::gemm_f64(a.typed_data<double>(), b.typed_data<double>(),
-                                 result.typed_data<double>(), M, N, K_a, lda, ldb,
-                                 ldc, transpose_a, transpose_b);
+                                 result.typed_data<double>(), M, N, K_a, lda,
+                                 ldb, ldc, transpose_a, transpose_b);
         }
         return result;
     }
@@ -1793,6 +1799,7 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
                                            transpose_a, transpose_b);
 
     switch (result_dtype) {
+        DISPATCH_MATMUL(DType::Float16, float16_t)
         DISPATCH_MATMUL(DType::Float32, float)
         DISPATCH_MATMUL(DType::Float64, double)
         DISPATCH_MATMUL(DType::Int32, int32_t)
@@ -1839,7 +1846,8 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor &input, int axis,
     const T *input_data = input.typed_data<T>();
 
 #ifdef AXIOM_USE_ACCELERATE
-    // Fast path: Use Accelerate for full reduction on contiguous float32/float64
+    // Fast path: Use Accelerate for full reduction on contiguous
+    // float32/float64
     if (ndim == 1 && axis == 0 && input.is_contiguous()) {
         if constexpr (std::is_same_v<T, float>) {
             size_t idx = accelerate::vargmax_f32(input_data, input.size());
@@ -1928,6 +1936,7 @@ Tensor CPUArgMaxOperation::execute_reduction(const Tensor &input,
         return execute_argmax_typed<CTYPE>(input, ax, keep_dims);
 
     switch (input.dtype()) {
+        DISPATCH_ARGMAX(DType::Float16, float16_t)
         DISPATCH_ARGMAX(DType::Float32, float)
         DISPATCH_ARGMAX(DType::Float64, double)
         DISPATCH_ARGMAX(DType::Int32, int32_t)
@@ -1968,7 +1977,8 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor &input, int axis,
     const T *input_data = input.typed_data<T>();
 
 #ifdef AXIOM_USE_ACCELERATE
-    // Fast path: Use Accelerate for full reduction on contiguous float32/float64
+    // Fast path: Use Accelerate for full reduction on contiguous
+    // float32/float64
     if (ndim == 1 && axis == 0 && input.is_contiguous()) {
         if constexpr (std::is_same_v<T, float>) {
             size_t idx = accelerate::vargmin_f32(input_data, input.size());
@@ -2057,6 +2067,7 @@ Tensor CPUArgMinOperation::execute_reduction(const Tensor &input,
         return execute_argmin_typed<CTYPE>(input, ax, keep_dims);
 
     switch (input.dtype()) {
+        DISPATCH_ARGMIN(DType::Float16, float16_t)
         DISPATCH_ARGMIN(DType::Float32, float)
         DISPATCH_ARGMIN(DType::Float64, double)
         DISPATCH_ARGMIN(DType::Int32, int32_t)
@@ -2135,6 +2146,10 @@ static T get_tensor_value_at(const void *data, size_t byte_offset,
     case DType::UInt64:
         return static_cast<T>(*reinterpret_cast<const uint64_t *>(
             static_cast<const uint8_t *>(data) + byte_offset));
+    case DType::Float16:
+        return static_cast<T>(
+            static_cast<float>(*reinterpret_cast<const float16_t *>(
+                static_cast<const uint8_t *>(data) + byte_offset)));
     case DType::Float32:
         return static_cast<T>(*reinterpret_cast<const float *>(
             static_cast<const uint8_t *>(data) + byte_offset));
@@ -2251,6 +2266,7 @@ Tensor CPUWhereOperation::execute_where(const Tensor &condition,
         return execute_where_typed<CTYPE>(condition, a, b);
 
     switch (output_dtype) {
+        DISPATCH_WHERE(DType::Float16, float16_t)
         DISPATCH_WHERE(DType::Float32, float)
         DISPATCH_WHERE(DType::Float64, double)
         DISPATCH_WHERE(DType::Int32, int32_t)
@@ -2351,6 +2367,7 @@ Tensor CPUMaskedFillOperation::execute_masked_fill(const Tensor &input,
         return execute_masked_fill_typed<CTYPE>(input, mask, value);
 
     switch (input.dtype()) {
+        DISPATCH_MASKED_FILL(DType::Float16, float16_t)
         DISPATCH_MASKED_FILL(DType::Float32, float)
         DISPATCH_MASKED_FILL(DType::Float64, double)
         DISPATCH_MASKED_FILL(DType::Int32, int32_t)
@@ -2445,6 +2462,7 @@ CPUMaskedSelectOperation::execute_masked_select(const Tensor &input,
         return execute_masked_select_typed<CTYPE>(input, mask);
 
     switch (input.dtype()) {
+        DISPATCH_MASKED_SELECT(DType::Float16, float16_t)
         DISPATCH_MASKED_SELECT(DType::Float32, float)
         DISPATCH_MASKED_SELECT(DType::Float64, double)
         DISPATCH_MASKED_SELECT(DType::Int32, int32_t)
@@ -2527,6 +2545,7 @@ Tensor CPUGatherOperation::execute_gather(const Tensor &input, int dim,
         return execute_gather_typed<CTYPE>(input, dim, indices);
 
     switch (input.dtype()) {
+        DISPATCH_GATHER(DType::Float16, float16_t)
         DISPATCH_GATHER(DType::Float32, float)
         DISPATCH_GATHER(DType::Float64, double)
         DISPATCH_GATHER(DType::Int32, int32_t)
@@ -2615,6 +2634,7 @@ Tensor CPUScatterOperation::execute_scatter(const Tensor &input, int dim,
         return execute_scatter_typed<CTYPE>(input, dim, indices, src);
 
     switch (input.dtype()) {
+        DISPATCH_SCATTER(DType::Float16, float16_t)
         DISPATCH_SCATTER(DType::Float32, float)
         DISPATCH_SCATTER(DType::Float64, double)
         DISPATCH_SCATTER(DType::Int32, int32_t)
@@ -2708,6 +2728,7 @@ CPUIndexSelectOperation::execute_index_select(const Tensor &input, int dim,
         return execute_index_select_typed<CTYPE>(input, dim, indices);
 
     switch (input.dtype()) {
+        DISPATCH_INDEX_SELECT(DType::Float16, float16_t)
         DISPATCH_INDEX_SELECT(DType::Float32, float)
         DISPATCH_INDEX_SELECT(DType::Float64, double)
         DISPATCH_INDEX_SELECT(DType::Int32, int32_t)
@@ -2833,6 +2854,13 @@ Tensor CPUSoftmaxOperation::execute_reduction(const Tensor &input,
     int ax = axis.empty() ? -1 : axis[0];
 
     switch (input.dtype()) {
+    case DType::Float16: {
+        // For float16, compute in float32 for numerical stability, then convert
+        // back
+        Tensor input_f32 = input.astype(DType::Float32);
+        Tensor result_f32 = execute_softmax_typed<float>(input_f32, ax);
+        return result_f32.astype(DType::Float16);
+    }
     case DType::Float32:
         return execute_softmax_typed<float>(input, ax);
     case DType::Float64:

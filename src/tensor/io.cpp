@@ -127,7 +127,7 @@ std::string element_to_string(const void *data, size_t index) {
 // Special handling for half-precision since it's not a native C++ type
 std::string half_element_to_string(const void *data, size_t index) {
     float value =
-        static_cast<float>(static_cast<const half_float::half *>(data)[index]);
+        static_cast<float>(static_cast<const float16_t *>(data)[index]);
     if (std::isnan(value))
         return "nan";
     if (std::isinf(value))

@@ -246,13 +246,17 @@ size_t vargmax_abs_f64(const double *input, size_t n);
 // ============================================================================
 
 // Clip values to range [low, high]
-void vclip_f32(const float *input, float low, float high, float *output, size_t n);
-void vclip_f64(const double *input, double low, double high, double *output, size_t n);
+void vclip_f32(const float *input, float low, float high, float *output,
+               size_t n);
+void vclip_f64(const double *input, double low, double high, double *output,
+               size_t n);
 
 // Threshold: output[i] = input[i] >= threshold ? input[i] : 0
 // (Useful for ReLU implementation)
-void vthreshold_f32(const float *input, float threshold, float *output, size_t n);
-void vthreshold_f64(const double *input, double threshold, double *output, size_t n);
+void vthreshold_f32(const float *input, float threshold, float *output,
+                    size_t n);
+void vthreshold_f64(const double *input, double threshold, double *output,
+                    size_t n);
 
 // Matrix transpose
 void vmtrans_f32(const float *input, float *output, size_t rows, size_t cols);
@@ -263,12 +267,16 @@ void vnormalize_f32(const float *input, float *output, size_t n);
 void vnormalize_f64(const double *input, double *output, size_t n);
 
 // Linear interpolation: output = a + t * (b - a)
-void vlerp_f32(const float *a, const float *b, float t, float *output, size_t n);
-void vlerp_f64(const double *a, const double *b, double t, double *output, size_t n);
+void vlerp_f32(const float *a, const float *b, float t, float *output,
+               size_t n);
+void vlerp_f64(const double *a, const double *b, double t, double *output,
+               size_t n);
 
 // Polynomial evaluation
-void vpoly_f32(const float *input, const float *coeffs, size_t num_coeffs, float *output, size_t n);
-void vpoly_f64(const double *input, const double *coeffs, size_t num_coeffs, double *output, size_t n);
+void vpoly_f32(const float *input, const float *coeffs, size_t num_coeffs,
+               float *output, size_t n);
+void vpoly_f64(const double *input, const double *coeffs, size_t num_coeffs,
+               double *output, size_t n);
 
 // ============================================================================
 // BLAS Level 1 Operations
@@ -296,12 +304,10 @@ void vswap_f64(double *x, double *y, size_t n);
 
 // GEMV: y = alpha * op(A) * x + beta * y
 // For our use: y = A @ x (alpha=1, beta=0)
-void gemv_f32(const float *A, const float *x, float *y,
-              size_t M, size_t N, size_t lda,
-              bool transpose_a);
-void gemv_f64(const double *A, const double *x, double *y,
-              size_t M, size_t N, size_t lda,
-              bool transpose_a);
+void gemv_f32(const float *A, const float *x, float *y, size_t M, size_t N,
+              size_t lda, bool transpose_a);
+void gemv_f64(const double *A, const double *x, double *y, size_t M, size_t N,
+              size_t lda, bool transpose_a);
 
 // ============================================================================
 // Activation Functions (Optimized)
@@ -313,7 +319,8 @@ void vrelu_f64(const double *input, double *output, size_t n);
 
 // Clipped ReLU: min(max(0, x), cap)
 void vrelu_clipped_f32(const float *input, float cap, float *output, size_t n);
-void vrelu_clipped_f64(const double *input, double cap, double *output, size_t n);
+void vrelu_clipped_f64(const double *input, double cap, double *output,
+                       size_t n);
 
 // ============================================================================
 // Softmax Optimization Helpers

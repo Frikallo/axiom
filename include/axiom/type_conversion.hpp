@@ -8,12 +8,11 @@
 
 #include "axiom/dtype.hpp"
 #include "axiom/shape.hpp"
-#include "half.hpp"
 
 namespace axiom {
 namespace type_conversion {
 
-using float16_t = half_float::half;
+// float16_t is defined in axiom/float16.hpp (included via dtype.hpp)
 using complex64_t = std::complex<float>;
 using complex128_t = std::complex<double>;
 

@@ -1,12 +1,12 @@
 #pragma once
 
-#include <xsimd/xsimd.hpp>
-#include <fxdiv.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <fxdiv.h>
 #include <limits>
 #include <type_traits>
+#include <xsimd/xsimd.hpp>
 
 namespace axiom {
 namespace backends {
@@ -24,8 +24,7 @@ inline constexpr bool has_support = xsimd::has_simd_register<T>::value;
 // SIMD Traits using XSIMD
 // ============================================================================
 
-template <typename T, typename = void>
-struct simd_traits {
+template <typename T, typename = void> struct simd_traits {
     using scalar_type = T;
     static constexpr size_t width = 1;
 };
@@ -38,8 +37,8 @@ struct simd_traits<T, std::enable_if_t<xsimd::has_simd_register<T>::value>> {
     using vec_type = batch_type;
     static constexpr size_t width = batch_type::size;
 
-    static batch_type load(const T* p) { return batch_type::load_unaligned(p); }
-    static void store(T* p, batch_type v) { v.store_unaligned(p); }
+    static batch_type load(const T *p) { return batch_type::load_unaligned(p); }
+    static void store(T *p, batch_type v) { v.store_unaligned(p); }
     static batch_type set1(T x) { return batch_type::broadcast(x); }
     static batch_type zero() { return batch_type::broadcast(T{0}); }
     static batch_type one() { return batch_type::broadcast(T{1}); }
@@ -49,8 +48,12 @@ struct simd_traits<T, std::enable_if_t<xsimd::has_simd_register<T>::value>> {
     static batch_type mul(batch_type a, batch_type b) { return a * b; }
     static batch_type div(batch_type a, batch_type b) { return a / b; }
 
-    static batch_type max(batch_type a, batch_type b) { return xsimd::max(a, b); }
-    static batch_type min(batch_type a, batch_type b) { return xsimd::min(a, b); }
+    static batch_type max(batch_type a, batch_type b) {
+        return xsimd::max(a, b);
+    }
+    static batch_type min(batch_type a, batch_type b) {
+        return xsimd::min(a, b);
+    }
     static batch_type abs(batch_type a) { return xsimd::abs(a); }
     static batch_type neg(batch_type a) { return -a; }
 
@@ -283,8 +286,10 @@ struct VecSign {
         return pos + neg;
     }
     template <typename T> T scalar(T x) const {
-        if (x > T{0}) return T{1};
-        if (x < T{0}) return T{-1};
+        if (x > T{0})
+            return T{1};
+        if (x < T{0})
+            return T{-1};
         return T{0};
     }
 };
@@ -292,10 +297,12 @@ struct VecSign {
 struct VecLogicalNot {
     template <typename T>
     auto operator()(typename simd_traits<T>::batch_type v) const {
-        return xsimd::select(v == simd_traits<T>::zero(),
-                            simd_traits<T>::one(), simd_traits<T>::zero());
+        return xsimd::select(v == simd_traits<T>::zero(), simd_traits<T>::one(),
+                             simd_traits<T>::zero());
     }
-    template <typename T> T scalar(T x) const { return x == T{0} ? T{1} : T{0}; }
+    template <typename T> T scalar(T x) const {
+        return x == T{0} ? T{1} : T{0};
+    }
 };
 
 // ============================================================================
@@ -338,7 +345,8 @@ struct VecSigmoid {
 struct VecSiLU {
     template <typename T>
     auto operator()(typename simd_traits<T>::batch_type v) const {
-        auto sigmoid = simd_traits<T>::one() / (simd_traits<T>::one() + xsimd::exp(-v));
+        auto sigmoid =
+            simd_traits<T>::one() / (simd_traits<T>::one() + xsimd::exp(-v));
         return v * sigmoid;
     }
     template <typename T> T scalar(T x) const {
@@ -361,7 +369,8 @@ struct VecGELU {
     template <typename T> T scalar(T x) const {
         constexpr T sqrt_2_over_pi = T{0.7978845608028654};
         constexpr T coeff = T{0.044715};
-        return T{0.5} * x * (T{1} + std::tanh(sqrt_2_over_pi * (x + coeff * x * x * x)));
+        return T{0.5} * x *
+               (T{1} + std::tanh(sqrt_2_over_pi * (x + coeff * x * x * x)));
     }
 };
 
@@ -522,7 +531,8 @@ struct VecFmod {
 // ============================================================================
 
 template <typename T, typename Op>
-inline void binary_vectorized(const T* a, const T* b, T* result, size_t n, Op op) {
+inline void binary_vectorized(const T *a, const T *b, T *result, size_t n,
+                              Op op) {
     using traits = simd_traits<T>;
     constexpr size_t width = traits::width;
     size_t i = 0;
@@ -540,7 +550,8 @@ inline void binary_vectorized(const T* a, const T* b, T* result, size_t n, Op op
 
 // Binary operation that outputs to a different type (e.g., comparisons -> bool)
 template <typename InT, typename OutT, typename Op>
-inline void binary_vectorized_compare(const InT* a, const InT* b, OutT* result, size_t n, Op op) {
+inline void binary_vectorized_compare(const InT *a, const InT *b, OutT *result,
+                                      size_t n, Op op) {
     using traits = simd_traits<InT>;
     constexpr size_t width = traits::width;
     size_t i = 0;
@@ -569,13 +580,14 @@ inline void binary_vectorized_compare(const InT* a, const InT* b, OutT* result, 
 // ============================================================================
 
 template <typename T, typename Op>
-inline void unary_vectorized(const T* input, T* output, size_t n, Op op) {
+inline void unary_vectorized(const T *input, T *output, size_t n, Op op) {
     using traits = simd_traits<T>;
     constexpr size_t width = traits::width;
     size_t i = 0;
 
     for (; i + width <= n; i += width) {
-        traits::store(output + i, op.template operator()<T>(traits::load(input + i)));
+        traits::store(output + i,
+                      op.template operator()<T>(traits::load(input + i)));
     }
 
     for (; i < n; ++i) {
@@ -587,8 +599,7 @@ inline void unary_vectorized(const T* input, T* output, size_t n, Op op) {
 // Vectorized Reductions
 // ============================================================================
 
-template <typename T>
-inline T reduce_sum(const T* input, size_t n) {
+template <typename T> inline T reduce_sum(const T *input, size_t n) {
     using traits = simd_traits<T>;
     constexpr size_t width = traits::width;
     auto vec_sum = traits::zero();
@@ -599,13 +610,14 @@ inline T reduce_sum(const T* input, size_t n) {
     }
 
     T sum = traits::hsum(vec_sum);
-    for (; i < n; ++i) sum += input[i];
+    for (; i < n; ++i)
+        sum += input[i];
     return sum;
 }
 
-template <typename T>
-inline T reduce_max(const T* input, size_t n) {
-    if (n == 0) return std::numeric_limits<T>::lowest();
+template <typename T> inline T reduce_max(const T *input, size_t n) {
+    if (n == 0)
+        return std::numeric_limits<T>::lowest();
     using traits = simd_traits<T>;
     constexpr size_t width = traits::width;
     T max_val = input[0];
@@ -619,13 +631,14 @@ inline T reduce_max(const T* input, size_t n) {
         max_val = traits::hmax(vec_max);
     }
 
-    for (; i < n; ++i) max_val = std::max(max_val, input[i]);
+    for (; i < n; ++i)
+        max_val = std::max(max_val, input[i]);
     return max_val;
 }
 
-template <typename T>
-inline T reduce_min(const T* input, size_t n) {
-    if (n == 0) return std::numeric_limits<T>::max();
+template <typename T> inline T reduce_min(const T *input, size_t n) {
+    if (n == 0)
+        return std::numeric_limits<T>::max();
     using traits = simd_traits<T>;
     constexpr size_t width = traits::width;
     T min_val = input[0];
@@ -639,13 +652,14 @@ inline T reduce_min(const T* input, size_t n) {
         min_val = traits::hmin(vec_min);
     }
 
-    for (; i < n; ++i) min_val = std::min(min_val, input[i]);
+    for (; i < n; ++i)
+        min_val = std::min(min_val, input[i]);
     return min_val;
 }
 
-template <typename T>
-inline T reduce_prod(const T* input, size_t n) {
-    if (n == 0) return T{1};
+template <typename T> inline T reduce_prod(const T *input, size_t n) {
+    if (n == 0)
+        return T{1};
     using traits = simd_traits<T>;
     constexpr size_t width = traits::width;
     auto vec_prod = traits::one();
@@ -663,7 +677,8 @@ inline T reduce_prod(const T* input, size_t n) {
         prod *= temp[j];
     }
 
-    for (; i < n; ++i) prod *= input[i];
+    for (; i < n; ++i)
+        prod *= input[i];
     return prod;
 }
 
@@ -688,7 +703,8 @@ struct Divisor32 {
     }
 
     std::pair<uint32_t, uint32_t> divmod(uint32_t n) const {
-        return {fxdiv_quotient_uint32_t(n, div), fxdiv_remainder_uint32_t(n, div)};
+        return {fxdiv_quotient_uint32_t(n, div),
+                fxdiv_remainder_uint32_t(n, div)};
     }
 };
 
@@ -706,7 +722,8 @@ struct Divisor64 {
     }
 
     std::pair<uint64_t, uint64_t> divmod(uint64_t n) const {
-        return {fxdiv_quotient_uint64_t(n, div), fxdiv_remainder_uint64_t(n, div)};
+        return {fxdiv_quotient_uint64_t(n, div),
+                fxdiv_remainder_uint64_t(n, div)};
     }
 };
 
@@ -715,13 +732,9 @@ struct DivisorSize {
 
     explicit DivisorSize(size_t d) : div(fxdiv_init_size_t(d)) {}
 
-    size_t quotient(size_t n) const {
-        return fxdiv_quotient_size_t(n, div);
-    }
+    size_t quotient(size_t n) const { return fxdiv_quotient_size_t(n, div); }
 
-    size_t remainder(size_t n) const {
-        return fxdiv_remainder_size_t(n, div);
-    }
+    size_t remainder(size_t n) const { return fxdiv_remainder_size_t(n, div); }
 
     std::pair<size_t, size_t> divmod(size_t n) const {
         return {fxdiv_quotient_size_t(n, div), fxdiv_remainder_size_t(n, div)};
@@ -730,8 +743,8 @@ struct DivisorSize {
 
 // Multi-dimensional index calculator with precomputed divisors
 class IndexCalculator {
-public:
-    IndexCalculator(const size_t* dims, size_t ndim) : ndim_(ndim) {
+  public:
+    IndexCalculator(const size_t *dims, size_t ndim) : ndim_(ndim) {
         divisors_.reserve(ndim);
         size_t stride = 1;
         for (size_t i = ndim; i > 0; --i) {
@@ -748,7 +761,7 @@ public:
     }
 
     // Convert linear index to multi-dimensional indices
-    void linear_to_indices(size_t linear_idx, size_t* indices) const {
+    void linear_to_indices(size_t linear_idx, size_t *indices) const {
         size_t remaining = linear_idx;
         for (size_t i = 0; i < ndim_; ++i) {
             if (i < divisors_.size() && strides_[i] > 0) {
@@ -762,7 +775,7 @@ public:
         }
     }
 
-private:
+  private:
     size_t ndim_;
     std::vector<DivisorSize> divisors_;
     std::vector<size_t> strides_;
@@ -770,11 +783,10 @@ private:
 
 // Broadcast index calculator with precomputed divisors for each dimension
 class BroadcastIndexCalculator {
-public:
-    BroadcastIndexCalculator(const size_t* result_shape,
-                             const int64_t* lhs_strides,
-                             const int64_t* rhs_strides,
-                             size_t ndim)
+  public:
+    BroadcastIndexCalculator(const size_t *result_shape,
+                             const int64_t *lhs_strides,
+                             const int64_t *rhs_strides, size_t ndim)
         : ndim_(ndim), lhs_strides_(lhs_strides, lhs_strides + ndim),
           rhs_strides_(rhs_strides, rhs_strides + ndim) {
 
@@ -808,14 +820,16 @@ public:
                 remaining = 0;
             }
 
-            lhs_idx += dim_idx * static_cast<size_t>(std::max(int64_t{0}, lhs_strides_[i]));
-            rhs_idx += dim_idx * static_cast<size_t>(std::max(int64_t{0}, rhs_strides_[i]));
+            lhs_idx += dim_idx * static_cast<size_t>(
+                                     std::max(int64_t{0}, lhs_strides_[i]));
+            rhs_idx += dim_idx * static_cast<size_t>(
+                                     std::max(int64_t{0}, rhs_strides_[i]));
         }
 
         return {lhs_idx, rhs_idx};
     }
 
-private:
+  private:
     size_t ndim_;
     std::vector<DivisorSize> divisors_;
     std::vector<size_t> result_strides_;
@@ -825,10 +839,10 @@ private:
 
 // Reduction index calculator
 class ReductionIndexCalculator {
-public:
-    ReductionIndexCalculator(const size_t* input_shape,
-                             const int64_t* input_strides,
-                             const std::vector<bool>& is_reduced_axis,
+  public:
+    ReductionIndexCalculator(const size_t *input_shape,
+                             const int64_t *input_strides,
+                             const std::vector<bool> &is_reduced_axis,
                              size_t ndim)
         : ndim_(ndim), input_strides_(input_strides, input_strides + ndim),
           is_reduced_axis_(is_reduced_axis) {
@@ -847,7 +861,8 @@ public:
             if (output_strides_[i] > 0) {
                 output_divisors_.emplace_back(output_strides_[i]);
             } else {
-                output_divisors_.emplace_back(1); // Dummy divisor for reduced dims
+                output_divisors_.emplace_back(
+                    1); // Dummy divisor for reduced dims
             }
         }
     }
@@ -862,13 +877,15 @@ public:
             size_t dim_idx;
             if (is_reduced_axis_[i]) {
                 // This dimension is reduced - get index from reduction_idx
-                dim_idx = red_remaining; // Simplified - actual impl needs shape info
+                dim_idx =
+                    red_remaining; // Simplified - actual impl needs shape info
                 red_remaining = 0;
             } else {
                 // Non-reduced dimension - get from output_idx
                 if (output_strides_[i] > 0) {
                     dim_idx = output_divisors_[i].quotient(out_remaining);
-                    out_remaining = output_divisors_[i].remainder(out_remaining);
+                    out_remaining =
+                        output_divisors_[i].remainder(out_remaining);
                 } else {
                     dim_idx = out_remaining;
                     out_remaining = 0;
@@ -880,7 +897,7 @@ public:
         return input_idx;
     }
 
-private:
+  private:
     size_t ndim_;
     std::vector<DivisorSize> output_divisors_;
     std::vector<size_t> output_strides_;

@@ -395,7 +395,7 @@ struct AbsFunc {
     template <typename T> auto operator()(const T &a) const {
         if constexpr (std::is_unsigned_v<T> && std::is_integral_v<T>) {
             return a;
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return static_cast<T>(std::abs(static_cast<float>(a)));
         } else if constexpr (std::is_same_v<T, std::complex<float>>) {
             // For complex, abs returns the magnitude as float
@@ -717,7 +717,7 @@ struct FloorFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::floor(a);
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return static_cast<T>(std::floor(static_cast<float>(a)));
         } else {
             return a; // Integer types are already "floored"
@@ -729,7 +729,7 @@ struct CeilFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::ceil(a);
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return static_cast<T>(std::ceil(static_cast<float>(a)));
         } else {
             return a; // Integer types are already "ceiled"
@@ -741,7 +741,7 @@ struct TruncFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::trunc(a);
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return static_cast<T>(std::trunc(static_cast<float>(a)));
         } else {
             return a; // Integer types are already truncated
@@ -753,7 +753,7 @@ struct RoundFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::round(a);
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return static_cast<T>(std::round(static_cast<float>(a)));
         } else {
             return a; // Integer types are already rounded
@@ -765,7 +765,7 @@ struct ReciprocalFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return T{1} / a;
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return static_cast<T>(1.0f / static_cast<float>(a));
         } else {
             // Integer division: 1/a (truncated)
@@ -782,7 +782,7 @@ struct CbrtFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::cbrt(a);
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return static_cast<T>(std::cbrt(static_cast<float>(a)));
         } else {
             return static_cast<T>(std::cbrt(static_cast<double>(a)));
@@ -795,7 +795,7 @@ struct IsNaNFunc {
     template <typename T> bool operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::isnan(a);
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return std::isnan(static_cast<float>(a));
         } else {
             return false; // Integer types cannot be NaN
@@ -807,7 +807,7 @@ struct IsInfFunc {
     template <typename T> bool operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::isinf(a);
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return std::isinf(static_cast<float>(a));
         } else {
             return false; // Integer types cannot be Inf
@@ -819,7 +819,7 @@ struct IsFiniteFunc {
     template <typename T> bool operator()(const T &a) const {
         if constexpr (std::is_floating_point_v<T>) {
             return std::isfinite(a);
-        } else if constexpr (std::is_same_v<T, half_float::half>) {
+        } else if constexpr (std::is_same_v<T, float16_t>) {
             return std::isfinite(static_cast<float>(a));
         } else {
             return true; // Integer types are always finite

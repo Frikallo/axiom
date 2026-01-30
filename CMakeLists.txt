@@ -61,13 +61,6 @@ endif()
 # External dependencies
 include(FetchContent)
 
-FetchContent_Declare(
-    half
-    GIT_REPOSITORY https://github.com/suruoxi/half.git
-)
-
-FetchContent_MakeAvailable(half)
-
 # Create the main library
 set(AXIOM_SOURCES
     # Tensor core
@@ -179,8 +172,8 @@ target_include_directories(axiom
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FXdiv/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16/include>
         $<INSTALL_INTERFACE:include>
-        $<BUILD_INTERFACE:${half_SOURCE_DIR}/include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends
@@ -315,7 +308,7 @@ message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  Build tests: ${AXIOM_BUILD_TESTS}")
 message(STATUS "  Build examples: ${AXIOM_BUILD_EXAMPLES}")
 message(STATUS "  Build benchmarks: ${AXIOM_BUILD_BENCHMARKS}")
-message(STATUS "  Half library: ${half_SOURCE_DIR}")
+message(STATUS "  FP16 library: ${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16")
 if(APPLE)
     if(AXIOM_HAS_METAL)
         message(STATUS "  Metal support: YES")

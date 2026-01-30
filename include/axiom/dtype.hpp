@@ -2,12 +2,13 @@
 
 #include <complex>
 #include <cstdint>
-#include <half.hpp>
 #include <string>
+
+#include "axiom/float16.hpp"
 
 namespace axiom {
 
-using float16_t = half_float::half;
+// float16_t is defined in axiom/float16.hpp
 using complex64_t = std::complex<float>;
 using complex128_t = std::complex<double>;
 

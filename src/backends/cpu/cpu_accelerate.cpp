@@ -424,7 +424,8 @@ void vexp2_f64(const double *input, double *output, size_t n) {
 
 void vpow_f32(const float *a, const float *b, float *result, size_t n) {
     int count = static_cast<int>(n);
-    vvpowf(result, b, a, &count);  // Note: vvpow takes (result, exponent, base, count)
+    vvpowf(result, b, a,
+           &count); // Note: vvpow takes (result, exponent, base, count)
 }
 
 void vpow_f64(const double *a, const double *b, double *result, size_t n) {
@@ -448,7 +449,8 @@ void vhypot_f32(const float *a, const float *b, float *result, size_t n) {
     std::vector<float> a_sq(n), b_sq(n);
     vDSP_vsq(a, 1, a_sq.data(), 1, static_cast<vDSP_Length>(n));
     vDSP_vsq(b, 1, b_sq.data(), 1, static_cast<vDSP_Length>(n));
-    vDSP_vadd(a_sq.data(), 1, b_sq.data(), 1, result, 1, static_cast<vDSP_Length>(n));
+    vDSP_vadd(a_sq.data(), 1, b_sq.data(), 1, result, 1,
+              static_cast<vDSP_Length>(n));
     int count = static_cast<int>(n);
     vvsqrtf(result, result, &count);
 }
@@ -457,7 +459,8 @@ void vhypot_f64(const double *a, const double *b, double *result, size_t n) {
     std::vector<double> a_sq(n), b_sq(n);
     vDSP_vsqD(a, 1, a_sq.data(), 1, static_cast<vDSP_Length>(n));
     vDSP_vsqD(b, 1, b_sq.data(), 1, static_cast<vDSP_Length>(n));
-    vDSP_vaddD(a_sq.data(), 1, b_sq.data(), 1, result, 1, static_cast<vDSP_Length>(n));
+    vDSP_vaddD(a_sq.data(), 1, b_sq.data(), 1, result, 1,
+               static_cast<vDSP_Length>(n));
     int count = static_cast<int>(n);
     vvsqrt(result, result, &count);
 }
@@ -589,7 +592,8 @@ double vnorm1_f64(const double *input, size_t n) {
 }
 
 size_t vargmax_f32(const float *input, size_t n) {
-    if (n == 0) return 0;
+    if (n == 0)
+        return 0;
     float max_val;
     vDSP_Length index;
     vDSP_maxvi(input, 1, &max_val, &index, static_cast<vDSP_Length>(n));
@@ -597,7 +601,8 @@ size_t vargmax_f32(const float *input, size_t n) {
 }
 
 size_t vargmax_f64(const double *input, size_t n) {
-    if (n == 0) return 0;
+    if (n == 0)
+        return 0;
     double max_val;
     vDSP_Length index;
     vDSP_maxviD(input, 1, &max_val, &index, static_cast<vDSP_Length>(n));
@@ -605,7 +610,8 @@ size_t vargmax_f64(const double *input, size_t n) {
 }
 
 size_t vargmin_f32(const float *input, size_t n) {
-    if (n == 0) return 0;
+    if (n == 0)
+        return 0;
     float min_val;
     vDSP_Length index;
     vDSP_minvi(input, 1, &min_val, &index, static_cast<vDSP_Length>(n));
@@ -613,7 +619,8 @@ size_t vargmin_f32(const float *input, size_t n) {
 }
 
 size_t vargmin_f64(const double *input, size_t n) {
-    if (n == 0) return 0;
+    if (n == 0)
+        return 0;
     double min_val;
     vDSP_Length index;
     vDSP_minviD(input, 1, &min_val, &index, static_cast<vDSP_Length>(n));
@@ -621,14 +628,16 @@ size_t vargmin_f64(const double *input, size_t n) {
 }
 
 size_t vargmax_abs_f32(const float *input, size_t n) {
-    if (n == 0) return 0;
+    if (n == 0)
+        return 0;
     // BLAS isamax returns 1-based index
     int idx = cblas_isamax(static_cast<int>(n), input, 1);
     return static_cast<size_t>(idx);
 }
 
 size_t vargmax_abs_f64(const double *input, size_t n) {
-    if (n == 0) return 0;
+    if (n == 0)
+        return 0;
     int idx = cblas_idamax(static_cast<int>(n), input, 1);
     return static_cast<size_t>(idx);
 }
@@ -637,40 +646,45 @@ size_t vargmax_abs_f64(const double *input, size_t n) {
 // vDSP Vector Operations
 // ============================================================================
 
-void vclip_f32(const float *input, float low, float high, float *output, size_t n) {
+void vclip_f32(const float *input, float low, float high, float *output,
+               size_t n) {
     vDSP_vclip(input, 1, &low, &high, output, 1, static_cast<vDSP_Length>(n));
 }
 
-void vclip_f64(const double *input, double low, double high, double *output, size_t n) {
+void vclip_f64(const double *input, double low, double high, double *output,
+               size_t n) {
     vDSP_vclipD(input, 1, &low, &high, output, 1, static_cast<vDSP_Length>(n));
 }
 
-void vthreshold_f32(const float *input, float threshold, float *output, size_t n) {
-    // vDSP_vthr: if input[i] >= threshold, output[i] = input[i], else output[i] = threshold
-    // We want: if input[i] >= threshold, output[i] = input[i], else output[i] = 0
-    // Use vDSP_vthres for this behavior
+void vthreshold_f32(const float *input, float threshold, float *output,
+                    size_t n) {
+    // vDSP_vthr: if input[i] >= threshold, output[i] = input[i], else output[i]
+    // = threshold We want: if input[i] >= threshold, output[i] = input[i], else
+    // output[i] = 0 Use vDSP_vthres for this behavior
     vDSP_vthres(input, 1, &threshold, output, 1, static_cast<vDSP_Length>(n));
 }
 
-void vthreshold_f64(const double *input, double threshold, double *output, size_t n) {
+void vthreshold_f64(const double *input, double threshold, double *output,
+                    size_t n) {
     vDSP_vthresD(input, 1, &threshold, output, 1, static_cast<vDSP_Length>(n));
 }
 
 void vmtrans_f32(const float *input, float *output, size_t rows, size_t cols) {
     // vDSP_mtrans transposes an MxN matrix to NxM
     vDSP_mtrans(input, 1, output, 1,
-                static_cast<vDSP_Length>(cols),   // Output rows = input cols
-                static_cast<vDSP_Length>(rows));  // Output cols = input rows
+                static_cast<vDSP_Length>(cols),  // Output rows = input cols
+                static_cast<vDSP_Length>(rows)); // Output cols = input rows
 }
 
-void vmtrans_f64(const double *input, double *output, size_t rows, size_t cols) {
-    vDSP_mtransD(input, 1, output, 1,
-                 static_cast<vDSP_Length>(cols),
+void vmtrans_f64(const double *input, double *output, size_t rows,
+                 size_t cols) {
+    vDSP_mtransD(input, 1, output, 1, static_cast<vDSP_Length>(cols),
                  static_cast<vDSP_Length>(rows));
 }
 
 void vnormalize_f32(const float *input, float *output, size_t n) {
-    if (n == 0) return;
+    if (n == 0)
+        return;
 
     // Compute mean
     float mean;
@@ -692,7 +706,8 @@ void vnormalize_f32(const float *input, float *output, size_t n) {
 }
 
 void vnormalize_f64(const double *input, double *output, size_t n) {
-    if (n == 0) return;
+    if (n == 0)
+        return;
 
     double mean;
     vDSP_meanvD(input, 1, &mean, static_cast<vDSP_Length>(n));
@@ -705,31 +720,34 @@ void vnormalize_f64(const double *input, double *output, size_t n) {
 
     double std_dev = std::sqrt(var);
     if (std_dev > 0.0) {
-        vDSP_vsdivD(output, 1, &std_dev, output, 1, static_cast<vDSP_Length>(n));
+        vDSP_vsdivD(output, 1, &std_dev, output, 1,
+                    static_cast<vDSP_Length>(n));
     }
 }
 
-void vlerp_f32(const float *a, const float *b, float t, float *output, size_t n) {
+void vlerp_f32(const float *a, const float *b, float t, float *output,
+               size_t n) {
     // Linear interpolation: output = a + t * (b - a) = (1-t)*a + t*b
     // Use vDSP_vintb which does exactly this
     vDSP_vintb(a, 1, b, 1, &t, output, 1, static_cast<vDSP_Length>(n));
 }
 
-void vlerp_f64(const double *a, const double *b, double t, double *output, size_t n) {
+void vlerp_f64(const double *a, const double *b, double t, double *output,
+               size_t n) {
     vDSP_vintbD(a, 1, b, 1, &t, output, 1, static_cast<vDSP_Length>(n));
 }
 
-void vpoly_f32(const float *input, const float *coeffs, size_t num_coeffs, float *output, size_t n) {
+void vpoly_f32(const float *input, const float *coeffs, size_t num_coeffs,
+               float *output, size_t n) {
     // vDSP_vpoly evaluates polynomial: output[i] = sum(coeffs[j] * input[i]^j)
     // coeffs are in order: coeffs[0] = highest degree coefficient
-    vDSP_vpoly(input, 1, coeffs, 1, output, 1,
-               static_cast<vDSP_Length>(n),
+    vDSP_vpoly(input, 1, coeffs, 1, output, 1, static_cast<vDSP_Length>(n),
                static_cast<vDSP_Length>(num_coeffs - 1));
 }
 
-void vpoly_f64(const double *input, const double *coeffs, size_t num_coeffs, double *output, size_t n) {
-    vDSP_vpolyD(input, 1, coeffs, 1, output, 1,
-                static_cast<vDSP_Length>(n),
+void vpoly_f64(const double *input, const double *coeffs, size_t num_coeffs,
+               double *output, size_t n) {
+    vDSP_vpolyD(input, 1, coeffs, 1, output, 1, static_cast<vDSP_Length>(n),
                 static_cast<vDSP_Length>(num_coeffs - 1));
 }
 
@@ -773,33 +791,24 @@ void vswap_f64(double *x, double *y, size_t n) {
 // BLAS Level 2 Operations (Matrix-Vector)
 // ============================================================================
 
-void gemv_f32(const float *A, const float *x, float *y,
-              size_t M, size_t N, size_t lda,
-              bool transpose_a) {
+void gemv_f32(const float *A, const float *x, float *y, size_t M, size_t N,
+              size_t lda, bool transpose_a) {
     // y = op(A) * x
     // If not transposed: A is MxN, x is Nx1, y is Mx1
     // If transposed: A is MxN but op(A) is NxM, x is Mx1, y is Nx1
-    cblas_sgemv(CblasRowMajor,
-                transpose_a ? CblasTrans : CblasNoTrans,
+    cblas_sgemv(CblasRowMajor, transpose_a ? CblasTrans : CblasNoTrans,
                 static_cast<int>(M), static_cast<int>(N),
-                1.0f,  // alpha
-                A, static_cast<int>(lda),
-                x, 1,
-                0.0f,  // beta
+                1.0f, // alpha
+                A, static_cast<int>(lda), x, 1,
+                0.0f, // beta
                 y, 1);
 }
 
-void gemv_f64(const double *A, const double *x, double *y,
-              size_t M, size_t N, size_t lda,
-              bool transpose_a) {
-    cblas_dgemv(CblasRowMajor,
-                transpose_a ? CblasTrans : CblasNoTrans,
-                static_cast<int>(M), static_cast<int>(N),
-                1.0,
-                A, static_cast<int>(lda),
-                x, 1,
-                0.0,
-                y, 1);
+void gemv_f64(const double *A, const double *x, double *y, size_t M, size_t N,
+              size_t lda, bool transpose_a) {
+    cblas_dgemv(CblasRowMajor, transpose_a ? CblasTrans : CblasNoTrans,
+                static_cast<int>(M), static_cast<int>(N), 1.0, A,
+                static_cast<int>(lda), x, 1, 0.0, y, 1);
 }
 
 // ============================================================================
@@ -825,7 +834,8 @@ void vrelu_clipped_f32(const float *input, float cap, float *output, size_t n) {
     vDSP_vclip(input, 1, &low, &cap, output, 1, static_cast<vDSP_Length>(n));
 }
 
-void vrelu_clipped_f64(const double *input, double cap, double *output, size_t n) {
+void vrelu_clipped_f64(const double *input, double cap, double *output,
+                       size_t n) {
     double low = 0.0;
     vDSP_vclipD(input, 1, &low, &cap, output, 1, static_cast<vDSP_Length>(n));
 }
