@@ -209,13 +209,17 @@ endif()
 # XSIMD for cross-platform SIMD operations
 target_compile_definitions(axiom PUBLIC AXIOM_USE_XSIMD)
 
-# Fast math for aggressive floating-point optimization in Release builds
-# Use -fno-finite-math-only to allow proper NaN/Inf detection (for isnan, isinf, isfinite)
+# Floating-point optimization flags for Release builds
+# Note: -ffast-math and -fassociative-math break XSIMD transcendental functions
+# (exp, log, sin, etc.) on ARM NEON. Use safer flags that preserve math correctness.
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(axiom PRIVATE
-            -ffast-math
-            -fno-finite-math-only  # Allow proper NaN/Inf handling
+            -fno-math-errno        # Don't set errno for math functions
+            -fno-trapping-math     # Assume no FP exceptions
+            -fno-signed-zeros      # Allow optimizations ignoring sign of zero
+            -freciprocal-math      # Allow x/y -> x * (1/y)
+            # Note: -fassociative-math breaks XSIMD exp/log on ARM, do not use
         )
     endif()
 endif()
