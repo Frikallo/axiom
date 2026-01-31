@@ -217,6 +217,9 @@ if(APPLE AND AXIOM_HAS_METAL)
     )
 endif()
 
+# Build as shared library on all platforms
+# On Windows, auto-export all symbols to generate .lib import library
+set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 add_library(axiom SHARED ${AXIOM_SOURCES})
 
 # ============================================================================

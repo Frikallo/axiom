@@ -20,8 +20,8 @@ int main() {
     std::cout << result << std::endl;
 
     // Benchmark matmul of huge tensors on GPU
-    auto a = Tensor::randn({1000, 1000}, DType::Float16, Device::GPU);
-    auto b = Tensor::randn({1000, 1000}, DType::Float16, Device::GPU);
+    auto a = Tensor::randn({1000, 1000}, DType::Float32, Device::GPU);
+    auto b = Tensor::randn({1000, 1000}, DType::Float32, Device::GPU);
     auto start = std::chrono::high_resolution_clock::now();
     auto c = a.matmul(b);
     auto end = std::chrono::high_resolution_clock::now();
@@ -31,17 +31,28 @@ int main() {
                      .count()
               << "ms" << std::endl;
 
-    // Benchmark matmul of huge tensors on CPU
-    auto a_cpu = Tensor::randn({1000, 1000}, DType::Float16, Device::CPU);
-    auto b_cpu = Tensor::randn({1000, 1000}, DType::Float16, Device::CPU);
+    // Benchmark matmul of huge tensors on CPU with proper warmup
+    auto a_cpu = Tensor::randn({1000, 1000}, DType::Float32, Device::CPU);
+    auto b_cpu = Tensor::randn({1000, 1000}, DType::Float32, Device::CPU);
+
+    // Warmup runs
+    for (int i = 0; i < 3; ++i) {
+        auto warmup = a_cpu.matmul(b_cpu);
+    }
+
+    // Timed runs
+    constexpr int num_runs = 10;
     auto start_cpu = std::chrono::high_resolution_clock::now();
-    auto c_cpu = a_cpu.matmul(b_cpu);
+    for (int i = 0; i < num_runs; ++i) {
+        auto c_cpu = a_cpu.matmul(b_cpu);
+    }
     auto end_cpu = std::chrono::high_resolution_clock::now();
+    auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                        end_cpu - start_cpu)
+                        .count();
     std::cout << "Matmul of 1000x1000 tensors on CPU took "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(
-                     end_cpu - start_cpu)
-                     .count()
-              << "ms" << std::endl;
+              << (total_us / num_runs) << "us (avg of " << num_runs << " runs)"
+              << std::endl;
 
     return 0;
 }
