@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(Axiom
     VERSION 0.1.0
-    DESCRIPTION "High-Performance Tensor Library for Apple Silicon"
+    DESCRIPTION "High-Performance Cross-Platform Tensor Library"
     LANGUAGES CXX
 )
 
@@ -12,23 +12,123 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Build options
+# Add cmake modules path
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+# ============================================================================
+# Platform Detection
+# ============================================================================
+if(WIN32)
+    set(AXIOM_PLATFORM "windows")
+elseif(APPLE)
+    set(AXIOM_PLATFORM "macos")
+else()
+    set(AXIOM_PLATFORM "linux")
+endif()
+
+# ============================================================================
+# Build Options
+# ============================================================================
 option(AXIOM_BUILD_TESTS "Build unit tests" ON)
 option(AXIOM_BUILD_EXAMPLES "Build examples" ON)
 option(AXIOM_BUILD_BENCHMARKS "Build benchmarks" OFF)
+option(AXIOM_NATIVE_ARCH "Use -march=native for local builds (not portable)" OFF)
 
-# Compiler-specific options
+# BLAS backend selection
+set(AXIOM_BLAS_BACKEND "auto" CACHE STRING "BLAS backend: auto, accelerate, openblas, fallback")
+set_property(CACHE AXIOM_BLAS_BACKEND PROPERTY STRINGS auto accelerate openblas fallback)
+
+# ============================================================================
+# Compiler Options
+# ============================================================================
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     add_compile_options(-Wall -Wextra -Wpedantic)
     if(CMAKE_BUILD_TYPE STREQUAL "Release")
         add_compile_options(-O3 -DNDEBUG)
+        # Architecture-specific optimizations
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-            add_compile_options(-mcpu=apple-m1)
+            if(APPLE)
+                add_compile_options(-mcpu=apple-m1)
+            else()
+                add_compile_options(-march=armv8-a)
+            endif()
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+            # Use native arch only if requested (not portable)
+            if(AXIOM_NATIVE_ARCH)
+                add_compile_options(-march=native)
+            endif()
         endif()
+    endif()
+elseif(MSVC)
+    add_compile_options(/W4 /EHsc /utf-8)
+    # Disable some noisy warnings
+    add_compile_options(/wd4244 /wd4267 /wd4996)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        add_compile_options(/O2 /DNDEBUG)
     endif()
 endif()
 
-# Platform-specific configurations
+# Windows-specific settings
+if(WIN32)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+    add_compile_definitions(_USE_MATH_DEFINES)
+    add_compile_definitions(NOMINMAX)
+endif()
+
+# Linux-specific settings
+if(UNIX AND NOT APPLE)
+    find_package(Threads REQUIRED)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
+# ============================================================================
+# BLAS Backend Selection
+# ============================================================================
+set(AXIOM_HAS_ACCELERATE OFF)
+set(AXIOM_HAS_OPENBLAS OFF)
+set(AXIOM_BLAS_IMPL "fallback")
+
+if(AXIOM_BLAS_BACKEND STREQUAL "auto")
+    # Auto-detect best available backend
+    if(APPLE)
+        find_library(ACCELERATE_FRAMEWORK Accelerate)
+        if(ACCELERATE_FRAMEWORK)
+            set(AXIOM_HAS_ACCELERATE ON)
+            set(AXIOM_BLAS_IMPL "accelerate")
+            message(STATUS "BLAS backend: Accelerate (auto-detected)")
+        endif()
+    else()
+        # Linux/Windows: Try OpenBLAS
+        find_package(OpenBLAS QUIET)
+        if(OpenBLAS_FOUND)
+            set(AXIOM_HAS_OPENBLAS ON)
+            set(AXIOM_BLAS_IMPL "openblas")
+            message(STATUS "BLAS backend: OpenBLAS (auto-detected)")
+        else()
+            message(STATUS "BLAS backend: Fallback (OpenBLAS not found)")
+        endif()
+    endif()
+elseif(AXIOM_BLAS_BACKEND STREQUAL "accelerate")
+    if(APPLE)
+        find_library(ACCELERATE_FRAMEWORK Accelerate REQUIRED)
+        set(AXIOM_HAS_ACCELERATE ON)
+        set(AXIOM_BLAS_IMPL "accelerate")
+        message(STATUS "BLAS backend: Accelerate (requested)")
+    else()
+        message(FATAL_ERROR "Accelerate framework is only available on macOS")
+    endif()
+elseif(AXIOM_BLAS_BACKEND STREQUAL "openblas")
+    find_package(OpenBLAS REQUIRED)
+    set(AXIOM_HAS_OPENBLAS ON)
+    set(AXIOM_BLAS_IMPL "openblas")
+    message(STATUS "BLAS backend: OpenBLAS (requested)")
+elseif(AXIOM_BLAS_BACKEND STREQUAL "fallback")
+    message(STATUS "BLAS backend: Fallback (requested)")
+endif()
+
+# ============================================================================
+# Platform-specific configurations (Metal on macOS)
+# ============================================================================
 if(APPLE)
     option(AXIOM_EMBED_METAL_LIBRARY "Embed Metal library into the main library" ON)
 
@@ -46,22 +146,14 @@ if(APPLE)
         message(WARNING "Metal, Foundation, MPS, or MPSGraph framework not found. GPU support will be disabled.")
         set(AXIOM_HAS_METAL OFF)
     endif()
-
-    # Apple Accelerate framework for BLAS/vDSP optimizations
-    find_library(ACCELERATE_FRAMEWORK Accelerate REQUIRED)
-    if(ACCELERATE_FRAMEWORK)
-        set(AXIOM_HAS_ACCELERATE ON)
-        message(STATUS "Accelerate framework: found")
-    else()
-        set(AXIOM_HAS_ACCELERATE OFF)
-        message(WARNING "Accelerate framework not found. CPU optimizations will be limited.")
-    endif()
 endif()
 
 # External dependencies
 include(FetchContent)
 
-# Create the main library
+# ============================================================================
+# Source Files
+# ============================================================================
 set(AXIOM_SOURCES
     # Tensor core
     src/tensor/tensor.cpp
@@ -80,12 +172,29 @@ set(AXIOM_SOURCES
     src/tensor/random.cpp
     src/tensor/system.cpp
     src/tensor/indexing.cpp
-    
+
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
     src/backends/cpu/cpu_operations.cpp
-    src/backends/cpu/cpu_accelerate.cpp
+
+    # BLAS backend abstraction (always included)
+    src/backends/cpu/blas/blas_backend.cpp
+    src/backends/cpu/blas/blas_fallback.cpp
 )
+
+# Add platform-specific BLAS backends
+if(AXIOM_HAS_ACCELERATE)
+    list(APPEND AXIOM_SOURCES
+        src/backends/cpu/cpu_accelerate.cpp
+        src/backends/cpu/blas/blas_accelerate.cpp
+    )
+endif()
+
+if(AXIOM_HAS_OPENBLAS)
+    list(APPEND AXIOM_SOURCES
+        src/backends/cpu/blas/blas_openblas.cpp
+    )
+endif()
 
 # Add Metal backend if available
 if(APPLE AND AXIOM_HAS_METAL)
@@ -96,7 +205,7 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/kernels.metal
     )
-    
+
     set_source_files_properties(
         src/backends/metal/metal_storage.mm
         src/backends/metal/metal_operations.mm
@@ -110,6 +219,9 @@ endif()
 
 add_library(axiom SHARED ${AXIOM_SOURCES})
 
+# ============================================================================
+# Metal Library Embedding (macOS only)
+# ============================================================================
 if(APPLE AND AXIOM_HAS_METAL)
     if(AXIOM_EMBED_METAL_LIBRARY)
         enable_language(ASM)
@@ -163,7 +275,9 @@ if(APPLE AND AXIOM_HAS_METAL)
     endif()
 endif()
 
-# Set target properties
+# ============================================================================
+# Target Properties
+# ============================================================================
 set_target_properties(axiom PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
@@ -182,9 +296,14 @@ target_include_directories(axiom
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cpu
 )
 
-# Platform-specific linking
+# ============================================================================
+# Linking
+# ============================================================================
+
+# Metal framework (macOS only)
 if(APPLE AND AXIOM_HAS_METAL)
     target_link_libraries(axiom
         PUBLIC
@@ -193,21 +312,31 @@ if(APPLE AND AXIOM_HAS_METAL)
             ${MPS_FRAMEWORK}
             ${MPSGRAPH_FRAMEWORK}
     )
-
-    # Enable Metal support
     target_compile_definitions(axiom PUBLIC AXIOM_METAL_SUPPORT)
 endif()
 
-# Apple Accelerate framework linkage
-if(APPLE AND AXIOM_HAS_ACCELERATE)
+# BLAS backend linking
+if(AXIOM_HAS_ACCELERATE)
     target_link_libraries(axiom PUBLIC ${ACCELERATE_FRAMEWORK})
     target_compile_definitions(axiom PUBLIC AXIOM_USE_ACCELERATE)
 endif()
 
-# XSIMD for cross-platform SIMD operations
+if(AXIOM_HAS_OPENBLAS)
+    target_link_libraries(axiom PUBLIC OpenBLAS::OpenBLAS)
+    target_compile_definitions(axiom PUBLIC AXIOM_USE_OPENBLAS)
+endif()
+
+# Linux threading
+if(UNIX AND NOT APPLE)
+    target_link_libraries(axiom PUBLIC Threads::Threads)
+endif()
+
+# XSIMD for cross-platform SIMD operations (always enabled)
 target_compile_definitions(axiom PUBLIC AXIOM_USE_XSIMD)
 
-# Floating-point optimization flags for Release builds
+# ============================================================================
+# Floating-point optimization flags
+# ============================================================================
 # Note: -ffast-math and -fassociative-math break XSIMD transcendental functions
 # (exp, log, sin, etc.) on ARM NEON. Use safer flags that preserve math correctness.
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -231,23 +360,25 @@ target_compile_features(axiom
 # Add alias for easier integration
 add_library(Axiom::axiom ALIAS axiom)
 
-# Tests
+# ============================================================================
+# Tests, Examples, Benchmarks
+# ============================================================================
 if(AXIOM_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     enable_testing()
     add_subdirectory(tests)
 endif()
 
-# Examples
 if(AXIOM_BUILD_EXAMPLES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples")
     add_subdirectory(examples)
 endif()
 
-# Benchmarks
 if(AXIOM_BUILD_BENCHMARKS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks")
     add_subdirectory(benchmarks)
 endif()
 
+# ============================================================================
 # Installation
+# ============================================================================
 include(GNUInstallDirs)
 
 # Install headers
@@ -303,34 +434,31 @@ install(
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Axiom
 )
 
-# Print configuration summary
+# ============================================================================
+# Configuration Summary
+# ============================================================================
 message(STATUS "")
 message(STATUS "Axiom Configuration Summary:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
+message(STATUS "  Platform: ${AXIOM_PLATFORM}")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  Build tests: ${AXIOM_BUILD_TESTS}")
 message(STATUS "  Build examples: ${AXIOM_BUILD_EXAMPLES}")
 message(STATUS "  Build benchmarks: ${AXIOM_BUILD_BENCHMARKS}")
-message(STATUS "  FP16 library: ${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16")
-message(STATUS "  FlatBuffers: ${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers")
+message(STATUS "")
+message(STATUS "  BLAS backend: ${AXIOM_BLAS_IMPL}")
 if(APPLE)
     if(AXIOM_HAS_METAL)
         message(STATUS "  Metal support: YES")
     else()
         message(STATUS "  Metal support: NO (frameworks not found)")
     endif()
-    if(AXIOM_HAS_ACCELERATE)
-        message(STATUS "  Accelerate support: YES (BLAS/vDSP)")
-    else()
-        message(STATUS "  Accelerate support: NO")
-    endif()
-    message(STATUS "  Target architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 else()
     message(STATUS "  Metal support: NO (not on Apple platform)")
-    message(STATUS "  Accelerate support: NO (not on Apple platform)")
 endif()
+message(STATUS "  Target architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 # XSIMD architecture detection
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
     message(STATUS "  XSIMD target: ARM NEON")

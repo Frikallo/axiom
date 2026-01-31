@@ -9,6 +9,9 @@
 #include "cpu_accelerate.hpp"
 #include "cpu_simd.hpp"
 
+// BLAS backend abstraction
+#include "blas/blas_backend.hpp"
+
 namespace axiom {
 namespace backends {
 namespace cpu {
@@ -1477,10 +1480,7 @@ void CPUMatMulOperation::matmul_2d(const T *a_data, const T *b_data, T *c_data,
                                    size_t b_row_stride, size_t b_col_stride,
                                    size_t c_row_stride, size_t c_col_stride) {
 
-#ifdef AXIOM_USE_ACCELERATE
-    // Try to use BLAS for float32/float64 if strides are compatible
-    // Only use BLAS for standard 2D matrix cases (M > 1 && N > 1)
-    // For vector cases (M=1 or N=1), the stride handling becomes tricky
+    // Try to use BLAS backend for float32/float64 if strides are compatible
     if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) {
         // Check if A is row-major or column-major (or transposed version)
         bool a_row_major = (a_col_stride == 1);
@@ -1517,18 +1517,20 @@ void CPUMatMulOperation::matmul_2d(const T *a_data, const T *b_data, T *c_data,
             if (lda >= min_lda && ldb >= min_ldb && ldc >= min_ldc && lda > 0 &&
                 ldb > 0 && ldc > 0) {
 
+                // Use the BLAS backend abstraction layer
+                auto &backend = blas::get_blas_backend();
+
                 if constexpr (std::is_same_v<T, float>) {
-                    accelerate::gemm_f32(a_data, b_data, c_data, M, N, K, lda,
-                                         ldb, ldc, trans_a, trans_b);
+                    backend.sgemm(trans_a, trans_b, M, N, K, 1.0f, a_data, lda,
+                                  b_data, ldb, 0.0f, c_data, ldc);
                 } else {
-                    accelerate::gemm_f64(a_data, b_data, c_data, M, N, K, lda,
-                                         ldb, ldc, trans_a, trans_b);
+                    backend.dgemm(trans_a, trans_b, M, N, K, 1.0, a_data, lda,
+                                  b_data, ldb, 0.0, c_data, ldc);
                 }
                 return;
             }
         }
     }
-#endif // AXIOM_USE_ACCELERATE
 
     // Fallback: Cache-blocked matrix multiplication for better performance
     // Use 64x64 tile size (fits in L1 cache on Apple Silicon)
@@ -1749,9 +1751,9 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
         throw ShapeError("MatMul does not support 0-dimensional tensors");
     }
 
-#ifdef AXIOM_USE_ACCELERATE
     // Fast path: Contiguous 2D float32/float64 matrices with same dtype
     // Skip all the overhead of type promotion and complex stride handling
+    // This path uses the BLAS backend abstraction for all platforms
     if (a.ndim() == 2 && b.ndim() == 2 && a.dtype() == b.dtype() &&
         a.is_contiguous() && b.is_contiguous() &&
         (a.dtype() == DType::Float32 || a.dtype() == DType::Float64)) {
@@ -1773,18 +1775,20 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
         size_t ldb = b.shape()[1]; // Leading dimension of B (cols)
         size_t ldc = N;            // Leading dimension of C (cols)
 
+        // Use the BLAS backend abstraction layer
+        auto &backend = blas::get_blas_backend();
+
         if (a.dtype() == DType::Float32) {
-            accelerate::gemm_f32(a.typed_data<float>(), b.typed_data<float>(),
-                                 result.typed_data<float>(), M, N, K_a, lda,
-                                 ldb, ldc, transpose_a, transpose_b);
+            backend.sgemm(transpose_a, transpose_b, M, N, K_a, 1.0f,
+                          a.typed_data<float>(), lda, b.typed_data<float>(),
+                          ldb, 0.0f, result.typed_data<float>(), ldc);
         } else {
-            accelerate::gemm_f64(a.typed_data<double>(), b.typed_data<double>(),
-                                 result.typed_data<double>(), M, N, K_a, lda,
-                                 ldb, ldc, transpose_a, transpose_b);
+            backend.dgemm(transpose_a, transpose_b, M, N, K_a, 1.0,
+                          a.typed_data<double>(), lda, b.typed_data<double>(),
+                          ldb, 0.0, result.typed_data<double>(), ldc);
         }
         return result;
     }
-#endif
 
     // Type promote and dispatch
     DType result_dtype = ops::promote_types(a.dtype(), b.dtype());

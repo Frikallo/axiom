@@ -1,5 +1,5 @@
 # ============================================================================
-# Axiom - High-Performance Tensor Library for Apple Silicon
+# Axiom - High-Performance Cross-Platform Tensor Library
 # ============================================================================
 #
 # Usage:
@@ -18,7 +18,30 @@ BUILD_DIR_DEBUG := build-debug
 CMAKE           := cmake
 CTEST           := ctest
 CLANG_FORMAT    := clang-format
-NPROC           := $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+
+# Cross-platform CPU count detection
+ifeq ($(OS),Windows_NT)
+    NPROC := $(NUMBER_OF_PROCESSORS)
+    ifeq ($(NPROC),)
+        NPROC := 4
+    endif
+else
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Darwin)
+        NPROC := $(shell sysctl -n hw.ncpu 2>/dev/null || echo 4)
+    else
+        NPROC := $(shell nproc 2>/dev/null || echo 4)
+    endif
+endif
+
+# CMake generator selection
+ifeq ($(OS),Windows_NT)
+    # Use default generator on Windows (Visual Studio or Ninja if available)
+    CMAKE_GENERATOR :=
+else
+    # Use Ninja on Unix-like systems if available
+    CMAKE_GENERATOR := $(shell command -v ninja >/dev/null 2>&1 && echo "-G Ninja" || echo "")
+endif
 
 # Source files for formatting
 SOURCES := $(shell find include src -name '*.hpp' -o -name '*.cpp' -o -name '*.mm' -o -name '*.h' 2>/dev/null)
@@ -64,22 +87,22 @@ lib: $(BUILD_DIR)/Makefile  ## Build only the library (no tests/examples)
 
 $(BUILD_DIR)/Makefile:
 	@echo "$(CYAN)Configuring release build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release
 
 $(BUILD_DIR_DEBUG)/Makefile:
 	@echo "$(CYAN)Configuring debug build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR_DEBUG) -DCMAKE_BUILD_TYPE=Debug
+	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Debug
 
 .PHONY: configure
 configure:  ## Reconfigure CMake (release)
 	@echo "$(CYAN)Reconfiguring release build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release
 	@echo "$(GREEN)✓ Configuration complete$(RESET)"
 
 .PHONY: configure-debug
 configure-debug:  ## Reconfigure CMake (debug)
 	@echo "$(CYAN)Reconfiguring debug build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR_DEBUG) -DCMAKE_BUILD_TYPE=Debug
+	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Debug
 	@echo "$(GREEN)✓ Configuration complete$(RESET)"
 
 .PHONY: rebuild
