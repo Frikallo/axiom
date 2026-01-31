@@ -1,7 +1,8 @@
 #pragma once
 
-// Pure C++ fallback BLAS backend implementation
+// Native C++ BLAS backend implementation
 // Uses cache-blocked algorithms with SIMD via xsimd for vectorization
+// This is a portable, pure C++ implementation that works on all platforms
 
 #include "blas_backend.hpp"
 
@@ -10,10 +11,10 @@ namespace backends {
 namespace cpu {
 namespace blas {
 
-class FallbackBlasBackend : public BlasBackend {
+class NativeBlasBackend : public BlasBackend {
   public:
-    FallbackBlasBackend() = default;
-    ~FallbackBlasBackend() override = default;
+    NativeBlasBackend() = default;
+    ~NativeBlasBackend() override = default;
 
     // BLAS Level 3
     void sgemm(bool transA, bool transB, size_t M, size_t N, size_t K,
@@ -55,8 +56,8 @@ class FallbackBlasBackend : public BlasBackend {
     void dscal(size_t n, double alpha, double *x, size_t incx) override;
 
     // Backend info
-    const char *name() const override { return "Fallback"; }
-    BlasType type() const override { return BlasType::Fallback; }
+    const char *name() const override { return "Native"; }
+    BlasType type() const override { return BlasType::Native; }
 
   private:
     // Cache-blocked GEMM implementation

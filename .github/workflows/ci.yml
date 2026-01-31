@@ -58,7 +58,7 @@ jobs:
         path: build/Testing/
 
   # ============================================================================
-  # Linux Build (OpenBLAS and Fallback)
+  # Linux Build (OpenBLAS and Native)
   # ============================================================================
   build-linux:
     name: Linux (${{ matrix.blas }})
@@ -66,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        blas: [openblas, fallback]
+        blas: [openblas, native]
 
     steps:
     - name: Checkout
@@ -118,6 +118,14 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Python Dependencies
+      run: pip install numpy
+
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
@@ -150,10 +158,10 @@ jobs:
         path: build/Testing/
 
   # ============================================================================
-  # Windows Fallback Build (no BLAS library)
+  # Windows Native Build (no external BLAS library)
   # ============================================================================
-  build-windows-fallback:
-    name: Windows (Fallback)
+  build-windows-native:
+    name: Windows (Native)
     runs-on: windows-latest
 
     steps:
@@ -162,13 +170,21 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Python Dependencies
+      run: pip install numpy
+
     - name: Configure CMake
       run: |
         cmake -B build `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DAXIOM_BUILD_TESTS=ON `
           -DAXIOM_BUILD_EXAMPLES=ON `
-          -DAXIOM_BLAS_BACKEND=fallback
+          -DAXIOM_BLAS_BACKEND=native
 
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }}
@@ -181,7 +197,7 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results-windows-fallback
+        name: test-results-windows-native
         path: build/Testing/
 
   # ============================================================================

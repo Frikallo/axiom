@@ -1,5 +1,5 @@
 #include "blas_backend.hpp"
-#include "blas_fallback.hpp"
+#include "blas_native.hpp"
 
 #ifdef AXIOM_USE_ACCELERATE
 #include "blas_accelerate.hpp"
@@ -36,8 +36,8 @@ std::unique_ptr<BlasBackend> create_backend(BlasType type) {
     case BlasType::OpenBLAS:
         return std::make_unique<OpenBlasBackend>();
 #endif
-    case BlasType::Fallback:
-        return std::make_unique<FallbackBlasBackend>();
+    case BlasType::Native:
+        return std::make_unique<NativeBlasBackend>();
     case BlasType::Auto:
         // Auto-detect: try backends in order of preference
 #ifdef AXIOM_USE_ACCELERATE
@@ -45,7 +45,7 @@ std::unique_ptr<BlasBackend> create_backend(BlasType type) {
 #elif defined(AXIOM_USE_OPENBLAS)
         return std::make_unique<OpenBlasBackend>();
 #else
-        return std::make_unique<FallbackBlasBackend>();
+        return std::make_unique<NativeBlasBackend>();
 #endif
     default:
         throw std::runtime_error("Unknown BLAS backend type");
@@ -83,7 +83,7 @@ BlasType get_blas_backend_type() {
 bool is_backend_available(BlasType type) {
     switch (type) {
     case BlasType::Auto:
-        return true; // Auto always available (falls back to Fallback)
+        return true; // Auto always available (uses Native as default)
     case BlasType::Accelerate:
 #ifdef AXIOM_USE_ACCELERATE
         return true;
@@ -96,8 +96,8 @@ bool is_backend_available(BlasType type) {
 #else
         return false;
 #endif
-    case BlasType::Fallback:
-        return true; // Fallback is always available
+    case BlasType::Native:
+        return true; // Native is always available
     default:
         return false;
     }
@@ -109,7 +109,7 @@ BlasType get_default_backend_type() {
 #elif defined(AXIOM_USE_OPENBLAS)
     return BlasType::OpenBLAS;
 #else
-    return BlasType::Fallback;
+    return BlasType::Native;
 #endif
 }
 

@@ -4,6 +4,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifdef _WIN32
+#include <malloc.h>
+#endif
+
 #include "axiom/error.hpp"
 
 namespace axiom {
@@ -14,11 +18,15 @@ namespace cpu {
 // Aligned Memory Allocation
 // ============================================================================
 
-// Custom deleter for aligned memory allocated with posix_memalign
+// Custom deleter for aligned memory
 struct AlignedDeleter {
     void operator()(uint8_t *ptr) const {
         if (ptr) {
+#ifdef _WIN32
+            _aligned_free(ptr);
+#else
             std::free(ptr);
+#endif
         }
     }
 };
@@ -26,19 +34,27 @@ struct AlignedDeleter {
 // Allocate aligned memory (64-byte alignment for optimal SIMD/cache
 // performance)
 static std::shared_ptr<uint8_t[]> allocate_aligned(size_t size_bytes) {
-    constexpr size_t alignment = 64; // Cache line size on Apple Silicon
+    constexpr size_t alignment = 64; // Cache line size
 
     if (size_bytes == 0) {
         return nullptr;
     }
 
     void *ptr = nullptr;
-    int result = posix_memalign(&ptr, alignment, size_bytes);
 
+#ifdef _WIN32
+    ptr = _aligned_malloc(size_bytes, alignment);
+    if (ptr == nullptr) {
+        throw MemoryError("Failed to allocate " + std::to_string(size_bytes) +
+                          " bytes of aligned memory");
+    }
+#else
+    int result = posix_memalign(&ptr, alignment, size_bytes);
     if (result != 0 || ptr == nullptr) {
         throw MemoryError("Failed to allocate " + std::to_string(size_bytes) +
                           " bytes of aligned memory");
     }
+#endif
 
     // Use shared_ptr with custom deleter for proper cleanup
     return std::shared_ptr<uint8_t[]>(static_cast<uint8_t *>(ptr),

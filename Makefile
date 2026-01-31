@@ -68,28 +68,29 @@ all: release
 # ============================================================================
 
 .PHONY: release
-release: $(BUILD_DIR)/Makefile  ## Build release version (default)
+release: $(BUILD_DIR)/CMakeCache.txt  ## Build release version (default)
 	@echo "$(CYAN)Building release...$(RESET)"
 	@$(CMAKE) --build $(BUILD_DIR) -j$(NPROC)
 	@echo "$(GREEN)✓ Release build complete$(RESET)"
 
 .PHONY: debug
-debug: $(BUILD_DIR_DEBUG)/Makefile  ## Build debug version
+debug: $(BUILD_DIR_DEBUG)/CMakeCache.txt  ## Build debug version
 	@echo "$(CYAN)Building debug...$(RESET)"
 	@$(CMAKE) --build $(BUILD_DIR_DEBUG) -j$(NPROC)
 	@echo "$(GREEN)✓ Debug build complete$(RESET)"
 
 .PHONY: lib
-lib: $(BUILD_DIR)/Makefile  ## Build only the library (no tests/examples)
+lib: $(BUILD_DIR)/CMakeCache.txt  ## Build only the library (no tests/examples)
 	@echo "$(CYAN)Building library...$(RESET)"
 	@$(CMAKE) --build $(BUILD_DIR) --target axiom -j$(NPROC)
 	@echo "$(GREEN)✓ Library build complete$(RESET)"
 
-$(BUILD_DIR)/Makefile:
+# Build configuration marker file (works with both Make and Ninja generators)
+$(BUILD_DIR)/CMakeCache.txt:
 	@echo "$(CYAN)Configuring release build...$(RESET)"
 	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release
 
-$(BUILD_DIR_DEBUG)/Makefile:
+$(BUILD_DIR_DEBUG)/CMakeCache.txt:
 	@echo "$(CYAN)Configuring debug build...$(RESET)"
 	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Debug
 
@@ -197,7 +198,7 @@ MACOS_SDK := $(shell xcrun --show-sdk-path 2>/dev/null)
 CLANG_TIDY_ARGS := --extra-arg=-isysroot$(MACOS_SDK) --extra-arg=-std=c++20
 
 .PHONY: lint
-lint: $(BUILD_DIR)/Makefile  ## Run clang-tidy static analysis
+lint: $(BUILD_DIR)/CMakeCache.txt  ## Run clang-tidy static analysis
 	@echo "$(CYAN)Running clang-tidy...$(RESET)"
 	@if ! command -v clang-tidy &> /dev/null; then \
 		echo "$(YELLOW)clang-tidy not found. Install with: brew install llvm$(RESET)"; \
@@ -210,7 +211,7 @@ lint: $(BUILD_DIR)/Makefile  ## Run clang-tidy static analysis
 	@echo "$(GREEN)✓ Static analysis complete$(RESET)"
 
 .PHONY: lint-fix
-lint-fix: $(BUILD_DIR)/Makefile  ## Run clang-tidy and apply fixes
+lint-fix: $(BUILD_DIR)/CMakeCache.txt  ## Run clang-tidy and apply fixes
 	@echo "$(CYAN)Running clang-tidy with fixes...$(RESET)"
 	@if ! command -v clang-tidy &> /dev/null; then \
 		echo "$(RED)clang-tidy not found. Install with: brew install llvm$(RESET)"; \
@@ -279,7 +280,7 @@ distclean: clean-all  ## Clean everything including generated files
 # ============================================================================
 
 .PHONY: compile-commands
-compile-commands: $(BUILD_DIR)/Makefile  ## Generate compile_commands.json
+compile-commands: $(BUILD_DIR)/CMakeCache.txt  ## Generate compile_commands.json
 	@echo "$(CYAN)Generating compile_commands.json...$(RESET)"
 	@ln -sf $(BUILD_DIR)/compile_commands.json .
 	@echo "$(GREEN)✓ compile_commands.json linked$(RESET)"
@@ -294,7 +295,7 @@ watch:  ## Watch for changes and rebuild (requires fswatch)
 	@fswatch -o include src tests examples | xargs -n1 -I{} make release
 
 .PHONY: info
-info: $(BUILD_DIR)/Makefile  ## Show build configuration
+info: $(BUILD_DIR)/CMakeCache.txt  ## Show build configuration
 	@echo "$(BOLD)Axiom Build Information$(RESET)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "$(CYAN)Build directory:$(RESET)  $(BUILD_DIR)"

@@ -1,7 +1,7 @@
 #pragma once
 
 // Abstract BLAS backend interface for cross-platform matrix operations
-// Supports: Apple Accelerate, OpenBLAS, and pure C++ fallback
+// Supports: Apple Accelerate, OpenBLAS, and native C++ with SIMD
 
 #include <cstddef>
 #include <memory>
@@ -17,7 +17,7 @@ enum class BlasType {
     Auto,       // Auto-detect best available backend
     Accelerate, // Apple Accelerate framework (macOS only)
     OpenBLAS,   // OpenBLAS library (Linux/Windows)
-    Fallback    // Pure C++ implementation with SIMD
+    Native    // Pure C++ implementation with SIMD
 };
 
 // Abstract BLAS backend interface
@@ -98,7 +98,7 @@ class BlasBackend {
     // ========================================================================
 
     // Return the name of this backend (e.g., "Accelerate", "OpenBLAS",
-    // "Fallback")
+    // "Native")
     virtual const char *name() const = 0;
 
     // Return the type of this backend

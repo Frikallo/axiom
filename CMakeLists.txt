@@ -35,8 +35,8 @@ option(AXIOM_BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(AXIOM_NATIVE_ARCH "Use -march=native for local builds (not portable)" OFF)
 
 # BLAS backend selection
-set(AXIOM_BLAS_BACKEND "auto" CACHE STRING "BLAS backend: auto, accelerate, openblas, fallback")
-set_property(CACHE AXIOM_BLAS_BACKEND PROPERTY STRINGS auto accelerate openblas fallback)
+set(AXIOM_BLAS_BACKEND "auto" CACHE STRING "BLAS backend: auto, accelerate, openblas, native")
+set_property(CACHE AXIOM_BLAS_BACKEND PROPERTY STRINGS auto accelerate openblas native)
 
 # ============================================================================
 # Compiler Options
@@ -86,7 +86,7 @@ endif()
 # ============================================================================
 set(AXIOM_HAS_ACCELERATE OFF)
 set(AXIOM_HAS_OPENBLAS OFF)
-set(AXIOM_BLAS_IMPL "fallback")
+set(AXIOM_BLAS_IMPL "native")
 
 if(AXIOM_BLAS_BACKEND STREQUAL "auto")
     # Auto-detect best available backend
@@ -105,7 +105,7 @@ if(AXIOM_BLAS_BACKEND STREQUAL "auto")
             set(AXIOM_BLAS_IMPL "openblas")
             message(STATUS "BLAS backend: OpenBLAS (auto-detected)")
         else()
-            message(STATUS "BLAS backend: Fallback (OpenBLAS not found)")
+            message(STATUS "BLAS backend: Native (OpenBLAS not found)")
         endif()
     endif()
 elseif(AXIOM_BLAS_BACKEND STREQUAL "accelerate")
@@ -122,8 +122,8 @@ elseif(AXIOM_BLAS_BACKEND STREQUAL "openblas")
     set(AXIOM_HAS_OPENBLAS ON)
     set(AXIOM_BLAS_IMPL "openblas")
     message(STATUS "BLAS backend: OpenBLAS (requested)")
-elseif(AXIOM_BLAS_BACKEND STREQUAL "fallback")
-    message(STATUS "BLAS backend: Fallback (requested)")
+elseif(AXIOM_BLAS_BACKEND STREQUAL "native")
+    message(STATUS "BLAS backend: Native (requested)")
 endif()
 
 # ============================================================================
@@ -179,7 +179,7 @@ set(AXIOM_SOURCES
 
     # BLAS backend abstraction (always included)
     src/backends/cpu/blas/blas_backend.cpp
-    src/backends/cpu/blas/blas_fallback.cpp
+    src/backends/cpu/blas/blas_native.cpp
 )
 
 # Add platform-specific BLAS backends
@@ -465,6 +465,6 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
     message(STATUS "  XSIMD target: x86 SSE/AVX (auto-detected at compile time)")
 else()
-    message(STATUS "  XSIMD target: Scalar fallback")
+    message(STATUS "  XSIMD target: Scalar native")
 endif()
 message(STATUS "")

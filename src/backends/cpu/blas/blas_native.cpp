@@ -1,4 +1,4 @@
-#include "blas_fallback.hpp"
+#include "blas_native.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -23,7 +23,7 @@ constexpr size_t TILE_N = 64;
 constexpr size_t TILE_K = 64;
 
 template <typename T>
-void FallbackBlasBackend::gemm_impl(bool transA, bool transB, size_t M,
+void NativeBlasBackend::gemm_impl(bool transA, bool transB, size_t M,
                                     size_t N, size_t K, T alpha, const T *A,
                                     size_t lda, const T *B, size_t ldb, T beta,
                                     T *C, size_t ldc) {
@@ -147,7 +147,7 @@ void FallbackBlasBackend::gemm_impl(bool transA, bool transB, size_t M,
 // ============================================================================
 
 template <typename T>
-void FallbackBlasBackend::gemv_impl(bool transA, size_t M, size_t N, T alpha,
+void NativeBlasBackend::gemv_impl(bool transA, size_t M, size_t N, T alpha,
                                     const T *A, size_t lda, const T *x,
                                     size_t incx, T beta, T *y, size_t incy) {
     // Dimensions of result
@@ -229,7 +229,7 @@ void FallbackBlasBackend::gemv_impl(bool transA, size_t M, size_t N, T alpha,
 // ============================================================================
 
 template <typename T>
-T FallbackBlasBackend::dot_impl(size_t n, const T *x, size_t incx, const T *y,
+T NativeBlasBackend::dot_impl(size_t n, const T *x, size_t incx, const T *y,
                                 size_t incy) {
     T result = T(0);
 
@@ -277,7 +277,7 @@ T FallbackBlasBackend::dot_impl(size_t n, const T *x, size_t incx, const T *y,
 // ============================================================================
 
 template <typename T>
-T FallbackBlasBackend::nrm2_impl(size_t n, const T *x, size_t incx) {
+T NativeBlasBackend::nrm2_impl(size_t n, const T *x, size_t incx) {
     T sum_sq = T(0);
 
 #ifdef AXIOM_USE_XSIMD
@@ -324,7 +324,7 @@ T FallbackBlasBackend::nrm2_impl(size_t n, const T *x, size_t incx) {
 // Public Interface - Single Precision
 // ============================================================================
 
-void FallbackBlasBackend::sgemm(bool transA, bool transB, size_t M, size_t N,
+void NativeBlasBackend::sgemm(bool transA, bool transB, size_t M, size_t N,
                                 size_t K, float alpha, const float *A,
                                 size_t lda, const float *B, size_t ldb,
                                 float beta, float *C, size_t ldc) {
@@ -332,19 +332,19 @@ void FallbackBlasBackend::sgemm(bool transA, bool transB, size_t M, size_t N,
                      ldc);
 }
 
-void FallbackBlasBackend::sgemv(bool transA, size_t M, size_t N, float alpha,
+void NativeBlasBackend::sgemv(bool transA, size_t M, size_t N, float alpha,
                                 const float *A, size_t lda, const float *x,
                                 size_t incx, float beta, float *y,
                                 size_t incy) {
     gemv_impl<float>(transA, M, N, alpha, A, lda, x, incx, beta, y, incy);
 }
 
-float FallbackBlasBackend::sdot(size_t n, const float *x, size_t incx,
+float NativeBlasBackend::sdot(size_t n, const float *x, size_t incx,
                                 const float *y, size_t incy) {
     return dot_impl<float>(n, x, incx, y, incy);
 }
 
-void FallbackBlasBackend::saxpy(size_t n, float alpha, const float *x,
+void NativeBlasBackend::saxpy(size_t n, float alpha, const float *x,
                                 size_t incx, float *y, size_t incy) {
     if (alpha == 0.0f)
         return;
@@ -380,11 +380,11 @@ void FallbackBlasBackend::saxpy(size_t n, float alpha, const float *x,
     }
 }
 
-float FallbackBlasBackend::snrm2(size_t n, const float *x, size_t incx) {
+float NativeBlasBackend::snrm2(size_t n, const float *x, size_t incx) {
     return nrm2_impl<float>(n, x, incx);
 }
 
-void FallbackBlasBackend::sscal(size_t n, float alpha, float *x, size_t incx) {
+void NativeBlasBackend::sscal(size_t n, float alpha, float *x, size_t incx) {
     if (alpha == 1.0f)
         return;
 
@@ -422,7 +422,7 @@ void FallbackBlasBackend::sscal(size_t n, float alpha, float *x, size_t incx) {
 // Public Interface - Double Precision
 // ============================================================================
 
-void FallbackBlasBackend::dgemm(bool transA, bool transB, size_t M, size_t N,
+void NativeBlasBackend::dgemm(bool transA, bool transB, size_t M, size_t N,
                                 size_t K, double alpha, const double *A,
                                 size_t lda, const double *B, size_t ldb,
                                 double beta, double *C, size_t ldc) {
@@ -430,19 +430,19 @@ void FallbackBlasBackend::dgemm(bool transA, bool transB, size_t M, size_t N,
                       ldc);
 }
 
-void FallbackBlasBackend::dgemv(bool transA, size_t M, size_t N, double alpha,
+void NativeBlasBackend::dgemv(bool transA, size_t M, size_t N, double alpha,
                                 const double *A, size_t lda, const double *x,
                                 size_t incx, double beta, double *y,
                                 size_t incy) {
     gemv_impl<double>(transA, M, N, alpha, A, lda, x, incx, beta, y, incy);
 }
 
-double FallbackBlasBackend::ddot(size_t n, const double *x, size_t incx,
+double NativeBlasBackend::ddot(size_t n, const double *x, size_t incx,
                                  const double *y, size_t incy) {
     return dot_impl<double>(n, x, incx, y, incy);
 }
 
-void FallbackBlasBackend::daxpy(size_t n, double alpha, const double *x,
+void NativeBlasBackend::daxpy(size_t n, double alpha, const double *x,
                                 size_t incx, double *y, size_t incy) {
     if (alpha == 0.0)
         return;
@@ -478,11 +478,11 @@ void FallbackBlasBackend::daxpy(size_t n, double alpha, const double *x,
     }
 }
 
-double FallbackBlasBackend::dnrm2(size_t n, const double *x, size_t incx) {
+double NativeBlasBackend::dnrm2(size_t n, const double *x, size_t incx) {
     return nrm2_impl<double>(n, x, incx);
 }
 
-void FallbackBlasBackend::dscal(size_t n, double alpha, double *x,
+void NativeBlasBackend::dscal(size_t n, double alpha, double *x,
                                 size_t incx) {
     if (alpha == 1.0)
         return;
