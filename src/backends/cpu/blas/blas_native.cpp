@@ -23,10 +23,10 @@ constexpr size_t TILE_N = 64;
 constexpr size_t TILE_K = 64;
 
 template <typename T>
-void NativeBlasBackend::gemm_impl(bool transA, bool transB, size_t M,
-                                    size_t N, size_t K, T alpha, const T *A,
-                                    size_t lda, const T *B, size_t ldb, T beta,
-                                    T *C, size_t ldc) {
+void NativeBlasBackend::gemm_impl(bool transA, bool transB, size_t M, size_t N,
+                                  size_t K, T alpha, const T *A, size_t lda,
+                                  const T *B, size_t ldb, T beta, T *C,
+                                  size_t ldc) {
     // Handle beta scaling of C
     if (beta == T(0)) {
         // Zero out C
@@ -148,8 +148,8 @@ void NativeBlasBackend::gemm_impl(bool transA, bool transB, size_t M,
 
 template <typename T>
 void NativeBlasBackend::gemv_impl(bool transA, size_t M, size_t N, T alpha,
-                                    const T *A, size_t lda, const T *x,
-                                    size_t incx, T beta, T *y, size_t incy) {
+                                  const T *A, size_t lda, const T *x,
+                                  size_t incx, T beta, T *y, size_t incy) {
     // Dimensions of result
     size_t result_len = transA ? N : M;
 
@@ -230,7 +230,7 @@ void NativeBlasBackend::gemv_impl(bool transA, size_t M, size_t N, T alpha,
 
 template <typename T>
 T NativeBlasBackend::dot_impl(size_t n, const T *x, size_t incx, const T *y,
-                                size_t incy) {
+                              size_t incy) {
     T result = T(0);
 
 #ifdef AXIOM_USE_XSIMD
@@ -325,27 +325,26 @@ T NativeBlasBackend::nrm2_impl(size_t n, const T *x, size_t incx) {
 // ============================================================================
 
 void NativeBlasBackend::sgemm(bool transA, bool transB, size_t M, size_t N,
-                                size_t K, float alpha, const float *A,
-                                size_t lda, const float *B, size_t ldb,
-                                float beta, float *C, size_t ldc) {
+                              size_t K, float alpha, const float *A, size_t lda,
+                              const float *B, size_t ldb, float beta, float *C,
+                              size_t ldc) {
     gemm_impl<float>(transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C,
                      ldc);
 }
 
 void NativeBlasBackend::sgemv(bool transA, size_t M, size_t N, float alpha,
-                                const float *A, size_t lda, const float *x,
-                                size_t incx, float beta, float *y,
-                                size_t incy) {
+                              const float *A, size_t lda, const float *x,
+                              size_t incx, float beta, float *y, size_t incy) {
     gemv_impl<float>(transA, M, N, alpha, A, lda, x, incx, beta, y, incy);
 }
 
 float NativeBlasBackend::sdot(size_t n, const float *x, size_t incx,
-                                const float *y, size_t incy) {
+                              const float *y, size_t incy) {
     return dot_impl<float>(n, x, incx, y, incy);
 }
 
 void NativeBlasBackend::saxpy(size_t n, float alpha, const float *x,
-                                size_t incx, float *y, size_t incy) {
+                              size_t incx, float *y, size_t incy) {
     if (alpha == 0.0f)
         return;
 
@@ -423,27 +422,27 @@ void NativeBlasBackend::sscal(size_t n, float alpha, float *x, size_t incx) {
 // ============================================================================
 
 void NativeBlasBackend::dgemm(bool transA, bool transB, size_t M, size_t N,
-                                size_t K, double alpha, const double *A,
-                                size_t lda, const double *B, size_t ldb,
-                                double beta, double *C, size_t ldc) {
+                              size_t K, double alpha, const double *A,
+                              size_t lda, const double *B, size_t ldb,
+                              double beta, double *C, size_t ldc) {
     gemm_impl<double>(transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C,
                       ldc);
 }
 
 void NativeBlasBackend::dgemv(bool transA, size_t M, size_t N, double alpha,
-                                const double *A, size_t lda, const double *x,
-                                size_t incx, double beta, double *y,
-                                size_t incy) {
+                              const double *A, size_t lda, const double *x,
+                              size_t incx, double beta, double *y,
+                              size_t incy) {
     gemv_impl<double>(transA, M, N, alpha, A, lda, x, incx, beta, y, incy);
 }
 
 double NativeBlasBackend::ddot(size_t n, const double *x, size_t incx,
-                                 const double *y, size_t incy) {
+                               const double *y, size_t incy) {
     return dot_impl<double>(n, x, incx, y, incy);
 }
 
 void NativeBlasBackend::daxpy(size_t n, double alpha, const double *x,
-                                size_t incx, double *y, size_t incy) {
+                              size_t incx, double *y, size_t incy) {
     if (alpha == 0.0)
         return;
 
@@ -482,8 +481,7 @@ double NativeBlasBackend::dnrm2(size_t n, const double *x, size_t incx) {
     return nrm2_impl<double>(n, x, incx);
 }
 
-void NativeBlasBackend::dscal(size_t n, double alpha, double *x,
-                                size_t incx) {
+void NativeBlasBackend::dscal(size_t n, double alpha, double *x, size_t incx) {
     if (alpha == 1.0)
         return;
 

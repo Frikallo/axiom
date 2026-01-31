@@ -17,7 +17,7 @@ enum class BlasType {
     Auto,       // Auto-detect best available backend
     Accelerate, // Apple Accelerate framework (macOS only)
     OpenBLAS,   // OpenBLAS library (Linux/Windows)
-    Native    // Pure C++ implementation with SIMD
+    Native      // Pure C++ implementation with SIMD
 };
 
 // Abstract BLAS backend interface
