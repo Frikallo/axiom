@@ -13,129 +13,161 @@ namespace cpu {
 namespace blas {
 
 // ============================================================================
-// Cache-Blocked GEMM Implementation
+// Cache-Blocked GEMM Implementation with Proper Memory Access Pattern
 // ============================================================================
 
 // Tile sizes optimized for L1/L2 cache
-// 64x64 tiles fit well in L1 cache on most modern CPUs
+// Tiles should fit in L1 cache to avoid repeated memory traffic
 constexpr size_t TILE_M = 64;
 constexpr size_t TILE_N = 64;
-constexpr size_t TILE_K = 64;
+constexpr size_t TILE_K = 256; // Larger K tile since we don't reload C each K
 
 template <typename T>
 void NativeBlasBackend::gemm_impl(bool transA, bool transB, size_t M, size_t N,
                                   size_t K, T alpha, const T *A, size_t lda,
                                   const T *B, size_t ldb, T beta, T *C,
                                   size_t ldc) {
-    // Handle beta scaling of C
-    if (beta == T(0)) {
-        // Zero out C
-        for (size_t i = 0; i < M; ++i) {
-            for (size_t j = 0; j < N; ++j) {
-                C[i * ldc + j] = T(0);
-            }
-        }
-    } else if (beta != T(1)) {
-        // Scale C by beta
-        for (size_t i = 0; i < M; ++i) {
-            for (size_t j = 0; j < N; ++j) {
-                C[i * ldc + j] *= beta;
-            }
-        }
-    }
-
-    // Skip computation if alpha is zero
+    // Skip computation if alpha is zero - just scale C by beta
     if (alpha == T(0)) {
+        if (beta == T(0)) {
+            for (size_t i = 0; i < M; ++i) {
+                for (size_t j = 0; j < N; ++j) {
+                    C[i * ldc + j] = T(0);
+                }
+            }
+        } else if (beta != T(1)) {
+            for (size_t i = 0; i < M; ++i) {
+                for (size_t j = 0; j < N; ++j) {
+                    C[i * ldc + j] *= beta;
+                }
+            }
+        }
         return;
     }
 
-    // Cache-blocked matrix multiplication
-    // C += alpha * op(A) * op(B)
+    // Local tile buffer for C accumulation - avoids repeated C memory access
+    // This is the key optimization: load C once, accumulate, store once
+    alignas(64) T c_tile[TILE_M][TILE_N];
+
+    // Lambda to get A element with transpose handling
+    auto get_A = [&](size_t i, size_t k) -> T {
+        if (transA) {
+            return A[k * lda + i]; // A stored as KxM
+        } else {
+            return A[i * lda + k]; // A stored as MxK
+        }
+    };
+
+    // Lambda to get B element with transpose handling
+    auto get_B = [&](size_t k, size_t j) -> T {
+        if (transB) {
+            return B[j * ldb + k]; // B stored as NxK
+        } else {
+            return B[k * ldb + j]; // B stored as KxN
+        }
+    };
+
+    // Process tiles of C
     for (size_t i0 = 0; i0 < M; i0 += TILE_M) {
-        size_t i_end = std::min(i0 + TILE_M, M);
+        size_t tile_m = std::min(TILE_M, M - i0);
 
-        for (size_t k0 = 0; k0 < K; k0 += TILE_K) {
-            size_t k_end = std::min(k0 + TILE_K, K);
+        for (size_t j0 = 0; j0 < N; j0 += TILE_N) {
+            size_t tile_n = std::min(TILE_N, N - j0);
 
-            for (size_t j0 = 0; j0 < N; j0 += TILE_N) {
-                size_t j_end = std::min(j0 + TILE_N, N);
+            // Initialize c_tile: load from C and apply beta, or zero
+            if (beta == T(0)) {
+                for (size_t i = 0; i < tile_m; ++i) {
+                    for (size_t j = 0; j < tile_n; ++j) {
+                        c_tile[i][j] = T(0);
+                    }
+                }
+            } else if (beta == T(1)) {
+                for (size_t i = 0; i < tile_m; ++i) {
+                    for (size_t j = 0; j < tile_n; ++j) {
+                        c_tile[i][j] = C[(i0 + i) * ldc + (j0 + j)];
+                    }
+                }
+            } else {
+                for (size_t i = 0; i < tile_m; ++i) {
+                    for (size_t j = 0; j < tile_n; ++j) {
+                        c_tile[i][j] = C[(i0 + i) * ldc + (j0 + j)] * beta;
+                    }
+                }
+            }
 
-                // Micro-kernel for this tile
-                for (size_t i = i0; i < i_end; ++i) {
-                    for (size_t k = k0; k < k_end; ++k) {
-                        // Get A[i,k] with transpose handling
-                        T a_val;
-                        if (transA) {
-                            a_val = A[k * lda + i]; // A is KxM, access [k,i]
-                        } else {
-                            a_val = A[i * lda + k]; // A is MxK, access [i,k]
-                        }
-                        a_val *= alpha;
+            // Accumulate A*B into c_tile - NO C memory access in this loop!
+            for (size_t k0 = 0; k0 < K; k0 += TILE_K) {
+                size_t tile_k = std::min(TILE_K, K - k0);
 
-                        // Inner loop with potential SIMD
+                // Micro-kernel: accumulate into c_tile
+                for (size_t i = 0; i < tile_m; ++i) {
+                    for (size_t k = 0; k < tile_k; ++k) {
+                        T a_val = get_A(i0 + i, k0 + k) * alpha;
+
 #ifdef AXIOM_USE_XSIMD
                         if constexpr (xsimd::has_simd_register<T>::value) {
                             using batch_type = xsimd::batch<T>;
                             constexpr size_t simd_width = batch_type::size;
-                            size_t j = j0;
+                            batch_type a_broadcast =
+                                batch_type::broadcast(a_val);
 
-                            // SIMD loop
-                            for (; j + simd_width <= j_end; j += simd_width) {
-                                // Get B[k,j:j+simd_width]
-                                batch_type b_vec;
-                                if (transB) {
-                                    // B is NxK, need B[j:j+simd_width, k]
-                                    // Non-contiguous access, load element by
-                                    // element
+                            size_t j = 0;
+
+                            if (!transB) {
+                                // B is KxN - contiguous row access
+                                const T *b_row = &B[(k0 + k) * ldb + j0];
+
+                                // SIMD loop - accumulate in c_tile, not main C
+                                for (; j + simd_width <= tile_n;
+                                     j += simd_width) {
+                                    batch_type b_vec =
+                                        batch_type::load_unaligned(&b_row[j]);
+                                    batch_type c_vec =
+                                        batch_type::load_aligned(&c_tile[i][j]);
+                                    c_vec =
+                                        xsimd::fma(a_broadcast, b_vec, c_vec);
+                                    c_vec.store_aligned(&c_tile[i][j]);
+                                }
+                            } else {
+                                // B is NxK - non-contiguous, need gather
+                                // Process in smaller chunks to use temp buffer
+                                for (; j + simd_width <= tile_n;
+                                     j += simd_width) {
                                     alignas(64) T temp[simd_width];
                                     for (size_t s = 0; s < simd_width; ++s) {
-                                        temp[s] = B[(j + s) * ldb + k];
+                                        temp[s] =
+                                            B[(j0 + j + s) * ldb + (k0 + k)];
                                     }
-                                    b_vec = batch_type::load_aligned(temp);
-                                } else {
-                                    // B is KxN, access [k, j:j+simd_width]
-                                    // Contiguous access
-                                    b_vec = batch_type::load_unaligned(
-                                        &B[k * ldb + j]);
+                                    batch_type b_vec =
+                                        batch_type::load_aligned(temp);
+                                    batch_type c_vec =
+                                        batch_type::load_aligned(&c_tile[i][j]);
+                                    c_vec =
+                                        xsimd::fma(a_broadcast, b_vec, c_vec);
+                                    c_vec.store_aligned(&c_tile[i][j]);
                                 }
-
-                                // Load C[i,j:j+simd_width]
-                                batch_type c_vec =
-                                    batch_type::load_unaligned(&C[i * ldc + j]);
-
-                                // C += a_val * B
-                                c_vec = xsimd::fma(batch_type::broadcast(a_val),
-                                                   b_vec, c_vec);
-
-                                // Store result
-                                c_vec.store_unaligned(&C[i * ldc + j]);
                             }
 
                             // Scalar remainder
-                            for (; j < j_end; ++j) {
-                                T b_val;
-                                if (transB) {
-                                    b_val = B[j * ldb + k];
-                                } else {
-                                    b_val = B[k * ldb + j];
-                                }
-                                C[i * ldc + j] += a_val * b_val;
+                            for (; j < tile_n; ++j) {
+                                c_tile[i][j] += a_val * get_B(k0 + k, j0 + j);
                             }
                         } else
 #endif
                         {
                             // Scalar fallback
-                            for (size_t j = j0; j < j_end; ++j) {
-                                T b_val;
-                                if (transB) {
-                                    b_val = B[j * ldb + k];
-                                } else {
-                                    b_val = B[k * ldb + j];
-                                }
-                                C[i * ldc + j] += a_val * b_val;
+                            for (size_t j = 0; j < tile_n; ++j) {
+                                c_tile[i][j] += a_val * get_B(k0 + k, j0 + j);
                             }
                         }
                     }
+                }
+            }
+
+            // Store c_tile back to C - ONE store per element
+            for (size_t i = 0; i < tile_m; ++i) {
+                for (size_t j = 0; j < tile_n; ++j) {
+                    C[(i0 + i) * ldc + (j0 + j)] = c_tile[i][j];
                 }
             }
         }

@@ -106,61 +106,9 @@ jobs:
         path: build/Testing/
 
   # ============================================================================
-  # Windows Build (OpenBLAS via vcpkg)
+  # Windows Build (Native BLAS - no external dependencies)
   # ============================================================================
   build-windows:
-    name: Windows (OpenBLAS)
-    runs-on: windows-latest
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install Python Dependencies
-      run: pip install numpy
-
-    - name: Setup vcpkg
-      uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: 'a34c873a9717a888f58dc05268dea15592c2f0ff'
-
-    - name: Install OpenBLAS
-      run: |
-        vcpkg install openblas:x64-windows
-
-    - name: Configure CMake
-      run: |
-        cmake -B build `
-          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
-          -DAXIOM_BUILD_TESTS=ON `
-          -DAXIOM_BUILD_EXAMPLES=ON `
-          -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake"
-
-    - name: Build
-      run: cmake --build build --config ${{ env.BUILD_TYPE }}
-
-    - name: Run Tests
-      working-directory: build
-      run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure --verbose
-
-    - name: Upload Test Results
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results-windows
-        path: build/Testing/
-
-  # ============================================================================
-  # Windows Native Build (no external BLAS library)
-  # ============================================================================
-  build-windows-native:
     name: Windows (Native)
     runs-on: windows-latest
 
@@ -197,7 +145,7 @@ jobs:
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results-windows-native
+        name: test-results-windows
         path: build/Testing/
 
   # ============================================================================

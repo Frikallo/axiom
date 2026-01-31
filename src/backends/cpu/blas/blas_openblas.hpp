@@ -59,6 +59,13 @@ class OpenBlasBackend : public BlasBackend {
     // Backend info
     const char *name() const override { return "OpenBLAS"; }
     BlasType type() const override { return BlasType::OpenBLAS; }
+
+    // OpenBLAS-specific diagnostic and control functions
+    static const char *get_config();
+    static int get_num_threads();
+    static void set_num_threads(int num_threads);
+    static int get_num_procs();
+    static const char *get_corename();
 };
 
 } // namespace blas

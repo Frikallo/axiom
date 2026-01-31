@@ -1532,36 +1532,54 @@ void CPUMatMulOperation::matmul_2d(const T *a_data, const T *b_data, T *c_data,
         }
     }
 
-    // Fallback: Cache-blocked matrix multiplication for better performance
-    // Use 64x64 tile size (fits in L1 cache on Apple Silicon)
-    constexpr size_t TILE_SIZE = 64;
+    // Fallback: Cache-blocked matrix multiplication with proper memory access
+    // Key optimization: accumulate C in a local tile buffer to avoid repeated
+    // loads/stores to C on every K iteration (which causes memory bandwidth
+    // bottleneck)
+    constexpr size_t TILE_M = 64;
+    constexpr size_t TILE_N = 64;
+    constexpr size_t TILE_K = 256;
 
-    // Zero the output first (important since we're accumulating)
-    for (size_t i = 0; i < M; ++i) {
-        for (size_t j = 0; j < N; ++j) {
-            c_data[i * c_row_stride + j * c_col_stride] = T(0);
-        }
-    }
+    // Local tile buffer for C accumulation - critical for performance
+    alignas(64) T c_tile[TILE_M][TILE_N];
 
-    // Tiled matrix multiplication
-    for (size_t i0 = 0; i0 < M; i0 += TILE_SIZE) {
-        size_t i_end = std::min(i0 + TILE_SIZE, M);
-        for (size_t k0 = 0; k0 < K; k0 += TILE_SIZE) {
-            size_t k_end = std::min(k0 + TILE_SIZE, K);
-            for (size_t j0 = 0; j0 < N; j0 += TILE_SIZE) {
-                size_t j_end = std::min(j0 + TILE_SIZE, N);
+    // Process tiles of C
+    for (size_t i0 = 0; i0 < M; i0 += TILE_M) {
+        size_t tile_m = std::min(TILE_M, M - i0);
 
-                // Micro-kernel for this tile
-                for (size_t i = i0; i < i_end; ++i) {
-                    for (size_t k = k0; k < k_end; ++k) {
-                        T a_val = a_data[i * a_row_stride + k * a_col_stride];
-                        for (size_t j = j0; j < j_end; ++j) {
-                            T b_val =
-                                b_data[k * b_row_stride + j * b_col_stride];
-                            c_data[i * c_row_stride + j * c_col_stride] +=
-                                a_val * b_val;
+        for (size_t j0 = 0; j0 < N; j0 += TILE_N) {
+            size_t tile_n = std::min(TILE_N, N - j0);
+
+            // Initialize c_tile to zero (we're computing from scratch)
+            for (size_t i = 0; i < tile_m; ++i) {
+                for (size_t j = 0; j < tile_n; ++j) {
+                    c_tile[i][j] = T(0);
+                }
+            }
+
+            // Accumulate A*B into c_tile - NO C memory access in this loop!
+            for (size_t k0 = 0; k0 < K; k0 += TILE_K) {
+                size_t tile_k = std::min(TILE_K, K - k0);
+
+                // Micro-kernel: accumulate into c_tile
+                for (size_t i = 0; i < tile_m; ++i) {
+                    for (size_t k = 0; k < tile_k; ++k) {
+                        T a_val = a_data[(i0 + i) * a_row_stride +
+                                         (k0 + k) * a_col_stride];
+                        for (size_t j = 0; j < tile_n; ++j) {
+                            T b_val = b_data[(k0 + k) * b_row_stride +
+                                             (j0 + j) * b_col_stride];
+                            c_tile[i][j] += a_val * b_val;
                         }
                     }
+                }
+            }
+
+            // Store c_tile back to C - ONE store per element
+            for (size_t i = 0; i < tile_m; ++i) {
+                for (size_t j = 0; j < tile_n; ++j) {
+                    c_data[(i0 + i) * c_row_stride + (j0 + j) * c_col_stride] =
+                        c_tile[i][j];
                 }
             }
         }

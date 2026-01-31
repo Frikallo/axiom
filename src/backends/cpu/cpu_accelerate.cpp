@@ -14,69 +14,10 @@ namespace backends {
 namespace cpu {
 namespace accelerate {
 
-// ============================================================================
-// BLAS Matrix Multiplication Wrappers
-// ============================================================================
-
-void gemm_f32(const float *A, const float *B, float *C, size_t M, size_t N,
-              size_t K, size_t lda, size_t ldb, size_t ldc, bool transpose_a,
-              bool transpose_b) {
-    // cblas_sgemm parameters:
-    // CblasRowMajor: row-major storage
-    // transA, transB: transpose flags
-    // M: rows of op(A) and C
-    // N: columns of op(B) and C
-    // K: columns of op(A), rows of op(B)
-    // alpha, beta: C = alpha*op(A)*op(B) + beta*C
-    // lda, ldb, ldc: leading dimensions
-
-    cblas_sgemm(CblasRowMajor, transpose_a ? CblasTrans : CblasNoTrans,
-                transpose_b ? CblasTrans : CblasNoTrans, static_cast<int>(M),
-                static_cast<int>(N), static_cast<int>(K),
-                1.0f, // alpha
-                A, static_cast<int>(lda), B, static_cast<int>(ldb),
-                0.0f, // beta
-                C, static_cast<int>(ldc));
-}
-
-void gemm_f64(const double *A, const double *B, double *C, size_t M, size_t N,
-              size_t K, size_t lda, size_t ldb, size_t ldc, bool transpose_a,
-              bool transpose_b) {
-    cblas_dgemm(CblasRowMajor, transpose_a ? CblasTrans : CblasNoTrans,
-                transpose_b ? CblasTrans : CblasNoTrans, static_cast<int>(M),
-                static_cast<int>(N), static_cast<int>(K),
-                1.0, // alpha
-                A, static_cast<int>(lda), B, static_cast<int>(ldb),
-                0.0, // beta
-                C, static_cast<int>(ldc));
-}
-
-bool can_use_blas(const void *data, size_t row_stride, size_t col_stride,
-                  size_t /*itemsize*/, size_t /*rows*/, size_t /*cols*/) {
-    // BLAS requires:
-    // 1. Non-null data pointer
-    // 2. Positive strides (no negative strides from flip)
-    // 3. Either row-major (col_stride == itemsize) or column-major (row_stride
-    // == itemsize)
-    // 4. Proper leading dimension alignment
-
-    if (data == nullptr)
-        return false;
-
-    // Check for negative strides (from flip operations)
-    // row_stride and col_stride are in elements, need to check if underlying
-    // byte strides are negative Actually, in our case these are element strides
-    // passed in, so we check if they'd be reasonable
-
-    // For row-major: col_stride should be 1 (contiguous along row)
-    bool is_row_major = (col_stride == 1);
-
-    // For column-major: row_stride should be 1 (contiguous along column)
-    bool is_col_major = (row_stride == 1);
-
-    // Must be either row-major or column-major for BLAS
-    return is_row_major || is_col_major;
-}
+// NOTE: BLAS operations (GEMM, GEMV, DOT, AXPY, NRM2, SCAL) are handled by the
+// BLAS backend abstraction layer in blas/blas_accelerate.cpp. This file only
+// contains vDSP and vForce wrappers for element-wise operations, reductions,
+// and activations.
 
 // ============================================================================
 // vDSP Binary Operations
@@ -749,66 +690,6 @@ void vpoly_f64(const double *input, const double *coeffs, size_t num_coeffs,
                double *output, size_t n) {
     vDSP_vpolyD(input, 1, coeffs, 1, output, 1, static_cast<vDSP_Length>(n),
                 static_cast<vDSP_Length>(num_coeffs - 1));
-}
-
-// ============================================================================
-// BLAS Level 1 Operations
-// ============================================================================
-
-void vaxpy_f32(float alpha, const float *x, float *y, size_t n) {
-    cblas_saxpy(static_cast<int>(n), alpha, x, 1, y, 1);
-}
-
-void vaxpy_f64(double alpha, const double *x, double *y, size_t n) {
-    cblas_daxpy(static_cast<int>(n), alpha, x, 1, y, 1);
-}
-
-void vscale_f32(float alpha, float *x, size_t n) {
-    cblas_sscal(static_cast<int>(n), alpha, x, 1);
-}
-
-void vscale_f64(double alpha, double *x, size_t n) {
-    cblas_dscal(static_cast<int>(n), alpha, x, 1);
-}
-
-void vcopy_f32(const float *x, float *y, size_t n) {
-    cblas_scopy(static_cast<int>(n), x, 1, y, 1);
-}
-
-void vcopy_f64(const double *x, double *y, size_t n) {
-    cblas_dcopy(static_cast<int>(n), x, 1, y, 1);
-}
-
-void vswap_f32(float *x, float *y, size_t n) {
-    cblas_sswap(static_cast<int>(n), x, 1, y, 1);
-}
-
-void vswap_f64(double *x, double *y, size_t n) {
-    cblas_dswap(static_cast<int>(n), x, 1, y, 1);
-}
-
-// ============================================================================
-// BLAS Level 2 Operations (Matrix-Vector)
-// ============================================================================
-
-void gemv_f32(const float *A, const float *x, float *y, size_t M, size_t N,
-              size_t lda, bool transpose_a) {
-    // y = op(A) * x
-    // If not transposed: A is MxN, x is Nx1, y is Mx1
-    // If transposed: A is MxN but op(A) is NxM, x is Mx1, y is Nx1
-    cblas_sgemv(CblasRowMajor, transpose_a ? CblasTrans : CblasNoTrans,
-                static_cast<int>(M), static_cast<int>(N),
-                1.0f, // alpha
-                A, static_cast<int>(lda), x, 1,
-                0.0f, // beta
-                y, 1);
-}
-
-void gemv_f64(const double *A, const double *x, double *y, size_t M, size_t N,
-              size_t lda, bool transpose_a) {
-    cblas_dgemv(CblasRowMajor, transpose_a ? CblasTrans : CblasNoTrans,
-                static_cast<int>(M), static_cast<int>(N), 1.0, A,
-                static_cast<int>(lda), x, 1, 0.0, y, 1);
 }
 
 // ============================================================================

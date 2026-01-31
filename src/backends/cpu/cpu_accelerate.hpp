@@ -1,7 +1,12 @@
 #pragma once
 
-// Apple Accelerate framework wrappers for high-performance BLAS/vDSP operations
-// This provides optimized implementations that take advantage of Apple Silicon
+// Apple Accelerate framework wrappers for high-performance vDSP/vForce
+// operations This provides optimized implementations that take advantage of
+// Apple Silicon
+//
+// NOTE: BLAS operations (GEMM, GEMV, DOT, etc.) are handled by the BLAS backend
+// abstraction layer in blas/blas_accelerate.cpp. This file contains vDSP and
+// vForce wrappers for element-wise operations, reductions, and activations.
 
 #ifdef AXIOM_USE_ACCELERATE
 
@@ -12,26 +17,6 @@ namespace axiom {
 namespace backends {
 namespace cpu {
 namespace accelerate {
-
-// ============================================================================
-// BLAS Matrix Multiplication Wrappers
-// ============================================================================
-
-// SGEMM: Single-precision general matrix multiply
-// C = alpha * op(A) * op(B) + beta * C
-// For our use: C = A @ B (alpha=1, beta=0)
-void gemm_f32(const float *A, const float *B, float *C, size_t M, size_t N,
-              size_t K, size_t lda, size_t ldb, size_t ldc, bool transpose_a,
-              bool transpose_b);
-
-// DGEMM: Double-precision general matrix multiply
-void gemm_f64(const double *A, const double *B, double *C, size_t M, size_t N,
-              size_t K, size_t lda, size_t ldb, size_t ldc, bool transpose_a,
-              bool transpose_b);
-
-// Check if matrices are suitable for BLAS (contiguous, no negative strides)
-bool can_use_blas(const void *data, size_t row_stride, size_t col_stride,
-                  size_t itemsize, size_t rows, size_t cols);
 
 // ============================================================================
 // vDSP Binary Operations (for contiguous float32/float64 arrays)
@@ -277,37 +262,6 @@ void vpoly_f32(const float *input, const float *coeffs, size_t num_coeffs,
                float *output, size_t n);
 void vpoly_f64(const double *input, const double *coeffs, size_t num_coeffs,
                double *output, size_t n);
-
-// ============================================================================
-// BLAS Level 1 Operations
-// ============================================================================
-
-// AXPY: y = alpha * x + y
-void vaxpy_f32(float alpha, const float *x, float *y, size_t n);
-void vaxpy_f64(double alpha, const double *x, double *y, size_t n);
-
-// Scale: x = alpha * x
-void vscale_f32(float alpha, float *x, size_t n);
-void vscale_f64(double alpha, double *x, size_t n);
-
-// Copy: y = x
-void vcopy_f32(const float *x, float *y, size_t n);
-void vcopy_f64(const double *x, double *y, size_t n);
-
-// Swap: swap x and y
-void vswap_f32(float *x, float *y, size_t n);
-void vswap_f64(double *x, double *y, size_t n);
-
-// ============================================================================
-// BLAS Level 2 Operations (Matrix-Vector)
-// ============================================================================
-
-// GEMV: y = alpha * op(A) * x + beta * y
-// For our use: y = A @ x (alpha=1, beta=0)
-void gemv_f32(const float *A, const float *x, float *y, size_t M, size_t N,
-              size_t lda, bool transpose_a);
-void gemv_f64(const double *A, const double *x, double *y, size_t M, size_t N,
-              size_t lda, bool transpose_a);
 
 // ============================================================================
 // Activation Functions (Optimized)
