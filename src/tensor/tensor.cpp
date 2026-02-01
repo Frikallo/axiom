@@ -14,6 +14,11 @@
 #include "axiom/random.hpp"
 #include "axiom/system.hpp"
 
+// Include Metal execution stream for GPU synchronization on Apple platforms
+#ifdef AXIOM_METAL_SUPPORT
+#include "backends/metal/metal_common.hpp"
+#endif
+
 namespace axiom {
 
 template <typename T> std::string vec_to_string(const std::vector<T> &vec) {
@@ -1328,7 +1333,15 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
     return new_tensor;
 }
 
-Tensor Tensor::cpu() const { return to(Device::CPU, memory_order_); }
+Tensor Tensor::cpu() const {
+#ifdef AXIOM_METAL_SUPPORT
+    // Synchronize any pending GPU operations before copying to CPU
+    if (device() == Device::GPU) {
+        backends::metal::MetalExecutionStream::instance().synchronize();
+    }
+#endif
+    return to(Device::CPU, memory_order_);
+}
 
 Tensor Tensor::gpu() const { return to(Device::GPU, memory_order_); }
 

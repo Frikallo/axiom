@@ -1,6 +1,7 @@
 #import "mpsgraph_operations.hpp"
 #import "metal_common.hpp"
 #import "metal_storage.hpp"
+#import "graph_cache.hpp"
 #import "axiom/error.hpp"
 #import "axiom/shape.hpp"
 #import "axiom/dtype.hpp"
@@ -215,7 +216,7 @@ static MPSGraphTensorData* createTensorData(const Tensor& tensor) {
                                                 dataType:dtype];
 }
 
-static MPSGraphTensor* castToCommonType(MPSGraph* graph, MPSGraphTensor* tensor, 
+static MPSGraphTensor* castToCommonType(MPSGraph* graph, MPSGraphTensor* tensor,
                                         DType target_dtype) {
     MPSDataType target_mps_dtype = getMPSDataType(target_dtype);
     if (tensor.dataType != target_mps_dtype) {
@@ -224,180 +225,304 @@ static MPSGraphTensor* castToCommonType(MPSGraph* graph, MPSGraphTensor* tensor,
     return tensor;
 }
 
+// Helper to convert Shape to vector<int64_t> for cache keys
+static std::vector<int64_t> shapeToVector(const Shape& shape) {
+    std::vector<int64_t> result;
+    result.reserve(shape.size());
+    for (size_t dim : shape) {
+        result.push_back(static_cast<int64_t>(dim));
+    }
+    return result;
+}
+
+// Helper to convert DType to int for cache keys
+static int dtypeToInt(DType dtype) {
+    return static_cast<int>(dtype);
+}
+
 // ============================================================================
 // Core Execution Helper
 // ============================================================================
 
 static Tensor executeMPSGraphBinaryOp(const Tensor& lhs_raw, const Tensor& rhs_raw,
                                       DType output_dtype,
-                                      MPSGraphBinaryOpBlock op_block) {
+                                      MPSGraphBinaryOpBlock op_block,
+                                      ops::OpType op_type) {
     @autoreleasepool {
         // Make non-contiguous tensors contiguous using GPU gather kernel
         Tensor lhs = ensureContiguous(lhs_raw);
         Tensor rhs = ensureContiguous(rhs_raw);
-        
-        // Create MPSGraph
-        MPSGraph* graph = [[MPSGraph alloc] init];
-        
-        // Create placeholders
-        MPSGraphTensor* lhs_placeholder = createPlaceholder(graph, lhs);
-        MPSGraphTensor* rhs_placeholder = createPlaceholder(graph, rhs);
-        
-        // Type promotion if needed
+
+        // Type promotion
         DType common_dtype = ops::promote_types(lhs.dtype(), rhs.dtype());
-        MPSGraphTensor* lhs_cast = castToCommonType(graph, lhs_placeholder, common_dtype);
-        MPSGraphTensor* rhs_cast = castToCommonType(graph, rhs_placeholder, common_dtype);
-        
-        // Execute the operation
-        MPSGraphTensor* result_tensor = op_block(graph, lhs_cast, rhs_cast);
-        
-        // Cast to output dtype if needed
-        result_tensor = castToCommonType(graph, result_tensor, output_dtype);
-        
+
+        // Create cache key
+        MPSGraphCacheKey cache_key = make_binary_cache_key(
+            op_type,
+            shapeToVector(lhs.shape()),
+            shapeToVector(rhs.shape()),
+            dtypeToInt(lhs.dtype()),
+            dtypeToInt(rhs.dtype()),
+            dtypeToInt(output_dtype)
+        );
+
+        // Get or create cached graph
+        CachedMPSGraph* cached = MPSGraphCache::instance().get_or_create(cache_key, [&]() {
+            CachedMPSGraph entry;
+
+            // Create MPSGraph
+            MPSGraph* graph = [[MPSGraph alloc] init];
+
+            // Create placeholders
+            MPSGraphTensor* lhs_placeholder = createPlaceholder(graph, lhs);
+            MPSGraphTensor* rhs_placeholder = createPlaceholder(graph, rhs);
+
+            // Type promotion if needed
+            MPSGraphTensor* lhs_cast = castToCommonType(graph, lhs_placeholder, common_dtype);
+            MPSGraphTensor* rhs_cast = castToCommonType(graph, rhs_placeholder, common_dtype);
+
+            // Execute the operation
+            MPSGraphTensor* result_tensor = op_block(graph, lhs_cast, rhs_cast);
+
+            // Cast to output dtype if needed
+            result_tensor = castToCommonType(graph, result_tensor, output_dtype);
+
+            // Store in cache entry - use CFBridgingRetain to keep graph alive
+            // The cache will call CFRelease when evicting
+            entry.graph = (void*)CFBridgingRetain(graph);
+            entry.placeholders[0] = (__bridge void*)lhs_placeholder;
+            entry.placeholders[1] = (__bridge void*)rhs_placeholder;
+            entry.num_placeholders = 2;
+            entry.output = (__bridge void*)result_tensor;
+
+            return entry;
+        });
+
+        if (!cached || !cached->is_valid()) {
+            throw DeviceError("Failed to create/retrieve cached MPSGraph");
+        }
+
+        // Get cached graph components
+        MPSGraph* graph = (__bridge MPSGraph*)cached->graph;
+        MPSGraphTensor* lhs_placeholder = (__bridge MPSGraphTensor*)cached->placeholders[0];
+        MPSGraphTensor* rhs_placeholder = (__bridge MPSGraphTensor*)cached->placeholders[1];
+        MPSGraphTensor* result_tensor = (__bridge MPSGraphTensor*)cached->output;
+
         // Infer output shape (MPSGraph handles broadcasting)
         Shape output_shape = ShapeUtils::broadcast_shape(lhs.shape(), rhs.shape());
-        
+
         // Create output tensor
         Tensor output(output_shape, output_dtype, Device::GPU);
-        
+
         // Create tensor data
         MPSGraphTensorData* lhs_data = createTensorData(lhs);
         MPSGraphTensorData* rhs_data = createTensorData(rhs);
         MPSGraphTensorData* output_data = createTensorData(output);
-        
+
         // Create feeds dictionary
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
             lhs_placeholder: lhs_data,
             rhs_placeholder: rhs_data
         };
-        
-        // Create targets dictionary  
+
+        // Create targets dictionary
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
             result_tensor: output_data
         };
-        
+
         // Execute the graph using synchronous API
+        // (Async execution will be added in a future optimization)
         [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
                                 feeds:feeds
                      targetOperations:nil
                     resultsDictionary:targets];
-        
+
         return output;
     }
 }
 
 static Tensor executeMPSGraphUnaryOp(const Tensor& input_raw,
                                      DType output_dtype,
-                                     MPSGraphUnaryOpBlock op_block) {
+                                     MPSGraphUnaryOpBlock op_block,
+                                     ops::OpType op_type) {
     @autoreleasepool {
         // Make non-contiguous tensor contiguous using GPU gather kernel
         Tensor input = ensureContiguous(input_raw);
-        
-        // Create MPSGraph
-        MPSGraph* graph = [[MPSGraph alloc] init];
-        
-        // Create placeholder
-        MPSGraphTensor* input_placeholder = createPlaceholder(graph, input);
-        
-        // Execute the operation
-        MPSGraphTensor* result_tensor = op_block(graph, input_placeholder);
-        
-        // Cast to output dtype if needed
-        result_tensor = castToCommonType(graph, result_tensor, output_dtype);
-        
+
+        // Create cache key
+        MPSGraphCacheKey cache_key = make_unary_cache_key(
+            op_type,
+            shapeToVector(input.shape()),
+            dtypeToInt(input.dtype()),
+            dtypeToInt(output_dtype)
+        );
+
+        // Get or create cached graph
+        CachedMPSGraph* cached = MPSGraphCache::instance().get_or_create(cache_key, [&]() {
+            CachedMPSGraph entry;
+
+            // Create MPSGraph
+            MPSGraph* graph = [[MPSGraph alloc] init];
+
+            // Create placeholder
+            MPSGraphTensor* input_placeholder = createPlaceholder(graph, input);
+
+            // Execute the operation
+            MPSGraphTensor* result_tensor = op_block(graph, input_placeholder);
+
+            // Cast to output dtype if needed
+            result_tensor = castToCommonType(graph, result_tensor, output_dtype);
+
+            // Store in cache entry - use CFBridgingRetain to keep graph alive
+            entry.graph = (void*)CFBridgingRetain(graph);
+            entry.placeholders[0] = (__bridge void*)input_placeholder;
+            entry.num_placeholders = 1;
+            entry.output = (__bridge void*)result_tensor;
+
+            return entry;
+        });
+
+        if (!cached || !cached->is_valid()) {
+            throw DeviceError("Failed to create/retrieve cached MPSGraph");
+        }
+
+        // Get cached graph components
+        MPSGraph* graph = (__bridge MPSGraph*)cached->graph;
+        MPSGraphTensor* input_placeholder = (__bridge MPSGraphTensor*)cached->placeholders[0];
+        MPSGraphTensor* result_tensor = (__bridge MPSGraphTensor*)cached->output;
+
         // Create output tensor (same shape as input)
         Tensor output(input.shape(), output_dtype, Device::GPU);
-        
+
         // Create tensor data
         MPSGraphTensorData* input_data = createTensorData(input);
         MPSGraphTensorData* output_data = createTensorData(output);
-        
+
         // Create feeds and targets
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
             input_placeholder: input_data
         };
-        
+
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
             result_tensor: output_data
         };
-        
+
         // Execute the graph using synchronous API
         [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
                                 feeds:feeds
                      targetOperations:nil
                     resultsDictionary:targets];
-        
+
         return output;
     }
 }
 
 static Tensor executeMPSGraphTernaryOp(const Tensor& cond_raw, const Tensor& a_raw, const Tensor& b_raw,
                                        DType output_dtype,
-                                       MPSGraphTernaryOpBlock op_block) {
+                                       MPSGraphTernaryOpBlock op_block,
+                                       ops::OpType op_type) {
     @autoreleasepool {
         // Make non-contiguous tensors contiguous using GPU gather kernel
         Tensor cond = ensureContiguous(cond_raw);
         Tensor a = ensureContiguous(a_raw);
         Tensor b = ensureContiguous(b_raw);
-        
-        // Create MPSGraph
-        MPSGraph* graph = [[MPSGraph alloc] init];
-        
-        // Create placeholders
-        MPSGraphTensor* cond_placeholder = createPlaceholder(graph, cond);
-        MPSGraphTensor* a_placeholder = createPlaceholder(graph, a);
-        MPSGraphTensor* b_placeholder = createPlaceholder(graph, b);
-        
-        // Always use comparison to zero for reliable Bool semantics
-        // MPSGraph's Bool handling is inconsistent with Axiom's 1-byte Bool,
-        // so we compare != 0 which works correctly for all input dtypes
-        MPSGraphTensor* zero = [graph constantWithScalar:0.0
-                                                dataType:getMPSDataType(cond.dtype())];
-        MPSGraphTensor* cond_bool = [graph notEqualWithPrimaryTensor:cond_placeholder
-                                                    secondaryTensor:zero
-                                                               name:nil];
-        
+
         // Type promotion for a and b
         DType common_dtype = ops::promote_types(a.dtype(), b.dtype());
-        MPSGraphTensor* a_cast = castToCommonType(graph, a_placeholder, common_dtype);
-        MPSGraphTensor* b_cast = castToCommonType(graph, b_placeholder, common_dtype);
-        
-        // Execute the operation
-        MPSGraphTensor* result_tensor = op_block(graph, cond_bool, a_cast, b_cast);
-        
-        // Cast to output dtype if needed
-        result_tensor = castToCommonType(graph, result_tensor, output_dtype);
-        
+
+        // Create cache key
+        MPSGraphCacheKey cache_key = make_ternary_cache_key(
+            op_type,
+            shapeToVector(cond.shape()),
+            shapeToVector(a.shape()),
+            shapeToVector(b.shape()),
+            dtypeToInt(cond.dtype()),
+            dtypeToInt(a.dtype()),
+            dtypeToInt(b.dtype()),
+            dtypeToInt(output_dtype)
+        );
+
+        // Get or create cached graph
+        CachedMPSGraph* cached = MPSGraphCache::instance().get_or_create(cache_key, [&]() {
+            CachedMPSGraph entry;
+
+            // Create MPSGraph
+            MPSGraph* graph = [[MPSGraph alloc] init];
+
+            // Create placeholders
+            MPSGraphTensor* cond_placeholder = createPlaceholder(graph, cond);
+            MPSGraphTensor* a_placeholder = createPlaceholder(graph, a);
+            MPSGraphTensor* b_placeholder = createPlaceholder(graph, b);
+
+            // Always use comparison to zero for reliable Bool semantics
+            MPSGraphTensor* zero = [graph constantWithScalar:0.0
+                                                    dataType:getMPSDataType(cond.dtype())];
+            MPSGraphTensor* cond_bool = [graph notEqualWithPrimaryTensor:cond_placeholder
+                                                        secondaryTensor:zero
+                                                                   name:nil];
+
+            // Type promotion for a and b
+            MPSGraphTensor* a_cast = castToCommonType(graph, a_placeholder, common_dtype);
+            MPSGraphTensor* b_cast = castToCommonType(graph, b_placeholder, common_dtype);
+
+            // Execute the operation
+            MPSGraphTensor* result_tensor = op_block(graph, cond_bool, a_cast, b_cast);
+
+            // Cast to output dtype if needed
+            result_tensor = castToCommonType(graph, result_tensor, output_dtype);
+
+            // Store in cache entry - use CFBridgingRetain to keep graph alive
+            entry.graph = (void*)CFBridgingRetain(graph);
+            entry.placeholders[0] = (__bridge void*)cond_placeholder;
+            entry.placeholders[1] = (__bridge void*)a_placeholder;
+            entry.placeholders[2] = (__bridge void*)b_placeholder;
+            entry.num_placeholders = 3;
+            entry.output = (__bridge void*)result_tensor;
+
+            return entry;
+        });
+
+        if (!cached || !cached->is_valid()) {
+            throw DeviceError("Failed to create/retrieve cached MPSGraph");
+        }
+
+        // Get cached graph components
+        MPSGraph* graph = (__bridge MPSGraph*)cached->graph;
+        MPSGraphTensor* cond_placeholder = (__bridge MPSGraphTensor*)cached->placeholders[0];
+        MPSGraphTensor* a_placeholder = (__bridge MPSGraphTensor*)cached->placeholders[1];
+        MPSGraphTensor* b_placeholder = (__bridge MPSGraphTensor*)cached->placeholders[2];
+        MPSGraphTensor* result_tensor = (__bridge MPSGraphTensor*)cached->output;
+
         // Infer output shape (broadcast all three inputs)
         Shape temp_shape = ShapeUtils::broadcast_shape(cond.shape(), a.shape());
         Shape output_shape = ShapeUtils::broadcast_shape(temp_shape, b.shape());
-        
+
         // Create output tensor
         Tensor output(output_shape, output_dtype, Device::GPU);
-        
+
         // Create tensor data
         MPSGraphTensorData* cond_data = createTensorData(cond);
         MPSGraphTensorData* a_data = createTensorData(a);
         MPSGraphTensorData* b_data = createTensorData(b);
         MPSGraphTensorData* output_data = createTensorData(output);
-        
+
         // Create feeds and targets
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
             cond_placeholder: cond_data,
             a_placeholder: a_data,
             b_placeholder: b_data
         };
-        
+
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
             result_tensor: output_data
         };
-        
+
         // Execute the graph using synchronous API
         [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
                                 feeds:feeds
                      targetOperations:nil
                     resultsDictionary:targets];
-        
+
         return output;
     }
 }
@@ -414,7 +539,7 @@ MPSGraphBinaryOperation::MPSGraphBinaryOperation(ops::OpType op_type,
 Tensor MPSGraphBinaryOperation::execute_binary(const Tensor& lhs, const Tensor& rhs) const {
     // Determine output dtype based on operation type
     DType output_dtype;
-    
+
     // Comparison and logical operations output Bool
     if (op_type_ >= ops::OpType::Equal && op_type_ <= ops::OpType::GreaterEqual) {
         output_dtype = DType::Bool;
@@ -424,8 +549,8 @@ Tensor MPSGraphBinaryOperation::execute_binary(const Tensor& lhs, const Tensor& 
         // Arithmetic operations preserve type promotion
         output_dtype = ops::promote_types(lhs.dtype(), rhs.dtype());
     }
-    
-    return executeMPSGraphBinaryOp(lhs, rhs, output_dtype, op_block_);
+
+    return executeMPSGraphBinaryOp(lhs, rhs, output_dtype, op_block_, op_type_);
 }
 
 // ============================================================================
@@ -444,7 +569,7 @@ Tensor MPSGraphUnaryOperation::execute_unary(const Tensor& input) const {
                          op_type_ == ops::OpType::IsInf ||
                          op_type_ == ops::OpType::IsFinite);
     DType output_dtype = outputs_bool ? DType::Bool : input.dtype();
-    return executeMPSGraphUnaryOp(input, output_dtype, op_block_);
+    return executeMPSGraphUnaryOp(input, output_dtype, op_block_, op_type_);
 }
 
 // ============================================================================
@@ -456,11 +581,11 @@ MPSGraphTernaryOperation::MPSGraphTernaryOperation(ops::OpType op_type,
                                                    MPSGraphTernaryOpBlock op_block)
     : MPSGraphOperation(op_type, std::move(op_name)), op_block_(op_block) {}
 
-Tensor MPSGraphTernaryOperation::execute_where(const Tensor& condition, 
-                                               const Tensor& a, 
+Tensor MPSGraphTernaryOperation::execute_where(const Tensor& condition,
+                                               const Tensor& a,
                                                const Tensor& b) const {
     DType output_dtype = ops::promote_types(a.dtype(), b.dtype());
-    return executeMPSGraphTernaryOp(condition, a, b, output_dtype, op_block_);
+    return executeMPSGraphTernaryOp(condition, a, b, output_dtype, op_block_, op_type_);
 }
 
 // ============================================================================
@@ -879,35 +1004,34 @@ static Tensor executeMatMul(const Tensor& a_raw, const Tensor& b_raw,
         // Make non-contiguous tensors contiguous using GPU gather kernel
         Tensor a = ensureContiguous(a_raw);
         Tensor b = ensureContiguous(b_raw);
-        
+
         // Type promotion
         DType result_dtype = ops::promote_types(a.dtype(), b.dtype());
-        
+
         // MPSGraph matmul supports Float16 and Float32
         if (result_dtype != DType::Float32 && result_dtype != DType::Float16) {
             result_dtype = DType::Float32;
         }
-        
+
         // Cast to common dtype if needed
         if (a.dtype() != result_dtype) {
-            // Create a simple cast operation via MPSGraph
             a = a.astype(result_dtype);
         }
         if (b.dtype() != result_dtype) {
             b = b.astype(result_dtype);
         }
-        
+
         // Get matrix dimensions
         size_t a_ndim = a.ndim();
         size_t b_ndim = b.ndim();
-        
+
         if (a_ndim == 0 || b_ndim == 0) {
             throw ShapeError("MatMul does not support 0-dimensional tensors");
         }
-        
+
         // Compute M, N, K dimensions and output shape
         size_t a_rows, a_cols, b_rows, b_cols;
-        
+
         if (a_ndim == 1) {
             a_rows = 1;
             a_cols = a.shape()[0];
@@ -915,7 +1039,7 @@ static Tensor executeMatMul(const Tensor& a_raw, const Tensor& b_raw,
             a_rows = a.shape()[a_ndim - 2];
             a_cols = a.shape()[a_ndim - 1];
         }
-        
+
         if (b_ndim == 1) {
             b_rows = b.shape()[0];
             b_cols = 1;
@@ -923,21 +1047,21 @@ static Tensor executeMatMul(const Tensor& a_raw, const Tensor& b_raw,
             b_rows = b.shape()[b_ndim - 2];
             b_cols = b.shape()[b_ndim - 1];
         }
-        
+
         if (transpose_a) std::swap(a_rows, a_cols);
         if (transpose_b) std::swap(b_rows, b_cols);
-        
+
         size_t M = a_rows;
         size_t K = a_cols;
         size_t K_b = b_rows;
         size_t N = b_cols;
-        
+
         if (K != K_b) {
             throw ShapeError(
                 "MatMul dimension mismatch: A has " + std::to_string(K) +
                 " columns but B has " + std::to_string(K_b) + " rows");
         }
-        
+
         // Compute batch shape if needed
         Shape batch_shape;
         if (a_ndim > 2 || b_ndim > 2) {
@@ -950,7 +1074,7 @@ static Tensor executeMatMul(const Tensor& a_raw, const Tensor& b_raw,
             }
             batch_shape = ShapeUtils::broadcast_shape(a_batch, b_batch);
         }
-        
+
         // Compute output shape
         Shape result_shape = batch_shape;
         if (a_ndim == 1 && b_ndim == 1) {
@@ -964,77 +1088,114 @@ static Tensor executeMatMul(const Tensor& a_raw, const Tensor& b_raw,
             result_shape.push_back(N);
         }
         if (result_shape.empty()) result_shape = {1};
-        
-        // Create MPSGraph
-        MPSGraph* graph = [[MPSGraph alloc] init];
-        
+
         // For MPSGraph matmul, we need 2D or higher tensors
         // If input is 1D, reshape to 2D
         Shape a_mps_shape = a.shape();
         Shape b_mps_shape = b.shape();
-        
+
         if (a_ndim == 1) {
             a_mps_shape = {1, a.shape()[0]};  // Row vector
         }
         if (b_ndim == 1) {
             b_mps_shape = {b.shape()[0], 1};  // Column vector
         }
-        
-        // Create placeholders with adjusted shapes
-        MPSDataType mps_dtype = getMPSDataType(result_dtype);
-        MPSGraphTensor* a_placeholder = [graph placeholderWithShape:getMPSShape(a_mps_shape)
-                                                           dataType:mps_dtype
-                                                               name:nil];
-        MPSGraphTensor* b_placeholder = [graph placeholderWithShape:getMPSShape(b_mps_shape)
-                                                           dataType:mps_dtype
-                                                               name:nil];
-        
-        MPSGraphTensor* a_tensor = a_placeholder;
-        MPSGraphTensor* b_tensor = b_placeholder;
-        
-        // Handle transpose via MPSGraph transpose operation
-        if (transpose_a) {
-            NSInteger a_rank = [a_tensor.shape count];
-            a_tensor = [graph transposeTensor:a_tensor
-                                    dimension:a_rank - 2
-                                withDimension:a_rank - 1
-                                         name:nil];
+
+        // Create cache key for matmul
+        MPSGraphCacheKey cache_key = make_matmul_cache_key(
+            shapeToVector(a_mps_shape),
+            shapeToVector(b_mps_shape),
+            dtypeToInt(result_dtype),
+            dtypeToInt(result_dtype),
+            dtypeToInt(result_dtype),
+            transpose_a,
+            transpose_b
+        );
+
+        // Get or create cached graph
+        CachedMPSGraph* cached = MPSGraphCache::instance().get_or_create(cache_key, [&]() {
+            CachedMPSGraph entry;
+
+            // Create MPSGraph
+            MPSGraph* graph = [[MPSGraph alloc] init];
+
+            // Create placeholders with adjusted shapes
+            MPSDataType mps_dtype = getMPSDataType(result_dtype);
+            MPSGraphTensor* a_placeholder = [graph placeholderWithShape:getMPSShape(a_mps_shape)
+                                                               dataType:mps_dtype
+                                                                   name:nil];
+            MPSGraphTensor* b_placeholder = [graph placeholderWithShape:getMPSShape(b_mps_shape)
+                                                               dataType:mps_dtype
+                                                                   name:nil];
+
+            MPSGraphTensor* a_tensor = a_placeholder;
+            MPSGraphTensor* b_tensor = b_placeholder;
+
+            // Handle transpose via MPSGraph transpose operation
+            if (transpose_a) {
+                NSInteger a_rank = [a_tensor.shape count];
+                a_tensor = [graph transposeTensor:a_tensor
+                                        dimension:a_rank - 2
+                                    withDimension:a_rank - 1
+                                             name:nil];
+            }
+            if (transpose_b) {
+                NSInteger b_rank = [b_tensor.shape count];
+                b_tensor = [graph transposeTensor:b_tensor
+                                        dimension:b_rank - 2
+                                    withDimension:b_rank - 1
+                                             name:nil];
+            }
+
+            // Perform matrix multiplication using MPSGraph
+            MPSGraphTensor* result_tensor = [graph matrixMultiplicationWithPrimaryTensor:a_tensor
+                                                                        secondaryTensor:b_tensor
+                                                                                   name:nil];
+
+            // Store in cache entry - use CFBridgingRetain to keep graph alive
+            entry.graph = (void*)CFBridgingRetain(graph);
+            entry.placeholders[0] = (__bridge void*)a_placeholder;
+            entry.placeholders[1] = (__bridge void*)b_placeholder;
+            entry.num_placeholders = 2;
+            entry.output = (__bridge void*)result_tensor;
+
+            return entry;
+        });
+
+        if (!cached || !cached->is_valid()) {
+            throw DeviceError("Failed to create/retrieve cached MPSGraph for matmul");
         }
-        if (transpose_b) {
-            NSInteger b_rank = [b_tensor.shape count];
-            b_tensor = [graph transposeTensor:b_tensor
-                                    dimension:b_rank - 2
-                                withDimension:b_rank - 1
-                                         name:nil];
-        }
-        
-        // Perform matrix multiplication using MPSGraph
-        MPSGraphTensor* result_tensor = [graph matrixMultiplicationWithPrimaryTensor:a_tensor
-                                                                    secondaryTensor:b_tensor
-                                                                               name:nil];
-        
+
+        // Get cached graph components
+        MPSGraph* graph = (__bridge MPSGraph*)cached->graph;
+        MPSGraphTensor* a_placeholder = (__bridge MPSGraphTensor*)cached->placeholders[0];
+        MPSGraphTensor* b_placeholder = (__bridge MPSGraphTensor*)cached->placeholders[1];
+        MPSGraphTensor* result_tensor = (__bridge MPSGraphTensor*)cached->output;
+
         // Create output tensor
         Tensor result(result_shape, result_dtype, Device::GPU);
-        
+
         // Create tensor data - reshape inputs if needed
         auto* a_storage = static_cast<const MetalStorage*>(a.storage().get());
         auto* b_storage = static_cast<const MetalStorage*>(b.storage().get());
         auto* result_storage = static_cast<MetalStorage*>(result.storage().get());
-        
+
         id<MTLBuffer> a_buffer = (__bridge id<MTLBuffer>)a_storage->buffer();
         id<MTLBuffer> b_buffer = (__bridge id<MTLBuffer>)b_storage->buffer();
         id<MTLBuffer> result_buffer = (__bridge id<MTLBuffer>)result_storage->buffer();
-        
+
+        MPSDataType mps_dtype = getMPSDataType(result_dtype);
+
         MPSGraphTensorData* a_data = [[MPSGraphTensorData alloc]
             initWithMTLBuffer:a_buffer
                         shape:getMPSShape(a_mps_shape)
                      dataType:mps_dtype];
-        
+
         MPSGraphTensorData* b_data = [[MPSGraphTensorData alloc]
             initWithMTLBuffer:b_buffer
                         shape:getMPSShape(b_mps_shape)
                      dataType:mps_dtype];
-        
+
         // For output, we need the shape that MPSGraph produces
         // This accounts for the possible reshape of inputs
         Shape result_mps_shape = result_shape;
@@ -1051,28 +1212,28 @@ static Tensor executeMatMul(const Tensor& a_raw, const Tensor& b_raw,
             result_mps_shape.push_back(M);
             result_mps_shape.push_back(1);
         }
-        
+
         MPSGraphTensorData* result_data = [[MPSGraphTensorData alloc]
             initWithMTLBuffer:result_buffer
                         shape:getMPSShape(result_mps_shape)
                      dataType:mps_dtype];
-        
+
         // Create feeds and targets
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
             a_placeholder: a_data,
             b_placeholder: b_data
         };
-        
+
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
             result_tensor: result_data
         };
-        
+
         // Execute the graph
         [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
                                 feeds:feeds
                      targetOperations:nil
                     resultsDictionary:targets];
-        
+
         return result;
     }
 }

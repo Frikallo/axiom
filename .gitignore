@@ -2,5 +2,5 @@ build/
 .cache/
 .DS_Store
 ggml/
-pytorch-mps/
+pytorch-ref/
 *.npy

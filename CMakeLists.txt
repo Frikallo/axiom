@@ -152,6 +152,22 @@ endif()
 include(FetchContent)
 
 # ============================================================================
+# Google Benchmark (for benchmarks only)
+# ============================================================================
+if(AXIOM_BUILD_BENCHMARKS)
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_DOWNLOAD_DEPENDENCIES OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/benchmark/CMakeLists.txt")
+        add_subdirectory(third_party/benchmark)
+    else()
+        message(FATAL_ERROR "Google Benchmark not found. Run: git submodule add https://github.com/google/benchmark.git third_party/benchmark")
+    endif()
+endif()
+
+# ============================================================================
 # Source Files
 # ============================================================================
 set(AXIOM_SOURCES
@@ -203,6 +219,7 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
+        src/backends/metal/graph_cache.mm
         src/backends/metal/kernels.metal
     )
 
@@ -211,6 +228,7 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
+        src/backends/metal/graph_cache.mm
         src/backends/metal/kernels.metal
         PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"

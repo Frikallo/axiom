@@ -1,4 +1,5 @@
 #import "metal_storage.hpp"
+#import "metal_common.hpp"
 
 #import <Metal/Metal.h>
 #import "axiom/error.hpp"
@@ -55,6 +56,9 @@ size_t MetalStorage::size_bytes() const {
 void MetalStorage::copy_to(Storage& other) const {
     id<MTLBuffer> mtl_buffer = (__bridge id<MTLBuffer>)buffer_;
     if (other.device() == Device::CPU) {
+        // Synchronize any pending GPU operations before reading
+        MetalExecutionStream::instance().synchronize();
+
         void* cpu_ptr = other.data();
         const void* metal_ptr = [mtl_buffer contents];
         std::memcpy(cpu_ptr, static_cast<const uint8_t*>(metal_ptr) + offset_, size_bytes());

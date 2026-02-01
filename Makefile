@@ -317,6 +317,63 @@ loc:  ## Count lines of code
 	@echo "$(BOLD)Total:$(RESET)     $$(find include src tests examples -name '*.cpp' -o -name '*.hpp' -o -name '*.mm' -o -name '*.h' | xargs wc -l 2>/dev/null | tail -1 | awk '{print $$1}')"
 
 # ============================================================================
+# Benchmarks
+# ============================================================================
+
+.PHONY: benchmarks
+benchmarks:  ## Build benchmarks
+	@echo "$(CYAN)Configuring with benchmarks enabled...$(RESET)"
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release -DAXIOM_BUILD_BENCHMARKS=ON
+	@echo "$(CYAN)Building benchmarks...$(RESET)"
+	@$(CMAKE) --build $(BUILD_DIR) -j$(NPROC)
+	@echo "$(GREEN)✓ Benchmarks built$(RESET)"
+
+.PHONY: run-benchmarks
+run-benchmarks: benchmarks  ## Run GEMM benchmarks
+	@echo "$(CYAN)Running GEMM benchmarks...$(RESET)"
+	@./$(BUILD_DIR)/benchmarks/bench_gemm --benchmark_format=console
+	@echo "$(GREEN)✓ Benchmarks complete$(RESET)"
+
+.PHONY: run-benchmarks-gpu
+run-benchmarks-gpu: benchmarks  ## Run GPU-specific benchmarks
+	@echo "$(CYAN)Running GPU overhead benchmarks...$(RESET)"
+	@if [ -f ./$(BUILD_DIR)/benchmarks/bench_gemm_gpu ]; then \
+		./$(BUILD_DIR)/benchmarks/bench_gemm_gpu --benchmark_format=console; \
+	else \
+		echo "$(YELLOW)GPU benchmarks not available (Metal support required)$(RESET)"; \
+	fi
+
+.PHONY: run-benchmarks-json
+run-benchmarks-json: benchmarks  ## Run benchmarks with JSON output
+	@echo "$(CYAN)Running benchmarks with JSON output...$(RESET)"
+	@mkdir -p benchmark_results
+	@./$(BUILD_DIR)/benchmarks/bench_gemm \
+		--benchmark_out=benchmark_results/gemm_results.json \
+		--benchmark_out_format=json
+	@if [ -f ./$(BUILD_DIR)/benchmarks/bench_gemm_gpu ]; then \
+		./$(BUILD_DIR)/benchmarks/bench_gemm_gpu \
+			--benchmark_out=benchmark_results/gemm_gpu_results.json \
+			--benchmark_out_format=json; \
+	fi
+	@echo "$(GREEN)✓ Results saved to benchmark_results/$(RESET)"
+
+.PHONY: benchmark-compare
+benchmark-compare:  ## Compare Axiom with PyTorch baseline
+	@echo "$(CYAN)Running PyTorch baseline benchmarks...$(RESET)"
+	@python3 benchmarks/common/pytorch_baseline.py
+	@echo ""
+	@echo "$(CYAN)Run 'make run-benchmarks' to compare with Axiom results$(RESET)"
+
+.PHONY: benchmark-compare-json
+benchmark-compare-json:  ## Compare with JSON output for analysis
+	@echo "$(CYAN)Running comparison benchmarks with JSON output...$(RESET)"
+	@mkdir -p benchmark_results
+	@python3 benchmarks/common/pytorch_baseline.py --json benchmark_results/pytorch_baseline.json
+	@$(MAKE) run-benchmarks-json
+	@echo "$(GREEN)✓ Results saved to benchmark_results/$(RESET)"
+	@echo "Compare: benchmark_results/gemm_results.json vs benchmark_results/pytorch_baseline.json"
+
+# ============================================================================
 # Examples
 # ============================================================================
 
