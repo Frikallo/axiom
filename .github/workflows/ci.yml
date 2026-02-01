@@ -139,7 +139,11 @@ jobs:
 
     - name: Run Tests
       working-directory: build
-      run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+      shell: pwsh
+      run: |
+        # Add DLL directory to PATH so tests can find axiom.dll
+        $env:PATH = "${{ github.workspace }}\build\Release;$env:PATH"
+        ctest -C ${{ env.BUILD_TYPE }} --output-on-failure --verbose
 
     - name: Upload Test Results
       if: failure()

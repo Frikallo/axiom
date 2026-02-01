@@ -399,6 +399,16 @@ endif()
 if(AXIOM_HAS_OPENBLAS)
     target_link_libraries(axiom PUBLIC OpenBLAS::OpenBLAS)
     target_compile_definitions(axiom PUBLIC AXIOM_USE_OPENBLAS)
+    # On Linux, LAPACKE (C interface) is a separate library from OpenBLAS
+    if(UNIX AND NOT APPLE)
+        find_library(LAPACKE_LIBRARY lapacke)
+        if(LAPACKE_LIBRARY)
+            target_link_libraries(axiom PUBLIC ${LAPACKE_LIBRARY})
+            message(STATUS "LAPACKE: found at ${LAPACKE_LIBRARY}")
+        else()
+            message(WARNING "LAPACKE library not found - linear algebra operations may fail")
+        endif()
+    endif()
 endif()
 
 # Linux threading

@@ -70,7 +70,7 @@ jobs:
       if: matrix.os == 'linux-x64'
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libopenblas-dev
+        sudo apt-get install -y cmake ninja-build libopenblas-dev liblapacke-dev
 
     # Windows Setup
     - name: Setup Windows
