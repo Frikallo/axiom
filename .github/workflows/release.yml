@@ -9,100 +9,252 @@ env:
   BUILD_TYPE: Release
 
 jobs:
-  # Create release with artifacts
-  release:
-    name: Create Release
-    runs-on: macos-14
-    permissions:
-      contents: write
-      
+  # ============================================================================
+  # Build Distribution Packages for All Platforms
+  # ============================================================================
+  build-dist:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-arm64
+            runner: macos-14
+            arch: arm64
+
+          # macOS x86_64 (Intel)
+          - os: macos-x64
+            runner: macos-13
+            arch: x86_64
+
+          # Linux x86_64
+          - os: linux-x64
+            runner: ubuntu-latest
+            arch: x86_64
+
+          # Windows x86_64
+          - os: windows-x64
+            runner: windows-latest
+            arch: x86_64
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
+        submodules: recursive
         fetch-depth: 0
-        
-    - name: Setup Xcode
-      uses: maxim-lobanov/setup-xcode@v1
-      with:
-        xcode-version: latest-stable
-        
-    - name: Install Dependencies
-      run: |
-        brew install cmake ninja
-        
+
     - name: Get Version
       id: version
+      shell: bash
       run: |
         VERSION=${GITHUB_REF#refs/tags/v}
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Building version $VERSION"
-        
-    - name: Configure CMake
+
+    # macOS Setup
+    - name: Setup macOS
+      if: startsWith(matrix.os, 'macos')
+      run: |
+        brew install cmake ninja libomp
+
+    - name: Setup Xcode
+      if: startsWith(matrix.os, 'macos')
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    # Linux Setup
+    - name: Setup Linux
+      if: matrix.os == 'linux-x64'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build libopenblas-dev
+
+    # Windows Setup
+    - name: Setup Windows
+      if: matrix.os == 'windows-x64'
+      run: |
+        choco install cmake ninja
+        # Install OpenBLAS
+        $OPENBLAS_VERSION = "0.3.27"
+        $OPENBLAS_URL = "https://github.com/OpenMathLib/OpenBLAS/releases/download/v${OPENBLAS_VERSION}/OpenBLAS-${OPENBLAS_VERSION}-x64.zip"
+        Invoke-WebRequest -Uri $OPENBLAS_URL -OutFile openblas.zip
+        Expand-Archive -Path openblas.zip -DestinationPath C:\OpenBLAS
+        echo "OpenBLAS_DIR=C:\OpenBLAS" >> $env:GITHUB_ENV
+        echo "C:\OpenBLAS\bin" >> $env:GITHUB_PATH
+
+    # Build Distribution
+    - name: Configure (Unix)
+      if: runner.os != 'Windows'
       run: |
         cmake -B build \
           -G Ninja \
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
           -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install \
+          -DAXIOM_DIST_BUILD=ON \
           -DAXIOM_BUILD_TESTS=OFF \
           -DAXIOM_BUILD_EXAMPLES=OFF \
           -DAXIOM_EMBED_METAL_LIBRARY=ON
-          
+
+    - name: Configure (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cmake -B build `
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install `
+          -DAXIOM_DIST_BUILD=ON `
+          -DAXIOM_BUILD_TESTS=OFF `
+          -DAXIOM_BUILD_EXAMPLES=OFF `
+          -DAXIOM_BLAS_BACKEND=openblas `
+          -DOpenBLAS_DIR=$env:OpenBLAS_DIR
+
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }}
-      
+
     - name: Install
-      run: cmake --install build
-      
+      run: cmake --install build --config ${{ env.BUILD_TYPE }}
+
+    # Verify bundled dependencies
+    - name: Verify Bundle (macOS)
+      if: startsWith(matrix.os, 'macos')
+      run: |
+        echo "Checking bundled libraries..."
+        ls -la install/lib/
+        echo ""
+        echo "Checking library dependencies:"
+        otool -L install/lib/libaxiom.dylib
+
+    - name: Verify Bundle (Linux)
+      if: matrix.os == 'linux-x64'
+      run: |
+        echo "Checking bundled libraries..."
+        ls -la install/lib/
+        echo ""
+        echo "Checking library dependencies:"
+        ldd install/lib/libaxiom.so || true
+
+    - name: Verify Bundle (Windows)
+      if: matrix.os == 'windows-x64'
+      shell: pwsh
+      run: |
+        echo "Checking bundled libraries..."
+        Get-ChildItem -Path install/bin/ -Recurse
+        echo ""
+        echo "Checking library dependencies:"
+        dumpbin /dependents install/bin/axiom.dll 2>$null || echo "dumpbin not available"
+
+    # Create Package
+    - name: Create Package (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        cd install
+        tar -czvf ../axiom-${{ steps.version.outputs.version }}-${{ matrix.os }}.tar.gz .
+
+    - name: Create Package (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd install
+        7z a ../axiom-${{ steps.version.outputs.version }}-${{ matrix.os }}.zip .
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: axiom-${{ matrix.os }}
+        path: axiom-${{ steps.version.outputs.version }}-${{ matrix.os }}.*
+
+  # ============================================================================
+  # Create GitHub Release
+  # ============================================================================
+  release:
+    name: Create Release
+    needs: build-dist
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get Version
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Collect Packages
+      run: |
+        mkdir -p release
+        find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
+        ls -la release/
+
     - name: Create Source Tarball
       run: |
         git archive --format=tar.gz --prefix=axiom-${{ steps.version.outputs.version }}/ \
-          -o axiom-${{ steps.version.outputs.version }}.tar.gz HEAD
-          
-    - name: Create Binary Package
-      run: |
-        cd install
-        tar -czvf ../axiom-${{ steps.version.outputs.version }}-macos-arm64.tar.gz .
-        
+          -o release/axiom-${{ steps.version.outputs.version }}.tar.gz HEAD
+
     - name: Generate Checksums
       run: |
-        shasum -a 256 axiom-${{ steps.version.outputs.version }}.tar.gz > checksums.txt
-        shasum -a 256 axiom-${{ steps.version.outputs.version }}-macos-arm64.tar.gz >> checksums.txt
+        cd release
+        sha256sum * > checksums.txt
         cat checksums.txt
-        
+
     - name: Generate Release Notes
-      id: release_notes
       run: |
-        # Get commits since last tag
         PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+        cat > release_notes.md << 'EOF'
+        ## Downloads
+
+        | Platform | Package |
+        |----------|---------|
+        | macOS (Apple Silicon) | `axiom-${{ steps.version.outputs.version }}-macos-arm64.tar.gz` |
+        | macOS (Intel) | `axiom-${{ steps.version.outputs.version }}-macos-x64.tar.gz` |
+        | Linux (x64) | `axiom-${{ steps.version.outputs.version }}-linux-x64.tar.gz` |
+        | Windows (x64) | `axiom-${{ steps.version.outputs.version }}-windows-x64.zip` |
+        | Source | `axiom-${{ steps.version.outputs.version }}.tar.gz` |
+
+        ## Bundled Dependencies
+
+        Distribution packages include all required dependencies:
+        - **macOS**: `libomp.dylib` for OpenMP parallelization (Accelerate is a system framework)
+        - **Linux**: OpenBLAS + libgomp
+        - **Windows**: OpenBLAS + OpenMP runtime (vcomp140.dll)
+
+        ## Installation
+
+        ```bash
+        # Extract to desired location
+        tar -xzf axiom-${{ steps.version.outputs.version }}-<platform>.tar.gz -C /usr/local
+
+        # Or for local installation
+        tar -xzf axiom-${{ steps.version.outputs.version }}-<platform>.tar.gz -C ~/.local
+        ```
+
+        EOF
+
         if [ -n "$PREV_TAG" ]; then
-          echo "Changes since $PREV_TAG:" > release_notes.md
+          echo "" >> release_notes.md
+          echo "## Changes since $PREV_TAG" >> release_notes.md
           echo "" >> release_notes.md
           git log --pretty=format:"- %s" $PREV_TAG..HEAD >> release_notes.md
-        else
-          echo "Initial release" > release_notes.md
         fi
-        echo "" >> release_notes.md
-        echo "" >> release_notes.md
-        echo "## Installation" >> release_notes.md
-        echo "" >> release_notes.md
-        echo "### From Source" >> release_notes.md
-        echo '```bash' >> release_notes.md
-        echo "curl -L https://github.com/frikallo/axiom/archive/refs/tags/v${{ steps.version.outputs.version }}.tar.gz | tar xz" >> release_notes.md
-        echo "cd axiom-${{ steps.version.outputs.version }}" >> release_notes.md
-        echo "cmake -B build -DCMAKE_BUILD_TYPE=Release" >> release_notes.md
-        echo "cmake --build build" >> release_notes.md
-        echo "sudo cmake --install build" >> release_notes.md
-        echo '```' >> release_notes.md
-        
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
         body_path: release_notes.md
         files: |
-          axiom-${{ steps.version.outputs.version }}.tar.gz
-          axiom-${{ steps.version.outputs.version }}-macos-arm64.tar.gz
-          checksums.txt
+          release/*
         draft: false
         prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
       env:

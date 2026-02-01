@@ -33,7 +33,7 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        brew install cmake ninja numpy
+        brew install cmake ninja numpy libomp
 
     - name: Configure CMake
       run: |

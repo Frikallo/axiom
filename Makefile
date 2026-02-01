@@ -266,7 +266,7 @@ clean-debug:  ## Clean debug build artifacts
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
 
 .PHONY: clean-all
-clean-all: clean clean-debug  ## Clean all build artifacts
+clean-all: clean clean-debug clean-dist  ## Clean all build artifacts
 	@rm -rf install
 	@echo "$(GREEN)✓ All builds cleaned$(RESET)"
 
@@ -372,6 +372,53 @@ benchmark-compare-json:  ## Compare with JSON output for analysis
 	@$(MAKE) run-benchmarks-json
 	@echo "$(GREEN)✓ Results saved to benchmark_results/$(RESET)"
 	@echo "Compare: benchmark_results/gemm_results.json vs benchmark_results/pytorch_baseline.json"
+
+# ============================================================================
+# Distribution Builds
+# ============================================================================
+
+BUILD_DIR_DIST := build-dist
+
+.PHONY: dist
+dist:  ## Build distribution package with bundled dependencies
+	@echo "$(CYAN)Configuring distribution build...$(RESET)"
+	@$(CMAKE) -B $(BUILD_DIR_DIST) $(CMAKE_GENERATOR) \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=$(BUILD_DIR_DIST)/install \
+		-DAXIOM_DIST_BUILD=ON \
+		-DAXIOM_BUILD_TESTS=OFF \
+		-DAXIOM_BUILD_EXAMPLES=OFF \
+		-DAXIOM_EMBED_METAL_LIBRARY=ON
+	@echo "$(CYAN)Building distribution...$(RESET)"
+	@$(CMAKE) --build $(BUILD_DIR_DIST) -j$(NPROC)
+	@echo "$(CYAN)Installing to distribution directory...$(RESET)"
+	@$(CMAKE) --install $(BUILD_DIR_DIST)
+	@echo "$(CYAN)Creating distribution package...$(RESET)"
+	@cd $(BUILD_DIR_DIST) && $(CMAKE) --build . --target package
+	@echo "$(GREEN)✓ Distribution package created in $(BUILD_DIR_DIST)$(RESET)"
+
+.PHONY: dist-info
+dist-info:  ## Show distribution build configuration
+	@echo "$(BOLD)Distribution Build Configuration$(RESET)"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "$(CYAN)Build directory:$(RESET) $(BUILD_DIR_DIST)"
+	@echo "$(CYAN)Platform:$(RESET)        $(UNAME_S)"
+ifeq ($(UNAME_S),Darwin)
+	@echo "$(CYAN)OpenMP source:$(RESET)   Homebrew libomp (bundled)"
+	@echo "$(CYAN)BLAS source:$(RESET)     Accelerate framework (system, not bundled)"
+else ifeq ($(OS),Windows_NT)
+	@echo "$(CYAN)OpenMP source:$(RESET)   vcomp140.dll (bundled)"
+	@echo "$(CYAN)BLAS source:$(RESET)     OpenBLAS (bundled)"
+else
+	@echo "$(CYAN)OpenMP source:$(RESET)   libgomp (bundled)"
+	@echo "$(CYAN)BLAS source:$(RESET)     OpenBLAS (bundled)"
+endif
+
+.PHONY: clean-dist
+clean-dist:  ## Clean distribution build artifacts
+	@echo "$(CYAN)Cleaning distribution build...$(RESET)"
+	@rm -rf $(BUILD_DIR_DIST)
+	@echo "$(GREEN)✓ Distribution clean complete$(RESET)"
 
 # ============================================================================
 # Examples

@@ -34,6 +34,7 @@ option(AXIOM_BUILD_EXAMPLES "Build examples" ON)
 option(AXIOM_BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(AXIOM_NATIVE_ARCH "Use -march=native for local builds (not portable)" OFF)
 option(AXIOM_USE_OPENMP "Enable OpenMP parallelization" ON)
+option(AXIOM_DIST_BUILD "Bundle dependencies for distribution" OFF)
 
 # BLAS backend selection
 set(AXIOM_BLAS_BACKEND "auto" CACHE STRING "BLAS backend: auto, accelerate, openblas, native")
@@ -555,4 +556,155 @@ else()
 endif()
 message(STATUS "  Target architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "  SIMD: Use axiom::cpu_info::print_simd_info() at runtime for details")
+if(AXIOM_DIST_BUILD)
+    message(STATUS "  Distribution build: YES")
+endif()
 message(STATUS "")
+
+# ============================================================================
+# Distribution Build - Bundle Dependencies
+# ============================================================================
+if(AXIOM_DIST_BUILD)
+    # Bundle OpenMP library
+    if(AXIOM_HAS_OPENMP)
+        if(APPLE)
+            # Get the libomp path and install it
+            if(EXISTS "${OpenMP_omp_LIBRARY}")
+                # Copy libomp.dylib to lib directory
+                install(FILES "${OpenMP_omp_LIBRARY}"
+                    DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                    COMPONENT runtime
+                )
+                # Fix the install name in axiom library to use @rpath
+                set_target_properties(axiom PROPERTIES
+                    INSTALL_RPATH "@loader_path"
+                    BUILD_WITH_INSTALL_RPATH OFF
+                )
+            endif()
+        elseif(UNIX AND NOT WIN32)
+            # Linux: Bundle libgomp or libomp
+            find_library(OPENMP_RUNTIME_LIB NAMES gomp omp)
+            if(OPENMP_RUNTIME_LIB)
+                get_filename_component(OPENMP_RUNTIME_REALPATH "${OPENMP_RUNTIME_LIB}" REALPATH)
+                install(FILES "${OPENMP_RUNTIME_REALPATH}"
+                    DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                    COMPONENT runtime
+                )
+            endif()
+        elseif(WIN32)
+            # Windows: Bundle OpenMP runtime DLL
+            # For MSVC, this is vcomp140.dll; for Clang/LLVM it's libomp.dll
+            if(MSVC)
+                # MSVC OpenMP runtime is part of Visual C++ Redistributable
+                # Users need VC++ Redist installed, or we bundle vcomp140.dll
+                get_filename_component(MSVC_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+                find_file(VCOMP_DLL
+                    NAMES vcomp140.dll
+                    PATHS
+                        "${MSVC_DIR}"
+                        "${MSVC_DIR}/../../../redist/x64/Microsoft.VC143.OPENMP"
+                        "${MSVC_DIR}/../../../redist/x64/Microsoft.VC142.OPENMP"
+                        "$ENV{VCToolsRedistDir}/x64/Microsoft.VC143.OPENMP"
+                        "$ENV{VCToolsRedistDir}/x64/Microsoft.VC142.OPENMP"
+                    NO_DEFAULT_PATH
+                )
+                if(VCOMP_DLL)
+                    install(FILES "${VCOMP_DLL}"
+                        DESTINATION ${CMAKE_INSTALL_BINDIR}
+                        COMPONENT runtime
+                    )
+                endif()
+            else()
+                # Clang/LLVM or MinGW
+                find_library(OPENMP_RUNTIME_DLL NAMES libomp libgomp-1)
+                if(OPENMP_RUNTIME_DLL)
+                    get_filename_component(OMP_DIR "${OPENMP_RUNTIME_DLL}" DIRECTORY)
+                    file(GLOB OMP_DLLS "${OMP_DIR}/libomp*.dll" "${OMP_DIR}/libgomp*.dll")
+                    foreach(DLL ${OMP_DLLS})
+                        install(FILES "${DLL}"
+                            DESTINATION ${CMAKE_INSTALL_BINDIR}
+                            COMPONENT runtime
+                        )
+                    endforeach()
+                endif()
+            endif()
+        endif()
+    endif()
+
+    # Bundle OpenBLAS for non-macOS platforms
+    if(AXIOM_HAS_OPENBLAS AND NOT APPLE)
+        get_target_property(OPENBLAS_LIB_LOCATION OpenBLAS::OpenBLAS IMPORTED_LOCATION)
+        if(OPENBLAS_LIB_LOCATION)
+            get_filename_component(OPENBLAS_REALPATH "${OPENBLAS_LIB_LOCATION}" REALPATH)
+            if(WIN32)
+                # Windows: Bundle OpenBLAS DLL
+                get_filename_component(OPENBLAS_DIR "${OPENBLAS_REALPATH}" DIRECTORY)
+                # Look for DLL in bin/ or same directory
+                find_file(OPENBLAS_DLL
+                    NAMES libopenblas.dll openblas.dll
+                    PATHS
+                        "${OPENBLAS_DIR}"
+                        "${OPENBLAS_DIR}/../bin"
+                    NO_DEFAULT_PATH
+                )
+                if(OPENBLAS_DLL)
+                    install(FILES "${OPENBLAS_DLL}"
+                        DESTINATION ${CMAKE_INSTALL_BINDIR}
+                        COMPONENT runtime
+                    )
+                endif()
+            else()
+                # Linux: Bundle .so files
+                install(FILES "${OPENBLAS_REALPATH}"
+                    DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                    COMPONENT runtime
+                )
+                # Also copy any versioned symlinks
+                get_filename_component(OPENBLAS_DIR "${OPENBLAS_REALPATH}" DIRECTORY)
+                file(GLOB OPENBLAS_LIBS "${OPENBLAS_DIR}/libopenblas*.so*")
+                foreach(LIB ${OPENBLAS_LIBS})
+                    install(FILES "${LIB}"
+                        DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                        COMPONENT runtime
+                    )
+                endforeach()
+            endif()
+        endif()
+    endif()
+
+    # Set RPATH for the installed library (Unix only)
+    if(UNIX AND NOT APPLE)
+        set_target_properties(axiom PROPERTIES
+            INSTALL_RPATH "$ORIGIN"
+            BUILD_WITH_INSTALL_RPATH OFF
+        )
+    elseif(APPLE)
+        set_target_properties(axiom PROPERTIES
+            INSTALL_RPATH "@loader_path"
+            BUILD_WITH_INSTALL_RPATH OFF
+        )
+    endif()
+endif()
+
+# ============================================================================
+# CPack Configuration for Distribution
+# ============================================================================
+if(AXIOM_DIST_BUILD)
+    set(CPACK_PACKAGE_NAME "axiom")
+    set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+    set(CPACK_PACKAGE_VENDOR "Axiom")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "High-Performance Tensor Library")
+
+    if(APPLE)
+        set(CPACK_GENERATOR "TGZ")
+        set(CPACK_SYSTEM_NAME "macos-${CMAKE_SYSTEM_PROCESSOR}")
+    elseif(WIN32)
+        set(CPACK_GENERATOR "ZIP")
+        set(CPACK_SYSTEM_NAME "windows-${CMAKE_SYSTEM_PROCESSOR}")
+    else()
+        set(CPACK_GENERATOR "TGZ")
+        set(CPACK_SYSTEM_NAME "linux-${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+
+    include(CPack)
+endif()
