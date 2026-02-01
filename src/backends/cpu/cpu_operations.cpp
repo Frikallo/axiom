@@ -1,5 +1,7 @@
 #include "cpu_operations.hpp"
 
+#include <cstddef>
+
 #include "axiom/error.hpp"
 #include "axiom/operations.hpp"
 #include "axiom/parallel.hpp"
@@ -164,8 +166,10 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
         // single-threaded SIMD
 #ifdef AXIOM_USE_OPENMP
         if (parallel::should_parallelize(total_elements)) {
+            // MSVC OpenMP requires signed loop index
+            ptrdiff_t n = static_cast<ptrdiff_t>(total_elements);
 #pragma omp parallel for schedule(static)
-            for (size_t i = 0; i < total_elements; ++i) {
+            for (ptrdiff_t i = 0; i < n; ++i) {
                 result_data[i] = func_(lhs_data[i], rhs_data[i]);
             }
             return;
@@ -381,10 +385,12 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(
     // OpenMP parallel path for large broadcast operations
 #ifdef AXIOM_USE_OPENMP
     if (parallel::should_parallelize(total_elements)) {
+        // MSVC OpenMP requires signed loop index
+        ptrdiff_t n = static_cast<ptrdiff_t>(total_elements);
 #pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < total_elements; ++i) {
+        for (ptrdiff_t i = 0; i < n; ++i) {
             // Compute coordinates from flat index
-            size_t remaining = i;
+            size_t remaining = static_cast<size_t>(i);
             int64_t lhs_byte_offset = 0;
             int64_t rhs_byte_offset = 0;
 
@@ -839,8 +845,10 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
     // Tier 0: OpenMP for large tensors
 #ifdef AXIOM_USE_OPENMP
     if (input.is_contiguous() && parallel::should_parallelize(total_elements)) {
+        // MSVC OpenMP requires signed loop index
+        ptrdiff_t n = static_cast<ptrdiff_t>(total_elements);
 #pragma omp parallel for schedule(static)
-        for (size_t i = 0; i < total_elements; ++i) {
+        for (ptrdiff_t i = 0; i < n; ++i) {
             result_data[i] = func_(input_data[i]);
         }
         return;
@@ -1788,7 +1796,9 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor &a,
 #ifdef AXIOM_USE_OPENMP
         if (batch_size > 1) {
 #pragma omp parallel for schedule(dynamic)
-            for (size_t batch_idx = 0; batch_idx < batch_size; ++batch_idx) {
+            // MSVC OpenMP requires signed loop index
+            for (ptrdiff_t batch_idx = 0;
+                 batch_idx < static_cast<ptrdiff_t>(batch_size); ++batch_idx) {
                 // Compute batch coordinates from flat index
                 size_t remaining = batch_idx;
                 int64_t a_batch_off = 0, b_batch_off = 0, c_batch_off = 0;

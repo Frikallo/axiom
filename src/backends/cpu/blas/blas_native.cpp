@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 #ifdef AXIOM_USE_XSIMD
 #include <xsimd/xsimd.hpp>
@@ -69,16 +70,18 @@ void NativeBlasBackend::gemm_impl(bool transA, bool transB, size_t M, size_t N,
     // OpenMP parallelization of outer tile loops
 #ifdef AXIOM_USE_OPENMP
     bool should_parallel = parallel::should_parallelize_matmul(M, N, K);
+    // MSVC OpenMP requires signed loop indices; collapse(2) may be ignored on
+    // MSVC
 #pragma omp parallel for collapse(2) schedule(dynamic) if (should_parallel)
 #endif
-    for (size_t i0 = 0; i0 < M; i0 += TILE_M) {
-        for (size_t j0 = 0; j0 < N; j0 += TILE_N) {
+    for (ptrdiff_t i0 = 0; i0 < static_cast<ptrdiff_t>(M); i0 += TILE_M) {
+        for (ptrdiff_t j0 = 0; j0 < static_cast<ptrdiff_t>(N); j0 += TILE_N) {
             // Local tile buffer for C accumulation - each thread gets its own
             // This is the key optimization: load C once, accumulate, store once
             alignas(64) T c_tile[TILE_M][TILE_N];
 
-            size_t tile_m = std::min(TILE_M, M - i0);
-            size_t tile_n = std::min(TILE_N, N - j0);
+            size_t tile_m = std::min(TILE_M, M - static_cast<size_t>(i0));
+            size_t tile_n = std::min(TILE_N, N - static_cast<size_t>(j0));
 
             // Initialize c_tile: load from C and apply beta, or zero
             if (beta == T(0)) {
