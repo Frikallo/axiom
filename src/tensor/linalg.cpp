@@ -614,9 +614,26 @@ SVDResult svd(const Tensor &a, bool full_matrices) {
         float *s_data = result.S.typed_data<float>();
         float *vt_data = result.Vh.typed_data<float>();
 
-        std::vector<float> work(3 * std::max(m, n) +
-                                std::max(m, n) * std::max(m, n) + 1000);
+        int lda = static_cast<int>(m);
+        int ldu = static_cast<int>(m);
+        int ldvt = static_cast<int>(vt_rows);
+
+        // Workspace query: call with lwork=-1 to get optimal size
+        float work_query;
         std::vector<int> iwork(8 * k);
+        std::vector<float> dummy_s(k);
+        std::vector<float> dummy_u(m * u_cols);
+        std::vector<float> dummy_vt(vt_rows * n);
+        std::vector<float> dummy_a(m * n);
+
+        int info = backend.sgesdd(
+            jobz, static_cast<int>(m), static_cast<int>(n), dummy_a.data(), lda,
+            dummy_s.data(), dummy_u.data(), ldu, dummy_vt.data(), ldvt,
+            &work_query, -1, iwork.data());
+        check_lapack_info(info, "sgesdd workspace query");
+
+        int lwork = static_cast<int>(work_query) + 1;
+        std::vector<float> work(lwork);
 
         for (size_t b = 0; b < batch_size; ++b) {
             float *a_batch = a_data + b * m * n;
@@ -632,14 +649,10 @@ SVDResult svd(const Tensor &a, bool full_matrices) {
             std::vector<float> u_col(m * u_cols);
             std::vector<float> vt_col(vt_rows * n);
 
-            int lda = static_cast<int>(m);
-            int ldu = static_cast<int>(m);
-            int ldvt = static_cast<int>(vt_rows);
-
-            int info = backend.sgesdd(
+            info = backend.sgesdd(
                 jobz, static_cast<int>(m), static_cast<int>(n), a_col.data(),
                 lda, s_data + b * k, u_col.data(), ldu, vt_col.data(), ldvt,
-                work.data(), static_cast<int>(work.size()), iwork.data());
+                work.data(), lwork, iwork.data());
             check_lapack_info(info, "sgesdd");
 
             // Transpose U and Vt back to row-major
@@ -670,9 +683,26 @@ SVDResult svd(const Tensor &a, bool full_matrices) {
         double *s_data = result.S.typed_data<double>();
         double *vt_data = result.Vh.typed_data<double>();
 
-        std::vector<double> work(3 * std::max(m, n) +
-                                 std::max(m, n) * std::max(m, n) + 1000);
+        int lda = static_cast<int>(m);
+        int ldu = static_cast<int>(m);
+        int ldvt = static_cast<int>(vt_rows);
+
+        // Workspace query
+        double work_query;
         std::vector<int> iwork(8 * k);
+        std::vector<double> dummy_s(k);
+        std::vector<double> dummy_u(m * u_cols);
+        std::vector<double> dummy_vt(vt_rows * n);
+        std::vector<double> dummy_a(m * n);
+
+        int info = backend.dgesdd(
+            jobz, static_cast<int>(m), static_cast<int>(n), dummy_a.data(), lda,
+            dummy_s.data(), dummy_u.data(), ldu, dummy_vt.data(), ldvt,
+            &work_query, -1, iwork.data());
+        check_lapack_info(info, "dgesdd workspace query");
+
+        int lwork = static_cast<int>(work_query) + 1;
+        std::vector<double> work(lwork);
 
         for (size_t b = 0; b < batch_size; ++b) {
             double *a_batch = a_data + b * m * n;
@@ -687,14 +717,10 @@ SVDResult svd(const Tensor &a, bool full_matrices) {
             std::vector<double> u_col(m * u_cols);
             std::vector<double> vt_col(vt_rows * n);
 
-            int lda = static_cast<int>(m);
-            int ldu = static_cast<int>(m);
-            int ldvt = static_cast<int>(vt_rows);
-
-            int info = backend.dgesdd(
+            info = backend.dgesdd(
                 jobz, static_cast<int>(m), static_cast<int>(n), a_col.data(),
                 lda, s_data + b * k, u_col.data(), ldu, vt_col.data(), ldvt,
-                work.data(), static_cast<int>(work.size()), iwork.data());
+                work.data(), lwork, iwork.data());
             check_lapack_info(info, "dgesdd");
 
             double *u_batch = u_data + b * m * u_cols;
@@ -705,6 +731,129 @@ SVDResult svd(const Tensor &a, bool full_matrices) {
             }
 
             double *vt_batch = vt_data + b * vt_rows * n;
+            for (size_t i = 0; i < vt_rows; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    vt_batch[i * n + j] = vt_col[j * vt_rows + i];
+                }
+            }
+        }
+    } else if (a.dtype() == DType::Complex64) {
+        using complex64_t = std::complex<float>;
+        auto a_work = ensure_cpu_contiguous_colmajor(a).clone();
+        complex64_t *a_data = a_work.typed_data<complex64_t>();
+
+        result.U = Tensor(u_shape, DType::Complex64);
+        result.S = Tensor(s_shape, DType::Float32); // Singular values are real
+        result.Vh = Tensor(vt_shape, DType::Complex64);
+
+        complex64_t *u_data = result.U.typed_data<complex64_t>();
+        float *s_data = result.S.typed_data<float>();
+        complex64_t *vt_data = result.Vh.typed_data<complex64_t>();
+
+        size_t lwork =
+            3 * std::max(m, n) + std::max(m, n) * std::max(m, n) + 1000;
+        std::vector<complex64_t> work(lwork);
+        // rwork size for complex gesdd
+        size_t lrwork = std::max(5 * k * k + 5 * k,
+                                 2 * std::max(m, n) * k + 2 * k * k + k) +
+                        1000;
+        std::vector<float> rwork(lrwork);
+        std::vector<int> iwork(8 * k);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            complex64_t *a_batch = a_data + b * m * n;
+
+            // Transpose to column-major
+            std::vector<complex64_t> a_col(m * n);
+            for (size_t i = 0; i < m; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * m + i] = a_batch[i * n + j];
+                }
+            }
+
+            std::vector<complex64_t> u_col(m * u_cols);
+            std::vector<complex64_t> vt_col(vt_rows * n);
+
+            int lda = static_cast<int>(m);
+            int ldu = static_cast<int>(m);
+            int ldvt = static_cast<int>(vt_rows);
+
+            int info = backend.cgesdd(
+                jobz, static_cast<int>(m), static_cast<int>(n), a_col.data(),
+                lda, s_data + b * k, u_col.data(), ldu, vt_col.data(), ldvt,
+                work.data(), static_cast<int>(work.size()), rwork.data(),
+                iwork.data());
+            check_lapack_info(info, "cgesdd");
+
+            // Transpose U and Vt back to row-major
+            complex64_t *u_batch = u_data + b * m * u_cols;
+            for (size_t i = 0; i < m; ++i) {
+                for (size_t j = 0; j < u_cols; ++j) {
+                    u_batch[i * u_cols + j] = u_col[j * m + i];
+                }
+            }
+
+            complex64_t *vt_batch = vt_data + b * vt_rows * n;
+            for (size_t i = 0; i < vt_rows; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    vt_batch[i * n + j] = vt_col[j * vt_rows + i];
+                }
+            }
+        }
+    } else if (a.dtype() == DType::Complex128) {
+        using complex128_t = std::complex<double>;
+        auto a_work = ensure_cpu_contiguous_colmajor(a).clone();
+        complex128_t *a_data = a_work.typed_data<complex128_t>();
+
+        result.U = Tensor(u_shape, DType::Complex128);
+        result.S = Tensor(s_shape, DType::Float64); // Singular values are real
+        result.Vh = Tensor(vt_shape, DType::Complex128);
+
+        complex128_t *u_data = result.U.typed_data<complex128_t>();
+        double *s_data = result.S.typed_data<double>();
+        complex128_t *vt_data = result.Vh.typed_data<complex128_t>();
+
+        size_t lwork =
+            3 * std::max(m, n) + std::max(m, n) * std::max(m, n) + 1000;
+        std::vector<complex128_t> work(lwork);
+        size_t lrwork = std::max(5 * k * k + 5 * k,
+                                 2 * std::max(m, n) * k + 2 * k * k + k) +
+                        1000;
+        std::vector<double> rwork(lrwork);
+        std::vector<int> iwork(8 * k);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            complex128_t *a_batch = a_data + b * m * n;
+
+            std::vector<complex128_t> a_col(m * n);
+            for (size_t i = 0; i < m; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * m + i] = a_batch[i * n + j];
+                }
+            }
+
+            std::vector<complex128_t> u_col(m * u_cols);
+            std::vector<complex128_t> vt_col(vt_rows * n);
+
+            int lda = static_cast<int>(m);
+            int ldu = static_cast<int>(m);
+            int ldvt = static_cast<int>(vt_rows);
+
+            int info = backend.zgesdd(
+                jobz, static_cast<int>(m), static_cast<int>(n), a_col.data(),
+                lda, s_data + b * k, u_col.data(), ldu, vt_col.data(), ldvt,
+                work.data(), static_cast<int>(work.size()), rwork.data(),
+                iwork.data());
+            check_lapack_info(info, "zgesdd");
+
+            complex128_t *u_batch = u_data + b * m * u_cols;
+            for (size_t i = 0; i < m; ++i) {
+                for (size_t j = 0; j < u_cols; ++j) {
+                    u_batch[i * u_cols + j] = u_col[j * m + i];
+                }
+            }
+
+            complex128_t *vt_batch = vt_data + b * vt_rows * n;
             for (size_t i = 0; i < vt_rows; ++i) {
                 for (size_t j = 0; j < n; ++j) {
                     vt_batch[i * n + j] = vt_col[j * vt_rows + i];
@@ -1388,10 +1537,20 @@ Tensor lstsq(const Tensor &a, const Tensor &b, double rcond) {
 }
 
 Tensor pinv(const Tensor &a, double rcond) {
+    if (a.ndim() < 2) {
+        throw ShapeError("pinv requires at least 2D tensor");
+    }
+
     // Pseudoinverse via SVD: A^+ = V @ diag(1/s) @ U^H
     auto [U, S, Vh] = svd(a, false);
 
-    // Threshold small singular values
+    size_t m = a.shape()[a.ndim() - 2];
+    size_t n = a.shape()[a.ndim() - 1];
+    size_t k = S.shape()[S.ndim() - 1];
+    size_t batch_size = compute_batch_size(a.shape());
+    Shape batch_shape = get_batch_shape(a.shape());
+
+    // Threshold small singular values (use max across all batches)
     double threshold =
         rcond * S.max().item<double>(); // max singular value * rcond
 
@@ -1401,8 +1560,9 @@ Tensor pinv(const Tensor &a, double rcond) {
     if (S.dtype() == DType::Float32) {
         float *s_data = S.typed_data<float>();
         float *s_inv_data = S_inv.typed_data<float>();
+        float thresh_f = static_cast<float>(threshold);
         for (size_t i = 0; i < S.size(); ++i) {
-            s_inv_data[i] = (s_data[i] > threshold) ? (1.0f / s_data[i]) : 0.0f;
+            s_inv_data[i] = (s_data[i] > thresh_f) ? (1.0f / s_data[i]) : 0.0f;
         }
     } else {
         double *s_data = S.typed_data<double>();
@@ -1414,44 +1574,157 @@ Tensor pinv(const Tensor &a, double rcond) {
 
     // A^+ = Vh^H @ diag(S_inv) @ U^H
     // Vh^H is just transpose for real matrices
-    auto VhT = Vh.transpose(); // (N, K) -> transposed
-    auto UT = U.transpose();   // (M, K) -> transposed
+    // U has shape (..., M, K), Vh has shape (..., K, N)
+    // Transpose gives: VhT (..., N, K), UT (..., K, M)
+    auto VhT = Vh.transpose(); // (..., N, K)
+    auto UT = U.transpose();   // (..., K, M)
 
-    // Scale VhT columns by S_inv
-    // VhT has shape (..., N, K), S_inv has shape (..., K)
-    size_t n = a.shape()[a.ndim() - 1];
-    size_t m = a.shape()[a.ndim() - 2];
-    size_t k = S.shape()[S.ndim() - 1];
+    // Result shape: (..., N, M)
+    Shape result_shape = batch_shape;
+    result_shape.push_back(n);
+    result_shape.push_back(m);
+    Tensor result = Tensor::zeros(result_shape, a.dtype());
 
-    Tensor result = Tensor::zeros({n, m}, a.dtype());
+    // Scale VhT columns by S_inv and multiply by UT
+    // VhT_scaled[..., i, j] = VhT[..., i, j] * S_inv[..., j]
+    if (a.dtype() == DType::Float32) {
+        float *vht_data = VhT.typed_data<float>();
+        float *ut_data = UT.typed_data<float>();
+        float *s_inv_data = S_inv.typed_data<float>();
+        float *result_data = result.typed_data<float>();
 
-    // For now, use matrix multiplication: result = VhT @ diag(S_inv) @ UT
-    // This is simplified for 2D case
-    if (a.ndim() == 2) {
-        // Scale VhT by S_inv
-        Tensor VhT_scaled = VhT.clone();
-        if (VhT.dtype() == DType::Float32) {
-            float *vht_data = VhT_scaled.typed_data<float>();
-            float *s_inv_data = S_inv.typed_data<float>();
+        for (size_t b = 0; b < batch_size; ++b) {
+            float *vht_batch = vht_data + b * n * k;
+            float *ut_batch = ut_data + b * k * m;
+            float *s_inv_batch = s_inv_data + b * k;
+            float *result_batch = result_data + b * n * m;
+
+            // Create scaled VhT for this batch
+            std::vector<float> vht_scaled(n * k);
             for (size_t i = 0; i < n; ++i) {
                 for (size_t j = 0; j < k; ++j) {
-                    vht_data[i * k + j] *= s_inv_data[j];
+                    vht_scaled[i * k + j] =
+                        vht_batch[i * k + j] * s_inv_batch[j];
                 }
             }
-        } else {
-            double *vht_data = VhT_scaled.typed_data<double>();
-            double *s_inv_data = S_inv.typed_data<double>();
+
+            // Matrix multiply: result = VhT_scaled @ UT
+            // (N, K) @ (K, M) -> (N, M)
             for (size_t i = 0; i < n; ++i) {
-                for (size_t j = 0; j < k; ++j) {
-                    vht_data[i * k + j] *= s_inv_data[j];
+                for (size_t j = 0; j < m; ++j) {
+                    float sum = 0.0f;
+                    for (size_t l = 0; l < k; ++l) {
+                        sum += vht_scaled[i * k + l] * ut_batch[l * m + j];
+                    }
+                    result_batch[i * m + j] = sum;
                 }
             }
         }
+    } else if (a.dtype() == DType::Float64) {
+        double *vht_data = VhT.typed_data<double>();
+        double *ut_data = UT.typed_data<double>();
+        double *s_inv_data = S_inv.typed_data<double>();
+        double *result_data = result.typed_data<double>();
 
-        result = VhT_scaled.matmul(UT);
-    } else {
-        // Batched case - more complex, simplified here
-        throw RuntimeError::not_implemented("batched pinv");
+        for (size_t b = 0; b < batch_size; ++b) {
+            double *vht_batch = vht_data + b * n * k;
+            double *ut_batch = ut_data + b * k * m;
+            double *s_inv_batch = s_inv_data + b * k;
+            double *result_batch = result_data + b * n * m;
+
+            // Create scaled VhT for this batch
+            std::vector<double> vht_scaled(n * k);
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < k; ++j) {
+                    vht_scaled[i * k + j] =
+                        vht_batch[i * k + j] * s_inv_batch[j];
+                }
+            }
+
+            // Matrix multiply: result = VhT_scaled @ UT
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < m; ++j) {
+                    double sum = 0.0;
+                    for (size_t l = 0; l < k; ++l) {
+                        sum += vht_scaled[i * k + l] * ut_batch[l * m + j];
+                    }
+                    result_batch[i * m + j] = sum;
+                }
+            }
+        }
+    } else if (a.dtype() == DType::Complex64) {
+        // For complex: A^+ = V @ diag(1/S) @ U^H
+        // V = conj(Vh^T), U^H = conj(U^T)
+        using complex64_t = std::complex<float>;
+
+        // Apply conjugation for Hermitian transpose
+        auto VhT_conj = ops::conj(VhT); // conj(Vh^T) = V
+        auto UT_conj = ops::conj(UT);   // conj(U^T) = U^H
+
+        complex64_t *vht_data = VhT_conj.typed_data<complex64_t>();
+        complex64_t *ut_data = UT_conj.typed_data<complex64_t>();
+        float *s_inv_data = S_inv.typed_data<float>();
+        complex64_t *result_data = result.typed_data<complex64_t>();
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            complex64_t *vht_batch = vht_data + b * n * k;
+            complex64_t *ut_batch = ut_data + b * k * m;
+            float *s_inv_batch = s_inv_data + b * k;
+            complex64_t *result_batch = result_data + b * n * m;
+
+            // Create scaled V for this batch
+            std::vector<complex64_t> v_scaled(n * k);
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < k; ++j) {
+                    v_scaled[i * k + j] = vht_batch[i * k + j] * s_inv_batch[j];
+                }
+            }
+
+            // Matrix multiply: result = V_scaled @ U^H
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < m; ++j) {
+                    complex64_t sum(0.0f, 0.0f);
+                    for (size_t l = 0; l < k; ++l) {
+                        sum += v_scaled[i * k + l] * ut_batch[l * m + j];
+                    }
+                    result_batch[i * m + j] = sum;
+                }
+            }
+        }
+    } else if (a.dtype() == DType::Complex128) {
+        using complex128_t = std::complex<double>;
+
+        auto VhT_conj = ops::conj(VhT);
+        auto UT_conj = ops::conj(UT);
+
+        complex128_t *vht_data = VhT_conj.typed_data<complex128_t>();
+        complex128_t *ut_data = UT_conj.typed_data<complex128_t>();
+        double *s_inv_data = S_inv.typed_data<double>();
+        complex128_t *result_data = result.typed_data<complex128_t>();
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            complex128_t *vht_batch = vht_data + b * n * k;
+            complex128_t *ut_batch = ut_data + b * k * m;
+            double *s_inv_batch = s_inv_data + b * k;
+            complex128_t *result_batch = result_data + b * n * m;
+
+            std::vector<complex128_t> v_scaled(n * k);
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < k; ++j) {
+                    v_scaled[i * k + j] = vht_batch[i * k + j] * s_inv_batch[j];
+                }
+            }
+
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < m; ++j) {
+                    complex128_t sum(0.0, 0.0);
+                    for (size_t l = 0; l < k; ++l) {
+                        sum += v_scaled[i * k + l] * ut_batch[l * m + j];
+                    }
+                    result_batch[i * m + j] = sum;
+                }
+            }
+        }
     }
 
     return result;
@@ -1459,9 +1732,16 @@ Tensor pinv(const Tensor &a, double rcond) {
 
 Tensor norm(const Tensor &a, const std::string &ord) {
     if (ord == "fro") {
-        // Frobenius norm: sqrt(sum(x^2))
-        auto squared = ops::multiply(a, a);
-        return ops::sqrt(squared.sum());
+        // Frobenius norm: sqrt(sum(|x|^2))
+        // For complex: |x|^2 = conj(x) * x = real(x)^2 + imag(x)^2
+        if (a.dtype() == DType::Complex64 || a.dtype() == DType::Complex128) {
+            auto abs_vals = a.abs(); // abs() gives magnitude for complex
+            auto squared = ops::multiply(abs_vals, abs_vals);
+            return ops::sqrt(squared.sum());
+        } else {
+            auto squared = ops::multiply(a, a);
+            return ops::sqrt(squared.sum());
+        }
     } else if (ord == "nuc") {
         // Nuclear norm: sum of singular values
         auto [U, S, Vh] = svd(a, false);
@@ -1481,9 +1761,11 @@ Tensor norm(const Tensor &a, int ord) {
         } else if (ord == 1) {
             return a.abs().sum();
         } else if (ord == 2) {
-            return ops::sqrt(ops::multiply(a, a).sum());
+            // For complex: ||x||_2 = sqrt(sum(|x|^2))
+            auto abs_vals = a.abs();
+            return ops::sqrt(ops::multiply(abs_vals, abs_vals).sum());
         } else {
-            // General p-norm
+            // General p-norm: (sum(|x|^p))^(1/p)
             auto p = static_cast<double>(ord);
             return ops::power(ops::power(a.abs(), Tensor::full({}, p)).sum(),
                               Tensor::full({}, 1.0 / p));
@@ -1506,6 +1788,7 @@ Tensor norm(const Tensor &a, int ord) {
 
 Tensor norm(const Tensor &a, double ord) {
     // General Lp norm for vectors
+    // Already works with complex since a.abs() returns magnitude
     if (a.ndim() != 1) {
         throw ShapeError("Float ord only supported for vector norms");
     }

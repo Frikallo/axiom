@@ -291,6 +291,85 @@ Supported shapes:
 - `(M,K) @ (K,) → (M,)` - Matrix-vector
 - `(...,M,K) @ (...,K,N) → (...,M,N)` - Batched with broadcasting
 
+## Linear Algebra (`axiom::linalg`)
+
+Full LAPACK-backed linear algebra operations with batch support. All operations fall back to CPU for GPU tensors (LAPACK is CPU-only).
+
+**Backends:** Apple Accelerate (macOS), OpenBLAS (Linux/Windows)
+
+### Core Operations
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `linalg::det(a)` | Determinant | ✓ | (CPU) |
+| `linalg::inv(a)` | Matrix inverse | ✓ | (CPU) |
+| `linalg::solve(a, b)` | Solve Ax = b | ✓ | (CPU) |
+| `tensor.det()` | Member function | ✓ | (CPU) |
+| `tensor.inv()` | Member function | ✓ | (CPU) |
+
+### Decompositions
+
+| Function | Returns | Description | CPU | GPU |
+|----------|---------|-------------|-----|-----|
+| `linalg::svd(a, full_matrices)` | `{U, S, Vh}` | Singular value decomposition | ✓ | (CPU) |
+| `linalg::qr(a)` | `{Q, R}` | QR decomposition | ✓ | (CPU) |
+| `linalg::cholesky(a, upper)` | `L` or `U` | Cholesky decomposition | ✓ | (CPU) |
+| `linalg::lu(a)` | `{L, U, P, piv}` | LU decomposition with pivoting | ✓ | (CPU) |
+| `linalg::eig(a)` | `{eigenvalues, eigenvectors}` | General eigendecomposition | ✓ | (CPU) |
+| `linalg::eigh(a)` | `{eigenvalues, eigenvectors}` | Hermitian eigendecomposition | ✓ | (CPU) |
+
+### Advanced Operations
+
+| Function | Description | CPU | GPU |
+|----------|-------------|-----|-----|
+| `linalg::lstsq(a, b, rcond)` | Least squares solution | ✓ | (CPU) |
+| `linalg::pinv(a, rcond)` | Moore-Penrose pseudoinverse | ✓ | (CPU) |
+| `linalg::norm(a, ord)` | Matrix/vector norm | ✓ | (CPU) |
+| `linalg::matrix_rank(a, tol)` | Matrix rank | ✓ | (CPU) |
+| `linalg::cond(a, p)` | Condition number | ✓ | (CPU) |
+| `linalg::matrix_power(a, n)` | Matrix power (A^n) | ✓ | (CPU) |
+| `linalg::trace(a, offset)` | Sum of diagonal | ✓ | ✓ |
+
+### Batch Support
+
+All operations support batch dimensions `(..., M, N)`:
+
+```cpp
+auto A = Tensor::randn({10, 4, 4});  // Batch of 10 matrices
+auto dets = linalg::det(A);          // Shape: (10,)
+auto invs = linalg::inv(A);          // Shape: (10, 4, 4)
+```
+
+### Complex Number Support
+
+Most operations support Complex64 and Complex128:
+- **Full support:** `det`, `inv`, `solve`, `svd`, `pinv`, `norm`, `matrix_rank`, `cond`
+- **Real only:** `qr`, `cholesky`, `eig`, `eigh` (require additional LAPACK complex routines)
+
+### Norm Types
+
+```cpp
+// String norms
+linalg::norm(a, "fro")  // Frobenius norm
+linalg::norm(a, "nuc")  // Nuclear norm (sum of singular values)
+
+// Integer norms
+linalg::norm(a, 1)      // L1 or max column sum
+linalg::norm(a, 2)      // L2 or spectral norm
+linalg::norm(a, 0)      // L0 (count of non-zeros, vector only)
+
+// Float norms (vector only)
+linalg::norm(a, INFINITY)   // L∞ norm
+linalg::norm(a, -INFINITY)  // Min absolute value
+```
+
+### Utility Functions
+
+| Function | Description |
+|----------|-------------|
+| `linalg::has_lapack()` | Check if LAPACK is available |
+| `linalg::lapack_backend_name()` | Get backend name ("Accelerate", "OpenBLAS", etc.) |
+
 ## Conditional Selection
 
 | Function | CPU | GPU |
@@ -509,6 +588,7 @@ All operations use MPSGraph on Metal GPU for automatic kernel fusion and Apple S
 | Einops | ✓ | ✓ | |
 | Normalization | ✓ | ✓ | LayerNorm, RMSNorm |
 | Dropout | ✓ | ✓ | With reproducible masks |
+| Linear Algebra | ✓ | (CPU) | LAPACK-backed, GPU falls back to CPU |
 
 **NaN/Inf Detection:** `has_nan()` and `has_inf()` work on Float16, Float32, Float64, Complex64, and Complex128.
 
