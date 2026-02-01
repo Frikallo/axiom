@@ -1,4 +1,5 @@
 #include "axiom/debug.hpp"
+#include "backends/cpu/cpu_simd.hpp"
 
 namespace axiom {
 namespace trace {
@@ -95,5 +96,19 @@ void Profiler::record_op(const OpProfile &profile) {
 }
 
 } // namespace profile
+
+namespace cpu_info {
+
+void print_simd_info() { backends::cpu::simd::print_simd_info(); }
+
+const char *simd_arch_name() {
+    return backends::cpu::simd::get_simd_info().arch_name;
+}
+
+std::string simd_info_string() {
+    return backends::cpu::simd::simd_info_string();
+}
+
+} // namespace cpu_info
 
 } // namespace axiom

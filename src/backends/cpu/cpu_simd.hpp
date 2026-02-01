@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <fxdiv.h>
 #include <limits>
+#include <string>
 #include <type_traits>
 #include <xsimd/xsimd.hpp>
 
@@ -12,6 +13,59 @@ namespace axiom {
 namespace backends {
 namespace cpu {
 namespace simd {
+
+// ============================================================================
+// SIMD Architecture Info
+// ============================================================================
+
+struct SimdInfo {
+    const char *arch_name; // Architecture name (e.g., "neon64", "avx2")
+    size_t alignment;      // Required alignment in bytes
+    size_t float32_width;  // Vector width for float (elements)
+    size_t float64_width;  // Vector width for double (elements)
+    size_t int32_width;    // Vector width for int32_t (elements)
+    size_t int64_width;    // Vector width for int64_t (elements)
+};
+
+// Get compile-time SIMD architecture info
+inline SimdInfo get_simd_info() {
+    using arch = xsimd::default_arch;
+    return SimdInfo{
+        arch::name(),
+        arch::alignment(),
+        xsimd::batch<float>::size,
+        xsimd::batch<double>::size,
+        xsimd::batch<int32_t>::size,
+        xsimd::batch<int64_t>::size,
+    };
+}
+
+// Print SIMD architecture info to stdout
+inline void print_simd_info() {
+    auto info = get_simd_info();
+    std::printf("SIMD Architecture: %s\n", info.arch_name);
+    std::printf("  Alignment: %zu bytes\n", info.alignment);
+    std::printf("  Vector widths:\n");
+    std::printf("    float32: %zu elements (%zu bytes)\n", info.float32_width,
+                info.float32_width * sizeof(float));
+    std::printf("    float64: %zu elements (%zu bytes)\n", info.float64_width,
+                info.float64_width * sizeof(double));
+    std::printf("    int32:   %zu elements (%zu bytes)\n", info.int32_width,
+                info.int32_width * sizeof(int32_t));
+    std::printf("    int64:   %zu elements (%zu bytes)\n", info.int64_width,
+                info.int64_width * sizeof(int64_t));
+}
+
+// Get SIMD info as a formatted string
+inline std::string simd_info_string() {
+    auto info = get_simd_info();
+    char buf[512];
+    std::snprintf(buf, sizeof(buf),
+                  "SIMD: %s (align=%zu, f32x%zu, f64x%zu, i32x%zu, i64x%zu)",
+                  info.arch_name, info.alignment, info.float32_width,
+                  info.float64_width, info.int32_width, info.int64_width);
+    return std::string(buf);
+}
 
 // ============================================================================
 // SIMD Support Detection

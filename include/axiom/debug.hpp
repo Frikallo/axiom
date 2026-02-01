@@ -109,4 +109,21 @@ inline const OpProfile &last_op() { return Profiler::instance().last_op(); }
 
 } // namespace profile
 
+// ============================================================================
+// SIMD/Backend Diagnostics
+// ============================================================================
+
+namespace cpu_info {
+
+// Print CPU SIMD architecture info (xsimd-detected) to stdout
+void print_simd_info();
+
+// Get SIMD architecture name (e.g., "neon64", "avx2", "sse4.2")
+const char *simd_arch_name();
+
+// Get SIMD info as a compact string
+std::string simd_info_string();
+
+} // namespace cpu_info
+
 } // namespace axiom
