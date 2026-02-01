@@ -619,3 +619,28 @@ set_tests_properties(tensor_linalg
     PROPERTIES
         TIMEOUT 60
 )
+
+# Parallel operations tests
+add_executable(test_parallel
+    test_parallel.cpp
+)
+
+target_link_libraries(test_parallel
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_parallel
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME parallel
+    COMMAND test_parallel
+)
+
+set_tests_properties(parallel
+    PROPERTIES
+        TIMEOUT 60
+)

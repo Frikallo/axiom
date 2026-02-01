@@ -2,6 +2,7 @@
 
 #include "axiom/error.hpp"
 #include "axiom/operations.hpp"
+#include "axiom/parallel.hpp"
 #include "axiom/shape.hpp"
 #include "axiom/tensor.hpp"
 
@@ -157,6 +158,19 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
         const T *lhs_data = lhs_converted.template typed_data<T>();
         const T *rhs_data = rhs_converted.template typed_data<T>();
         T *result_data = result.template typed_data<T>();
+
+        // Tier 0: OpenMP for large tensors (before vectorized paths)
+        // Note: For very large tensors, parallel scalar is faster than
+        // single-threaded SIMD
+#ifdef AXIOM_USE_OPENMP
+        if (parallel::should_parallelize(total_elements)) {
+#pragma omp parallel for schedule(static)
+            for (size_t i = 0; i < total_elements; ++i) {
+                result_data[i] = func_(lhs_data[i], rhs_data[i]);
+            }
+            return;
+        }
+#endif
 
         // Tier 1: Try Accelerate (vDSP) for contiguous float32/float64
 #ifdef AXIOM_USE_ACCELERATE
@@ -364,6 +378,37 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(
         }
     }
 
+    // OpenMP parallel path for large broadcast operations
+#ifdef AXIOM_USE_OPENMP
+    if (parallel::should_parallelize(total_elements)) {
+#pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < total_elements; ++i) {
+            // Compute coordinates from flat index
+            size_t remaining = i;
+            int64_t lhs_byte_offset = 0;
+            int64_t rhs_byte_offset = 0;
+
+            for (int d = static_cast<int>(ndim) - 1; d >= 0; --d) {
+                size_t coord = remaining % result_shape[d];
+                remaining /= result_shape[d];
+                lhs_byte_offset +=
+                    static_cast<int64_t>(coord) * lhs_bcast_strides[d];
+                rhs_byte_offset +=
+                    static_cast<int64_t>(coord) * rhs_bcast_strides[d];
+            }
+
+            const auto &lhs_val = *reinterpret_cast<const InputT *>(
+                reinterpret_cast<const uint8_t *>(lhs_data) + lhs_byte_offset);
+            const auto &rhs_val = *reinterpret_cast<const InputT *>(
+                reinterpret_cast<const uint8_t *>(rhs_data) + rhs_byte_offset);
+
+            result_data[i] = func_(lhs_val, rhs_val);
+        }
+        return;
+    }
+#endif
+
+    // Sequential fallback with coordinate tracking
     std::vector<size_t> result_coords(ndim, 0);
 
     for (size_t i = 0; i < total_elements; ++i) {
@@ -790,6 +835,17 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
     size_t total_elements = input.size();
     const T *input_data = input.template typed_data<T>();
     T *result_data = result.template typed_data<T>();
+
+    // Tier 0: OpenMP for large tensors
+#ifdef AXIOM_USE_OPENMP
+    if (input.is_contiguous() && parallel::should_parallelize(total_elements)) {
+#pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < total_elements; ++i) {
+            result_data[i] = func_(input_data[i]);
+        }
+        return;
+    }
+#endif
 
     // Tier 1: Try Accelerate (vForce/vDSP) for contiguous float32/float64
 #ifdef AXIOM_USE_ACCELERATE
@@ -1728,29 +1784,59 @@ Tensor CPUMatMulOperation::execute_matmul_typed(const Tensor &a,
         }
 
         // Iterate over batch dimensions
-        std::vector<size_t> batch_coords(batch_ndim, 0);
-        for (size_t batch_idx = 0; batch_idx < batch_size; ++batch_idx) {
-            // Compute batch offsets (signed for negative stride support)
-            int64_t a_batch_off = 0, b_batch_off = 0, c_batch_off = 0;
-            for (size_t i = 0; i < batch_ndim; ++i) {
-                a_batch_off +=
-                    static_cast<int64_t>(batch_coords[i]) * a_batch_strides[i];
-                b_batch_off +=
-                    static_cast<int64_t>(batch_coords[i]) * b_batch_strides[i];
-                c_batch_off +=
-                    static_cast<int64_t>(batch_coords[i]) * c_batch_strides[i];
+        // Parallelize batch dimension when batch_size > 1
+#ifdef AXIOM_USE_OPENMP
+        if (batch_size > 1) {
+#pragma omp parallel for schedule(dynamic)
+            for (size_t batch_idx = 0; batch_idx < batch_size; ++batch_idx) {
+                // Compute batch coordinates from flat index
+                size_t remaining = batch_idx;
+                int64_t a_batch_off = 0, b_batch_off = 0, c_batch_off = 0;
+
+                for (int d = static_cast<int>(batch_ndim) - 1; d >= 0; --d) {
+                    size_t coord = remaining % batch_shape[d];
+                    remaining /= batch_shape[d];
+                    a_batch_off +=
+                        static_cast<int64_t>(coord) * a_batch_strides[d];
+                    b_batch_off +=
+                        static_cast<int64_t>(coord) * b_batch_strides[d];
+                    c_batch_off +=
+                        static_cast<int64_t>(coord) * c_batch_strides[d];
+                }
+
+                matmul_2d<T>(a_base + a_batch_off, b_base + b_batch_off,
+                             c_base + c_batch_off, M, N, K, a_row_stride,
+                             a_col_stride, b_row_stride, b_col_stride,
+                             c_row_stride, c_col_stride);
             }
+        } else
+#endif
+        {
+            // Sequential fallback
+            std::vector<size_t> batch_coords(batch_ndim, 0);
+            for (size_t batch_idx = 0; batch_idx < batch_size; ++batch_idx) {
+                // Compute batch offsets (signed for negative stride support)
+                int64_t a_batch_off = 0, b_batch_off = 0, c_batch_off = 0;
+                for (size_t i = 0; i < batch_ndim; ++i) {
+                    a_batch_off += static_cast<int64_t>(batch_coords[i]) *
+                                   a_batch_strides[i];
+                    b_batch_off += static_cast<int64_t>(batch_coords[i]) *
+                                   b_batch_strides[i];
+                    c_batch_off += static_cast<int64_t>(batch_coords[i]) *
+                                   c_batch_strides[i];
+                }
 
-            matmul_2d<T>(a_base + a_batch_off, b_base + b_batch_off,
-                         c_base + c_batch_off, M, N, K, a_row_stride,
-                         a_col_stride, b_row_stride, b_col_stride, c_row_stride,
-                         c_col_stride);
+                matmul_2d<T>(a_base + a_batch_off, b_base + b_batch_off,
+                             c_base + c_batch_off, M, N, K, a_row_stride,
+                             a_col_stride, b_row_stride, b_col_stride,
+                             c_row_stride, c_col_stride);
 
-            // Increment batch coordinates
-            for (int i = batch_ndim - 1; i >= 0; --i) {
-                if (++batch_coords[i] < batch_shape[i])
-                    break;
-                batch_coords[i] = 0;
+                // Increment batch coordinates
+                for (int i = batch_ndim - 1; i >= 0; --i) {
+                    if (++batch_coords[i] < batch_shape[i])
+                        break;
+                    batch_coords[i] = 0;
+                }
             }
         }
     }

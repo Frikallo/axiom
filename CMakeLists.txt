@@ -33,6 +33,7 @@ option(AXIOM_BUILD_TESTS "Build unit tests" ON)
 option(AXIOM_BUILD_EXAMPLES "Build examples" ON)
 option(AXIOM_BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(AXIOM_NATIVE_ARCH "Use -march=native for local builds (not portable)" OFF)
+option(AXIOM_USE_OPENMP "Enable OpenMP parallelization" ON)
 
 # BLAS backend selection
 set(AXIOM_BLAS_BACKEND "auto" CACHE STRING "BLAS backend: auto, accelerate, openblas, native")
@@ -83,6 +84,41 @@ endif()
 if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
+# ============================================================================
+# OpenMP Detection
+# ============================================================================
+set(AXIOM_HAS_OPENMP OFF)
+if(AXIOM_USE_OPENMP)
+    # On macOS with Apple Clang, we need to use Homebrew's libomp
+    if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Check for Homebrew libomp
+        execute_process(
+            COMMAND brew --prefix libomp
+            OUTPUT_VARIABLE LIBOMP_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE LIBOMP_RESULT
+            ERROR_QUIET
+        )
+        if(LIBOMP_RESULT EQUAL 0 AND EXISTS "${LIBOMP_PREFIX}")
+            set(AXIOM_HAS_OPENMP ON)
+            set(OpenMP_omp_LIBRARY "${LIBOMP_PREFIX}/lib/libomp.dylib")
+            set(OpenMP_CXX_INCLUDE_DIR "${LIBOMP_PREFIX}/include")
+            message(STATUS "OpenMP: enabled (Homebrew libomp at ${LIBOMP_PREFIX})")
+        else()
+            message(STATUS "OpenMP: disabled (Homebrew libomp not found, install with: brew install libomp)")
+        endif()
+    else()
+        # Standard OpenMP detection for other platforms
+        find_package(OpenMP)
+        if(OpenMP_CXX_FOUND)
+            set(AXIOM_HAS_OPENMP ON)
+            message(STATUS "OpenMP: enabled (${OpenMP_CXX_VERSION})")
+        else()
+            message(STATUS "OpenMP: disabled (not found)")
+        endif()
+    endif()
 endif()
 
 # ============================================================================
@@ -207,6 +243,9 @@ set(AXIOM_SOURCES
 
     # Linear algebra operations
     src/tensor/linalg.cpp
+
+    # Parallel utilities
+    src/parallel/parallel.cpp
 )
 
 # Add platform-specific BLAS backends
@@ -366,6 +405,21 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(axiom PUBLIC Threads::Threads)
 endif()
 
+# OpenMP linking
+if(AXIOM_HAS_OPENMP)
+    if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Manual linking for Homebrew libomp on macOS
+        # Apple Clang requires -Xpreprocessor -fopenmp (as separate flags)
+        target_compile_options(axiom PUBLIC -Xpreprocessor -fopenmp)
+        target_include_directories(axiom PUBLIC ${OpenMP_CXX_INCLUDE_DIR})
+        target_link_libraries(axiom PUBLIC ${OpenMP_omp_LIBRARY})
+    else()
+        # Standard OpenMP target for other platforms
+        target_link_libraries(axiom PUBLIC OpenMP::OpenMP_CXX)
+    endif()
+    target_compile_definitions(axiom PUBLIC AXIOM_USE_OPENMP)
+endif()
+
 # XSIMD for cross-platform SIMD operations (always enabled)
 target_compile_definitions(axiom PUBLIC AXIOM_USE_XSIMD)
 
@@ -485,6 +539,11 @@ message(STATUS "  Build benchmarks: ${AXIOM_BUILD_BENCHMARKS}")
 message(STATUS "")
 message(STATUS "  BLAS backend: ${AXIOM_BLAS_IMPL}")
 message(STATUS "  LAPACK backend: ${AXIOM_BLAS_IMPL}")
+if(AXIOM_HAS_OPENMP)
+    message(STATUS "  OpenMP: YES (${OpenMP_CXX_VERSION})")
+else()
+    message(STATUS "  OpenMP: NO")
+endif()
 if(APPLE)
     if(AXIOM_HAS_METAL)
         message(STATUS "  Metal support: YES")

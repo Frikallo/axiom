@@ -7,6 +7,8 @@
 #include <xsimd/xsimd.hpp>
 #endif
 
+#include "axiom/parallel.hpp"
+
 namespace axiom {
 namespace backends {
 namespace cpu {
@@ -45,10 +47,6 @@ void NativeBlasBackend::gemm_impl(bool transA, bool transB, size_t M, size_t N,
         return;
     }
 
-    // Local tile buffer for C accumulation - avoids repeated C memory access
-    // This is the key optimization: load C once, accumulate, store once
-    alignas(64) T c_tile[TILE_M][TILE_N];
-
     // Lambda to get A element with transpose handling
     auto get_A = [&](size_t i, size_t k) -> T {
         if (transA) {
@@ -68,10 +66,18 @@ void NativeBlasBackend::gemm_impl(bool transA, bool transB, size_t M, size_t N,
     };
 
     // Process tiles of C
+    // OpenMP parallelization of outer tile loops
+#ifdef AXIOM_USE_OPENMP
+    bool should_parallel = parallel::should_parallelize_matmul(M, N, K);
+#pragma omp parallel for collapse(2) schedule(dynamic) if (should_parallel)
+#endif
     for (size_t i0 = 0; i0 < M; i0 += TILE_M) {
-        size_t tile_m = std::min(TILE_M, M - i0);
-
         for (size_t j0 = 0; j0 < N; j0 += TILE_N) {
+            // Local tile buffer for C accumulation - each thread gets its own
+            // This is the key optimization: load C once, accumulate, store once
+            alignas(64) T c_tile[TILE_M][TILE_N];
+
+            size_t tile_m = std::min(TILE_M, M - i0);
             size_t tile_n = std::min(TILE_N, N - j0);
 
             // Initialize c_tile: load from C and apply beta, or zero
