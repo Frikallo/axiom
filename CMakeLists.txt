@@ -15,6 +15,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Add cmake modules path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+# Include SIMD multi-architecture build support
+include(SimdMultiArch)
+
 # ============================================================================
 # Platform Detection
 # ============================================================================
@@ -293,6 +296,15 @@ endif()
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 add_library(axiom SHARED ${AXIOM_SOURCES})
 
+# Add SIMD multi-arch object libraries if enabled
+if(AXIOM_SIMD_MULTI_ARCH AND AXIOM_SIMD_OBJECTS)
+    target_sources(axiom PRIVATE ${AXIOM_SIMD_OBJECTS})
+    target_compile_definitions(axiom PUBLIC AXIOM_SIMD_MULTI_ARCH)
+    if(AXIOM_SIMD_AVX512)
+        target_compile_definitions(axiom PUBLIC AXIOM_SIMD_AVX512)
+    endif()
+endif()
+
 # ============================================================================
 # Metal Library Embedding (macOS only)
 # ============================================================================
@@ -565,7 +577,22 @@ else()
     message(STATUS "  Metal support: NO (not on Apple platform)")
 endif()
 message(STATUS "  Target architecture: ${CMAKE_SYSTEM_PROCESSOR}")
-message(STATUS "  SIMD: Use axiom::cpu_info::print_simd_info() at runtime for details")
+if(AXIOM_SIMD_MULTI_ARCH)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|x86")
+        message(STATUS "  SIMD: Runtime dispatch enabled (portable binary)")
+        if(AXIOM_SIMD_AVX512)
+            message(STATUS "        Targets: SSE2, AVX2+FMA, AVX-512")
+        else()
+            message(STATUS "        Targets: SSE2, AVX2+FMA")
+        endif()
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+        message(STATUS "  SIMD: NEON64 (ARM64 always has NEON, no runtime dispatch needed)")
+    else()
+        message(STATUS "  SIMD: Using default architecture")
+    endif()
+else()
+    message(STATUS "  SIMD: Compile-time detection (use -DAXIOM_SIMD_MULTI_ARCH=ON for portable)")
+endif()
 if(AXIOM_DIST_BUILD)
     message(STATUS "  Distribution build: YES")
 endif()
