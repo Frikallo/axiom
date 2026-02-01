@@ -33,6 +33,7 @@ struct MPSGraphCacheKey {
     ops::OpType op_type;
 
     // Input shapes (up to 3 inputs)
+    // For shape-agnostic caching, use -1 for dynamic dimensions
     std::vector<int64_t> input_shapes[3];
     size_t num_inputs;
 
@@ -50,11 +51,15 @@ struct MPSGraphCacheKey {
     std::vector<int> reduction_axes;
     bool keep_dims;
 
+    // Shape-agnostic mode: if true, only rank matters, not exact dimensions
+    // This allows graphs to be reused for different batch sizes
+    bool shape_agnostic;
+
     // Default constructor
     MPSGraphCacheKey()
         : op_type(ops::OpType::Add), num_inputs(0), input_dtypes{0, 0, 0},
           output_dtype(0), transpose_a(false), transpose_b(false),
-          keep_dims(false) {}
+          keep_dims(false), shape_agnostic(false) {}
 
     // Compute hash for the key
     size_t hash() const;
@@ -159,16 +164,20 @@ class MPSGraphCache {
 // ============================================================================
 
 // Create a cache key for binary operations
+// shape_agnostic: if true, only rank matters for cache lookup (dynamic batch)
 MPSGraphCacheKey make_binary_cache_key(ops::OpType op_type,
                                        const std::vector<int64_t> &lhs_shape,
                                        const std::vector<int64_t> &rhs_shape,
                                        int lhs_dtype, int rhs_dtype,
-                                       int output_dtype);
+                                       int output_dtype,
+                                       bool shape_agnostic = false);
 
 // Create a cache key for unary operations
+// shape_agnostic: if true, only rank matters for cache lookup (dynamic batch)
 MPSGraphCacheKey make_unary_cache_key(ops::OpType op_type,
                                       const std::vector<int64_t> &input_shape,
-                                      int input_dtype, int output_dtype);
+                                      int input_dtype, int output_dtype,
+                                      bool shape_agnostic = false);
 
 // Create a cache key for ternary operations (where)
 MPSGraphCacheKey make_ternary_cache_key(ops::OpType op_type,

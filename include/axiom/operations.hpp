@@ -152,7 +152,10 @@ enum class OpType {
     RMSNorm,
 
     // Dropout
-    Dropout
+    Dropout,
+
+    // Type conversion
+    Cast
 };
 
 class Operation {
@@ -217,6 +220,10 @@ class Operation {
     // Selects elements along a dimension using indices
     virtual Tensor execute_index_select(const Tensor &input, int dim,
                                         const Tensor &indices) const;
+
+    // For type casting operation
+    // Converts tensor to a different dtype
+    virtual Tensor execute_cast(const Tensor &input, DType target_dtype) const;
 
     // For in-place operations (future extension)
     virtual void execute_binary_inplace(Tensor &lhs, const Tensor &rhs) const;

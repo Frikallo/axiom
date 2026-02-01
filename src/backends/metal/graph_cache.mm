@@ -15,10 +15,19 @@ namespace metal {
 size_t MPSGraphCacheKey::hash() const {
     size_t h = std::hash<int>{}(static_cast<int>(op_type));
 
+    // Hash shape-agnostic flag
+    h ^= std::hash<bool>{}(shape_agnostic) + 0x9e3779b9 + (h << 6) + (h >> 2);
+
     // Hash input shapes
     for (size_t i = 0; i < num_inputs; ++i) {
-        for (int64_t dim : input_shapes[i]) {
-            h ^= std::hash<int64_t>{}(dim) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        if (shape_agnostic) {
+            // Only hash rank for shape-agnostic mode
+            h ^= std::hash<size_t>{}(input_shapes[i].size()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        } else {
+            // Hash full shape for exact matching
+            for (int64_t dim : input_shapes[i]) {
+                h ^= std::hash<int64_t>{}(dim) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            }
         }
         h ^= std::hash<int>{}(input_dtypes[i]) + 0x9e3779b9 + (h << 6) + (h >> 2);
     }
@@ -42,12 +51,21 @@ size_t MPSGraphCacheKey::hash() const {
 bool MPSGraphCacheKey::operator==(const MPSGraphCacheKey &other) const {
     if (op_type != other.op_type)
         return false;
+    if (shape_agnostic != other.shape_agnostic)
+        return false;
     if (num_inputs != other.num_inputs)
         return false;
 
     for (size_t i = 0; i < num_inputs; ++i) {
-        if (input_shapes[i] != other.input_shapes[i])
-            return false;
+        if (shape_agnostic) {
+            // Only compare rank for shape-agnostic mode
+            if (input_shapes[i].size() != other.input_shapes[i].size())
+                return false;
+        } else {
+            // Compare full shape for exact matching
+            if (input_shapes[i] != other.input_shapes[i])
+                return false;
+        }
         if (input_dtypes[i] != other.input_dtypes[i])
             return false;
     }
@@ -162,16 +180,28 @@ void MPSGraphCache::release_graph(CachedMPSGraph &entry) {
 // Helper Functions Implementation
 // ============================================================================
 
+// Helper to convert shape to dynamic shape (-1 for all dims)
+static std::vector<int64_t> to_dynamic_shape(const std::vector<int64_t> &shape) {
+    return std::vector<int64_t>(shape.size(), -1);
+}
+
 MPSGraphCacheKey make_binary_cache_key(ops::OpType op_type,
                                        const std::vector<int64_t> &lhs_shape,
                                        const std::vector<int64_t> &rhs_shape,
                                        int lhs_dtype, int rhs_dtype,
-                                       int output_dtype) {
+                                       int output_dtype,
+                                       bool shape_agnostic) {
     MPSGraphCacheKey key;
     key.op_type = op_type;
     key.num_inputs = 2;
-    key.input_shapes[0] = lhs_shape;
-    key.input_shapes[1] = rhs_shape;
+    key.shape_agnostic = shape_agnostic;
+    if (shape_agnostic) {
+        key.input_shapes[0] = to_dynamic_shape(lhs_shape);
+        key.input_shapes[1] = to_dynamic_shape(rhs_shape);
+    } else {
+        key.input_shapes[0] = lhs_shape;
+        key.input_shapes[1] = rhs_shape;
+    }
     key.input_dtypes[0] = lhs_dtype;
     key.input_dtypes[1] = rhs_dtype;
     key.output_dtype = output_dtype;
@@ -180,11 +210,17 @@ MPSGraphCacheKey make_binary_cache_key(ops::OpType op_type,
 
 MPSGraphCacheKey make_unary_cache_key(ops::OpType op_type,
                                       const std::vector<int64_t> &input_shape,
-                                      int input_dtype, int output_dtype) {
+                                      int input_dtype, int output_dtype,
+                                      bool shape_agnostic) {
     MPSGraphCacheKey key;
     key.op_type = op_type;
     key.num_inputs = 1;
-    key.input_shapes[0] = input_shape;
+    key.shape_agnostic = shape_agnostic;
+    if (shape_agnostic) {
+        key.input_shapes[0] = to_dynamic_shape(input_shape);
+    } else {
+        key.input_shapes[0] = input_shape;
+    }
     key.input_dtypes[0] = input_dtype;
     key.output_dtype = output_dtype;
     return key;

@@ -130,31 +130,39 @@ static Tensor makeContiguousViaGatherKernel(const Tensor& tensor) {
     size_t effective_offset = tensor.offset();
 
     // Create command buffer and encoder
-    id<MTLCommandQueue> command_queue = (__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue();
+    // Note: We use synchronous execution here to ensure the contiguous data
+    // is ready before subsequent MPSGraph operations use it.
+    // This is acceptable because non-contiguous tensors are relatively rare.
+    id<MTLCommandQueue> command_queue =
+        (__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue();
     id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
-    id<MTLComputeCommandEncoder> command_encoder = [command_buffer computeCommandEncoder];
+    id<MTLComputeCommandEncoder> command_encoder =
+        [command_buffer computeCommandEncoder];
 
     [command_encoder setComputePipelineState:pipeline_state];
     [command_encoder setBuffer:src_buffer offset:effective_offset atIndex:0];
     [command_encoder setBuffer:dst_buffer offset:0 atIndex:1];
     [command_encoder setBytes:&params length:sizeof(params) atIndex:2];
-    
+
     // Dispatch threads - one thread per output element
     NSUInteger width = params.numel;
     NSUInteger max_threads = [pipeline_state maxTotalThreadsPerThreadgroup];
     MTLSize threads_per_group = MTLSizeMake(std::min(width, max_threads), 1, 1);
-    MTLSize thread_groups = MTLSizeMake((width + threads_per_group.width - 1) / threads_per_group.width, 1, 1);
-    
-    [command_encoder dispatchThreadgroups:thread_groups threadsPerThreadgroup:threads_per_group];
+    MTLSize thread_groups = MTLSizeMake((width + threads_per_group.width - 1) /
+                                            threads_per_group.width,
+                                        1, 1);
+
+    [command_encoder dispatchThreadgroups:thread_groups
+                    threadsPerThreadgroup:threads_per_group];
     [command_encoder endEncoding];
     [command_buffer commit];
     [command_buffer waitUntilCompleted];
-    
+
     if ([command_buffer status] == MTLCommandBufferStatusError) {
         NSLog(@"Gather kernel error: %@", [command_buffer error]);
         throw DeviceError("GPU gather kernel execution failed");
     }
-    
+
     return result;
 }
 
@@ -199,6 +207,17 @@ static MPSGraphTensor* createPlaceholder(MPSGraph* graph, const Tensor& tensor) 
     return [graph placeholderWithShape:shape dataType:dtype name:nil];
 }
 
+// Create a placeholder with dynamic (unknown) dimensions
+// Using -1 for dimensions allows the graph to work with different sizes
+static MPSGraphTensor* createDynamicPlaceholder(MPSGraph* graph, size_t rank, DType dtype) {
+    MPSDataType mps_dtype = getMPSDataType(dtype);
+    NSMutableArray<NSNumber*>* shape = [NSMutableArray arrayWithCapacity:rank];
+    for (size_t i = 0; i < rank; ++i) {
+        [shape addObject:@(-1)];  // -1 indicates unknown dimension
+    }
+    return [graph placeholderWithShape:shape dataType:mps_dtype name:nil];
+}
+
 static MPSGraphTensorData* createTensorData(const Tensor& tensor) {
     if (tensor.device() != Device::GPU) {
         throw DeviceError("MPSGraph operations require GPU tensors");
@@ -241,13 +260,41 @@ static int dtypeToInt(DType dtype) {
 }
 
 // ============================================================================
+// Async MPSGraph Execution Helper
+// ============================================================================
+
+// Encodes an MPSGraph to the stream's command buffer without blocking.
+// Operations are batched together and committed automatically at MAX_BATCH_SIZE
+// or when synchronize() is called (e.g., when CPU reads GPU data).
+// Uses execution descriptor with commitAndContinue enabled for optimal performance.
+static void encodeMPSGraphAsync(
+    MPSGraph* graph,
+    NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds,
+    NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets) {
+    auto& stream = MetalExecutionStream::instance();
+
+    MPSCommandBuffer* cmdBuffer = (__bridge MPSCommandBuffer*)stream.current_mps_buffer();
+    MPSGraphExecutionDescriptor* execDesc =
+        (__bridge MPSGraphExecutionDescriptor*)stream.execution_descriptor();
+
+    [graph encodeToCommandBuffer:cmdBuffer
+                           feeds:feeds
+                targetOperations:nil
+               resultsDictionary:targets
+             executionDescriptor:execDesc];
+
+    stream.increment_batch();
+}
+
+// ============================================================================
 // Core Execution Helper
 // ============================================================================
 
 static Tensor executeMPSGraphBinaryOp(const Tensor& lhs_raw, const Tensor& rhs_raw,
                                       DType output_dtype,
                                       MPSGraphBinaryOpBlock op_block,
-                                      ops::OpType op_type) {
+                                      ops::OpType op_type,
+                                      bool shape_agnostic = true) {
     @autoreleasepool {
         // Make non-contiguous tensors contiguous using GPU gather kernel
         Tensor lhs = ensureContiguous(lhs_raw);
@@ -256,14 +303,16 @@ static Tensor executeMPSGraphBinaryOp(const Tensor& lhs_raw, const Tensor& rhs_r
         // Type promotion
         DType common_dtype = ops::promote_types(lhs.dtype(), rhs.dtype());
 
-        // Create cache key
+        // Create cache key - shape-agnostic for element-wise operations
+        // This allows reusing the same compiled graph for different batch sizes
         MPSGraphCacheKey cache_key = make_binary_cache_key(
             op_type,
             shapeToVector(lhs.shape()),
             shapeToVector(rhs.shape()),
             dtypeToInt(lhs.dtype()),
             dtypeToInt(rhs.dtype()),
-            dtypeToInt(output_dtype)
+            dtypeToInt(output_dtype),
+            shape_agnostic
         );
 
         // Get or create cached graph
@@ -273,9 +322,16 @@ static Tensor executeMPSGraphBinaryOp(const Tensor& lhs_raw, const Tensor& rhs_r
             // Create MPSGraph
             MPSGraph* graph = [[MPSGraph alloc] init];
 
-            // Create placeholders
-            MPSGraphTensor* lhs_placeholder = createPlaceholder(graph, lhs);
-            MPSGraphTensor* rhs_placeholder = createPlaceholder(graph, rhs);
+            // Create placeholders - use dynamic placeholders for shape-agnostic mode
+            MPSGraphTensor* lhs_placeholder;
+            MPSGraphTensor* rhs_placeholder;
+            if (shape_agnostic) {
+                lhs_placeholder = createDynamicPlaceholder(graph, lhs.ndim(), lhs.dtype());
+                rhs_placeholder = createDynamicPlaceholder(graph, rhs.ndim(), rhs.dtype());
+            } else {
+                lhs_placeholder = createPlaceholder(graph, lhs);
+                rhs_placeholder = createPlaceholder(graph, rhs);
+            }
 
             // Type promotion if needed
             MPSGraphTensor* lhs_cast = castToCommonType(graph, lhs_placeholder, common_dtype);
@@ -330,12 +386,8 @@ static Tensor executeMPSGraphBinaryOp(const Tensor& lhs_raw, const Tensor& rhs_r
             result_tensor: output_data
         };
 
-        // Execute the graph using synchronous API
-        // (Async execution will be added in a future optimization)
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:targets];
+        // Execute the graph asynchronously (batched execution)
+        encodeMPSGraphAsync(graph, feeds, targets);
 
         return output;
     }
@@ -344,17 +396,19 @@ static Tensor executeMPSGraphBinaryOp(const Tensor& lhs_raw, const Tensor& rhs_r
 static Tensor executeMPSGraphUnaryOp(const Tensor& input_raw,
                                      DType output_dtype,
                                      MPSGraphUnaryOpBlock op_block,
-                                     ops::OpType op_type) {
+                                     ops::OpType op_type,
+                                     bool shape_agnostic = true) {
     @autoreleasepool {
         // Make non-contiguous tensor contiguous using GPU gather kernel
         Tensor input = ensureContiguous(input_raw);
 
-        // Create cache key
+        // Create cache key - shape-agnostic for element-wise operations
         MPSGraphCacheKey cache_key = make_unary_cache_key(
             op_type,
             shapeToVector(input.shape()),
             dtypeToInt(input.dtype()),
-            dtypeToInt(output_dtype)
+            dtypeToInt(output_dtype),
+            shape_agnostic
         );
 
         // Get or create cached graph
@@ -364,8 +418,13 @@ static Tensor executeMPSGraphUnaryOp(const Tensor& input_raw,
             // Create MPSGraph
             MPSGraph* graph = [[MPSGraph alloc] init];
 
-            // Create placeholder
-            MPSGraphTensor* input_placeholder = createPlaceholder(graph, input);
+            // Create placeholder - use dynamic placeholder for shape-agnostic mode
+            MPSGraphTensor* input_placeholder;
+            if (shape_agnostic) {
+                input_placeholder = createDynamicPlaceholder(graph, input.ndim(), input.dtype());
+            } else {
+                input_placeholder = createPlaceholder(graph, input);
+            }
 
             // Execute the operation
             MPSGraphTensor* result_tensor = op_block(graph, input_placeholder);
@@ -407,11 +466,8 @@ static Tensor executeMPSGraphUnaryOp(const Tensor& input_raw,
             result_tensor: output_data
         };
 
-        // Execute the graph using synchronous API
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:targets];
+        // Execute the graph asynchronously (batched execution)
+        encodeMPSGraphAsync(graph, feeds, targets);
 
         return output;
     }
@@ -517,11 +573,8 @@ static Tensor executeMPSGraphTernaryOp(const Tensor& cond_raw, const Tensor& a_r
             result_tensor: output_data
         };
 
-        // Execute the graph using synchronous API
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:targets];
+        // Execute the graph asynchronously (batched execution)
+        encodeMPSGraphAsync(graph, feeds, targets);
 
         return output;
     }
@@ -815,92 +868,134 @@ static MPSGraphTensor* isfinite_op(MPSGraph* graph, MPSGraphTensor* a) {
 // Reduction Operations (migrated from custom Metal kernels)
 // ============================================================================
 
-static Tensor executeReduction(const Tensor& input_raw, const std::vector<int>& raw_axes, 
+static Tensor executeReduction(const Tensor& input_raw, const std::vector<int>& raw_axes,
                                bool keep_dims, ops::OpType op_type) {
     @autoreleasepool {
         // For non-contiguous GPU tensors, make them contiguous using GPU gather kernel
         Tensor input = ensureContiguous(input_raw);
-        
-        MPSGraph* graph = [[MPSGraph alloc] init];
-        
-        // Create input placeholder
-        MPSGraphTensor* input_tensor = createPlaceholder(graph, input);
-        
+
         // Handle empty axes (reduce over all dimensions)
         std::vector<int> axes = raw_axes;
         if (axes.empty()) {
             axes.resize(input.ndim());
             std::iota(axes.begin(), axes.end(), 0);
         }
-        
+
         // Normalize negative axes
         for (int& axis : axes) {
             if (axis < 0) {
                 axis += input.ndim();
             }
         }
-        
-        // Convert axes to NSArray
-        NSMutableArray<NSNumber*>* mps_axes = [NSMutableArray arrayWithCapacity:axes.size()];
-        for (int axis : axes) {
-            [mps_axes addObject:@(axis)];
-        }
-        
-        // Perform reduction
-        MPSGraphTensor* result_tensor;
-        switch (op_type) {
-            case ops::OpType::Sum:
-                result_tensor = [graph reductionSumWithTensor:input_tensor axes:mps_axes name:nil];
-                break;
-            case ops::OpType::Mean:
-                result_tensor = [graph meanOfTensor:input_tensor axes:mps_axes name:nil];
-                break;
-            case ops::OpType::Max:
-                result_tensor = [graph reductionMaximumWithTensor:input_tensor axes:mps_axes name:nil];
-                break;
-            case ops::OpType::Min:
-                result_tensor = [graph reductionMinimumWithTensor:input_tensor axes:mps_axes name:nil];
-                break;
-            case ops::OpType::Any: {
-                // any = max > 0 (cast to numeric first if bool)
-                MPSGraphTensor* numeric_tensor = input_tensor;
-                if (input.dtype() == DType::Bool) {
-                    numeric_tensor = [graph castTensor:input_tensor toType:MPSDataTypeInt32 name:nil];
-                }
-                result_tensor = [graph reductionMaximumWithTensor:numeric_tensor axes:mps_axes name:nil];
-                // Convert to bool: > 0
-                MPSGraphTensor* zero = [graph constantWithScalar:0.0
-                                                        dataType:result_tensor.dataType];
-                result_tensor = [graph greaterThanWithPrimaryTensor:result_tensor
-                                                   secondaryTensor:zero
-                                                              name:nil];
-                break;
+
+        // Create cache key
+        MPSGraphCacheKey cache_key = make_reduction_cache_key(
+            op_type,
+            shapeToVector(input.shape()),
+            dtypeToInt(input.dtype()),
+            dtypeToInt(input.dtype()),  // output dtype same as input for reductions
+            axes,
+            keep_dims
+        );
+
+        // Get or create cached graph
+        CachedMPSGraph* cached = MPSGraphCache::instance().get_or_create(cache_key, [&]() {
+            CachedMPSGraph entry;
+
+            // Create MPSGraph
+            MPSGraph* graph = [[MPSGraph alloc] init];
+
+            // Create input placeholder
+            MPSGraphTensor* input_placeholder = createPlaceholder(graph, input);
+
+            // Convert axes to NSArray
+            NSMutableArray<NSNumber*>* mps_axes = [NSMutableArray arrayWithCapacity:axes.size()];
+            for (int axis : axes) {
+                [mps_axes addObject:@(axis)];
             }
-            case ops::OpType::All: {
-                // all = min > 0 (cast to numeric first if bool)
-                MPSGraphTensor* numeric_tensor = input_tensor;
-                if (input.dtype() == DType::Bool) {
-                    numeric_tensor = [graph castTensor:input_tensor toType:MPSDataTypeInt32 name:nil];
+
+            // Perform reduction
+            MPSGraphTensor* result_tensor;
+            switch (op_type) {
+                case ops::OpType::Sum:
+                    result_tensor = [graph reductionSumWithTensor:input_placeholder
+                                                            axes:mps_axes
+                                                            name:nil];
+                    break;
+                case ops::OpType::Mean:
+                    result_tensor = [graph meanOfTensor:input_placeholder axes:mps_axes name:nil];
+                    break;
+                case ops::OpType::Max:
+                    result_tensor = [graph reductionMaximumWithTensor:input_placeholder
+                                                                axes:mps_axes
+                                                                name:nil];
+                    break;
+                case ops::OpType::Min:
+                    result_tensor = [graph reductionMinimumWithTensor:input_placeholder
+                                                                axes:mps_axes
+                                                                name:nil];
+                    break;
+                case ops::OpType::Any: {
+                    MPSGraphTensor* numeric_tensor = input_placeholder;
+                    if (input.dtype() == DType::Bool) {
+                        numeric_tensor = [graph castTensor:input_placeholder
+                                                    toType:MPSDataTypeInt32
+                                                      name:nil];
+                    }
+                    result_tensor = [graph reductionMaximumWithTensor:numeric_tensor
+                                                                axes:mps_axes
+                                                                name:nil];
+                    MPSGraphTensor* zero = [graph constantWithScalar:0.0
+                                                            dataType:result_tensor.dataType];
+                    result_tensor = [graph greaterThanWithPrimaryTensor:result_tensor
+                                                       secondaryTensor:zero
+                                                                  name:nil];
+                    break;
                 }
-                result_tensor = [graph reductionMinimumWithTensor:numeric_tensor axes:mps_axes name:nil];
-                // Convert to bool: > 0
-                MPSGraphTensor* zero = [graph constantWithScalar:0.0
-                                                        dataType:result_tensor.dataType];
-                result_tensor = [graph greaterThanWithPrimaryTensor:result_tensor
-                                                   secondaryTensor:zero
-                                                              name:nil];
-                break;
+                case ops::OpType::All: {
+                    MPSGraphTensor* numeric_tensor = input_placeholder;
+                    if (input.dtype() == DType::Bool) {
+                        numeric_tensor = [graph castTensor:input_placeholder
+                                                    toType:MPSDataTypeInt32
+                                                      name:nil];
+                    }
+                    result_tensor = [graph reductionMinimumWithTensor:numeric_tensor
+                                                                axes:mps_axes
+                                                                name:nil];
+                    MPSGraphTensor* zero = [graph constantWithScalar:0.0
+                                                            dataType:result_tensor.dataType];
+                    result_tensor = [graph greaterThanWithPrimaryTensor:result_tensor
+                                                       secondaryTensor:zero
+                                                                  name:nil];
+                    break;
+                }
+                case ops::OpType::Prod:
+                    result_tensor = [graph reductionProductWithTensor:input_placeholder
+                                                                axes:mps_axes
+                                                                name:nil];
+                    break;
+                default:
+                    throw RuntimeError::not_implemented("Reduction operation");
             }
-            case ops::OpType::Prod:
-                result_tensor = [graph reductionProductWithTensor:input_tensor axes:mps_axes name:nil];
-                break;
-            default:
-                throw RuntimeError::not_implemented("Reduction operation");
+
+            // Store in cache entry
+            entry.graph = (void*)CFBridgingRetain(graph);
+            entry.placeholders[0] = (__bridge void*)input_placeholder;
+            entry.num_placeholders = 1;
+            entry.output = (__bridge void*)result_tensor;
+
+            return entry;
+        });
+
+        if (!cached || !cached->is_valid()) {
+            throw DeviceError("Failed to create/retrieve cached MPSGraph for reduction");
         }
-        
-        // MPSGraph reductions produce output with reduced dimensions as size 1 (like keep_dims=true)
-        // We need to use this "apparent shape" for MPSGraphTensorData
-        
+
+        // Get cached graph components
+        MPSGraph* graph = (__bridge MPSGraph*)cached->graph;
+        MPSGraphTensor* input_placeholder = (__bridge MPSGraphTensor*)cached->placeholders[0];
+        MPSGraphTensor* result_tensor = (__bridge MPSGraphTensor*)cached->output;
+
         // Build apparent shape (always with 1s for reduced dimensions)
         NSMutableArray<NSNumber*>* apparent_shape = [NSMutableArray arrayWithCapacity:input.ndim()];
         std::set<int> axes_set(axes.begin(), axes.end());
@@ -911,11 +1006,7 @@ static Tensor executeReduction(const Tensor& input_raw, const std::vector<int>& 
                 [apparent_shape addObject:@(input.shape()[i])];
             }
         }
-        
-        // Create feeds and execute
-        MPSGraphTensorData* input_data = createTensorData(input);
-        NSDictionary* feeds = @{input_tensor: input_data};
-        
+
         // Calculate final output shape for Axiom tensor
         Shape output_shape;
         if (keep_dims) {
@@ -933,26 +1024,30 @@ static Tensor executeReduction(const Tensor& input_raw, const std::vector<int>& 
                 output_shape = {1};  // Scalar result (Axiom convention)
             }
         }
-        
-        // Create output tensor with Axiom's expected shape
+
+        // Create output tensor
         Tensor result = Tensor(output_shape, input.dtype(), Device::GPU);
         auto* result_storage = static_cast<MetalStorage*>(result.storage().get());
         id<MTLBuffer> result_buffer = (__bridge id<MTLBuffer>)result_storage->buffer();
-        
-        // Use apparent shape (with 1s) for MPSGraphTensorData to match MPSGraph output
-        NSArray<NSNumber*>* mps_output_shape = apparent_shape;
-        
+
+        // Create tensor data
+        MPSGraphTensorData* input_data = createTensorData(input);
         MPSGraphTensorData* result_data = [[MPSGraphTensorData alloc]
             initWithMTLBuffer:result_buffer
-            shape:mps_output_shape
-            dataType:getMPSDataType(input.dtype())];
-        
-        // Execute the graph using synchronous API
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:@{result_tensor: result_data}];
-        
+                        shape:apparent_shape
+                     dataType:getMPSDataType(input.dtype())];
+
+        // Create feeds and targets
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
+            input_placeholder: input_data
+        };
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
+            result_tensor: result_data
+        };
+
+        // Execute the graph asynchronously (batched execution)
+        encodeMPSGraphAsync(graph, feeds, targets);
+
         return result;
     }
 }
@@ -1228,11 +1323,8 @@ static Tensor executeMatMul(const Tensor& a_raw, const Tensor& b_raw,
             result_tensor: result_data
         };
 
-        // Execute the graph
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:targets];
+        // Execute the graph asynchronously (batched execution)
+        encodeMPSGraphAsync(graph, feeds, targets);
 
         return result;
     }
@@ -1350,13 +1442,12 @@ static Tensor executeArgMaxMin(const Tensor& input_raw, int axis, bool keep_dims
             initWithMTLBuffer:result_buffer
                         shape:getMPSShape(apparent_shape)
                      dataType:MPSDataTypeInt64];
-        
-        // Execute the graph
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:@{result_tensor: result_data}];
-        
+
+        // Execute the graph asynchronously (batched execution)
+        NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets =
+            @{result_tensor: result_data};
+        encodeMPSGraphAsync(graph, feeds, targets);
+
         return result;
     }
 }
@@ -1505,11 +1596,8 @@ private:
                 result_tensor: result_data
             };
 
-            // Execute the graph
-            [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                    feeds:feeds
-                         targetOperations:nil
-                        resultsDictionary:targets];
+            // Execute the graph asynchronously (batched execution)
+            encodeMPSGraphAsync(graph, feeds, targets);
 
             return result;
         }
@@ -1627,13 +1715,10 @@ Tensor MPSGraphMaskedFillOperation::execute_masked_fill(const Tensor& input,
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
             result_tensor: result_data
         };
-        
-        // Execute
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:targets];
-        
+
+        // Execute asynchronously (batched execution)
+        encodeMPSGraphAsync(graph, feeds, targets);
+
         return result;
     }
 }
@@ -1705,13 +1790,10 @@ Tensor MPSGraphGatherOperation::execute_gather(const Tensor& input, int dim,
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
             result_tensor: result_data
         };
-        
-        // Execute
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:targets];
-        
+
+        // Execute asynchronously (batched execution)
+        encodeMPSGraphAsync(graph, feeds, targets);
+
         return result;
     }
 }
@@ -1766,13 +1848,10 @@ Tensor MPSGraphScatterOperation::execute_scatter(const Tensor& input, int dim,
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
             result_tensor: result_data
         };
-        
-        // Execute
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:targets];
-        
+
+        // Execute asynchronously (batched execution)
+        encodeMPSGraphAsync(graph, feeds, targets);
+
         return result;
     }
 }
@@ -1849,16 +1928,71 @@ Tensor MPSGraphIndexSelectOperation::execute_index_select(const Tensor& input, i
         NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
             result_tensor: result_data
         };
-        
-        // Execute
-        [graph runWithMTLCommandQueue:(__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue()
-                                feeds:feeds
-                     targetOperations:nil
-                    resultsDictionary:targets];
-        
+
+        // Execute asynchronously (batched execution)
+        encodeMPSGraphAsync(graph, feeds, targets);
+
         return result;
     }
 }
+
+// ============================================================================
+// Cast Operation (GPU dtype conversion)
+// ============================================================================
+
+class MPSGraphCastOperation : public ops::Operation {
+public:
+    ops::OpType type() const override { return ops::OpType::Cast; }
+    std::string name() const override { return "cast"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor& lhs, const Tensor& rhs) const override {
+        (void)lhs; (void)rhs;
+        throw RuntimeError::internal("Use execute_cast for Cast operations");
+    }
+
+    Tensor execute_cast(const Tensor& input, DType target_dtype) const override {
+        if (input.dtype() == target_dtype) {
+            return input;
+        }
+
+        @autoreleasepool {
+            Tensor input_cont = ensureContiguous(input);
+
+            // Create output tensor
+            Tensor result(input.shape(), target_dtype, Device::GPU);
+
+            // Create MPSGraph
+            MPSGraph* graph = [[MPSGraph alloc] init];
+
+            // Create placeholder with input shape and dtype
+            MPSGraphTensor* input_placeholder = createPlaceholder(graph, input_cont);
+
+            // Cast to target dtype
+            MPSDataType target_mps_dtype = getMPSDataType(target_dtype);
+            MPSGraphTensor* result_tensor = [graph castTensor:input_placeholder
+                                                       toType:target_mps_dtype
+                                                         name:nil];
+
+            // Create tensor data
+            MPSGraphTensorData* input_data = createTensorData(input_cont);
+            MPSGraphTensorData* result_data = createTensorData(result);
+
+            // Set up feeds and targets
+            NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
+                input_placeholder: input_data
+            };
+            NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
+                result_tensor: result_data
+            };
+
+            // Execute asynchronously
+            encodeMPSGraphAsync(graph, feeds, targets);
+
+            return result;
+        }
+    }
+};
 
 // ============================================================================
 // Registration
@@ -2080,6 +2214,10 @@ void register_mpsgraph_operations() {
     // Product reduction
     OperationRegistry::register_operation(OpType::Prod, Device::GPU,
         std::make_unique<MPSGraphReductionOperation>(OpType::Prod, "prod"));
+
+    // Cast (type conversion) operation
+    OperationRegistry::register_operation(OpType::Cast, Device::GPU,
+        std::make_unique<MPSGraphCastOperation>());
 }
 
 } // namespace metal

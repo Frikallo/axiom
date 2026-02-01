@@ -443,6 +443,12 @@ Tensor Operation::execute_index_select(const Tensor &input, int dim,
     throw RuntimeError::not_implemented("IndexSelect operations for " + name());
 }
 
+Tensor Operation::execute_cast(const Tensor &input, DType target_dtype) const {
+    (void)input;
+    (void)target_dtype;
+    throw RuntimeError::not_implemented("Cast operations for " + name());
+}
+
 void Operation::execute_binary_inplace(Tensor &lhs, const Tensor &rhs) const {
     (void)lhs; // Suppress unused parameter warning
     (void)rhs; // Suppress unused parameter warning

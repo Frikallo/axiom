@@ -1350,9 +1350,19 @@ Tensor Tensor::astype(DType new_dtype) const {
         return *this;
     }
 
-    auto new_tensor = Tensor(shape_, new_dtype, device(), memory_order_);
+    // Use GPU cast operation if tensor is on GPU and Cast op is available
+    if (device() == Device::GPU) {
+        auto *op = ops::OperationRegistry::get_operation(ops::OpType::Cast,
+                                                         Device::GPU);
+        if (op) {
+            return op->execute_cast(*this, new_dtype);
+        }
+        // Fall through to CPU path if GPU cast not available
+    }
 
-    if (device() == Device::CPU && new_tensor.device() == Device::CPU) {
+    // CPU path or fallback
+    if (device() == Device::CPU) {
+        auto new_tensor = Tensor(shape_, new_dtype, Device::CPU, memory_order_);
         if (is_contiguous() && new_tensor.is_contiguous()) {
             type_conversion::convert_dtype(new_tensor.data(), data(), size(),
                                            new_dtype, dtype_);
@@ -1361,28 +1371,23 @@ Tensor Tensor::astype(DType new_dtype) const {
                 new_tensor.data(), data(), shape_, new_tensor.strides(),
                 strides_, new_dtype, dtype_, 0, offset_);
         }
-    } else {
-        auto cpu_source = (device() == Device::CPU) ? *this : this->cpu();
-        auto cpu_target = Tensor(shape_, new_dtype, Device::CPU, memory_order_);
-
-        if (cpu_source.is_contiguous() && cpu_target.is_contiguous()) {
-            type_conversion::convert_dtype(cpu_target.data(), cpu_source.data(),
-                                           size(), new_dtype, dtype_);
-        } else {
-            type_conversion::convert_dtype_strided(
-                cpu_target.data(), cpu_source.data(), shape_,
-                cpu_target.strides(), cpu_source.strides(), new_dtype, dtype_,
-                0, cpu_source.offset_);
-        }
-
-        if (new_tensor.device() != Device::CPU) {
-            new_tensor.storage_->copy_from(*cpu_target.storage_);
-        } else {
-            new_tensor = cpu_target;
-        }
+        return new_tensor;
     }
 
-    return new_tensor;
+    // GPU tensor but no GPU cast available - use CPU fallback
+    auto cpu_source = this->cpu();
+    auto cpu_target = Tensor(shape_, new_dtype, Device::CPU, memory_order_);
+
+    if (cpu_source.is_contiguous() && cpu_target.is_contiguous()) {
+        type_conversion::convert_dtype(cpu_target.data(), cpu_source.data(),
+                                       size(), new_dtype, dtype_);
+    } else {
+        type_conversion::convert_dtype_strided(
+            cpu_target.data(), cpu_source.data(), shape_, cpu_target.strides(),
+            cpu_source.strides(), new_dtype, dtype_, 0, cpu_source.offset_);
+    }
+
+    return cpu_target.gpu();
 }
 
 Tensor Tensor::astype_safe(DType new_dtype) const {

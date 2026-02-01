@@ -8,6 +8,13 @@ namespace axiom {
 namespace backends {
 namespace metal {
 
+// Metal buffer storage modes
+enum class MetalStorageMode {
+    Shared, // MTLResourceStorageModeShared - CPU and GPU can access
+    Private // MTLResourceStorageModePrivate - GPU-only, faster for
+            // intermediates
+};
+
 class MetalStorage : public Storage {
   private:
     void *device_; // id<MTLDevice>
@@ -15,9 +22,11 @@ class MetalStorage : public Storage {
     size_t size_bytes_;
     std::shared_ptr<Storage> base_storage_;
     size_t offset_;
+    MetalStorageMode storage_mode_;
 
   public:
-    explicit MetalStorage(void *device, size_t size_bytes);
+    explicit MetalStorage(void *device, size_t size_bytes,
+                          MetalStorageMode mode = MetalStorageMode::Shared);
     ~MetalStorage();
 
     void *data() override;
@@ -30,9 +39,14 @@ class MetalStorage : public Storage {
 
     void *buffer() const { return buffer_; } // id<MTLBuffer>
     size_t offset() const { return offset_; }
+    MetalStorageMode storage_mode() const { return storage_mode_; }
+    bool is_private() const {
+        return storage_mode_ == MetalStorageMode::Private;
+    }
 };
 
 std::unique_ptr<Storage> make_metal_storage(size_t size_bytes);
+std::unique_ptr<Storage> make_metal_storage_private(size_t size_bytes);
 bool is_metal_available();
 
 } // namespace metal
