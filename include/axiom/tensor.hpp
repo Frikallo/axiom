@@ -254,6 +254,10 @@ class Tensor {
         return matmul(other);
     } // Alias for vectors
 
+    // Linear algebra shortcuts (see axiom::linalg for full API)
+    Tensor det() const;
+    Tensor inv() const;
+
     // =========================================================================
     // Conditional and masking operations (fluent API)
     // =========================================================================

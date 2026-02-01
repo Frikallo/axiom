@@ -38,6 +38,10 @@ option(AXIOM_NATIVE_ARCH "Use -march=native for local builds (not portable)" OFF
 set(AXIOM_BLAS_BACKEND "auto" CACHE STRING "BLAS backend: auto, accelerate, openblas, native")
 set_property(CACHE AXIOM_BLAS_BACKEND PROPERTY STRINGS auto accelerate openblas native)
 
+# LAPACK backend selection (follows BLAS backend - Accelerate and OpenBLAS include LAPACK)
+set(AXIOM_LAPACK_BACKEND "auto" CACHE STRING "LAPACK backend: auto, accelerate, openblas, native")
+set_property(CACHE AXIOM_LAPACK_BACKEND PROPERTY STRINGS auto accelerate openblas native)
+
 # ============================================================================
 # Compiler Options
 # ============================================================================
@@ -196,6 +200,13 @@ set(AXIOM_SOURCES
     # BLAS backend abstraction (always included)
     src/backends/cpu/blas/blas_backend.cpp
     src/backends/cpu/blas/blas_native.cpp
+
+    # LAPACK backend abstraction (always included)
+    src/backends/cpu/lapack/lapack_backend.cpp
+    src/backends/cpu/lapack/lapack_native.cpp
+
+    # Linear algebra operations
+    src/tensor/linalg.cpp
 )
 
 # Add platform-specific BLAS backends
@@ -203,12 +214,14 @@ if(AXIOM_HAS_ACCELERATE)
     list(APPEND AXIOM_SOURCES
         src/backends/cpu/cpu_accelerate.cpp
         src/backends/cpu/blas/blas_accelerate.cpp
+        src/backends/cpu/lapack/lapack_accelerate.cpp
     )
 endif()
 
 if(AXIOM_HAS_OPENBLAS)
     list(APPEND AXIOM_SOURCES
         src/backends/cpu/blas/blas_openblas.cpp
+        src/backends/cpu/lapack/lapack_openblas.cpp
     )
 endif()
 
@@ -318,6 +331,7 @@ target_include_directories(axiom
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cpu
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cpu/lapack
 )
 
 # ============================================================================
@@ -470,6 +484,7 @@ message(STATUS "  Build examples: ${AXIOM_BUILD_EXAMPLES}")
 message(STATUS "  Build benchmarks: ${AXIOM_BUILD_BENCHMARKS}")
 message(STATUS "")
 message(STATUS "  BLAS backend: ${AXIOM_BLAS_IMPL}")
+message(STATUS "  LAPACK backend: ${AXIOM_BLAS_IMPL}")
 if(APPLE)
     if(AXIOM_HAS_METAL)
         message(STATUS "  Metal support: YES")

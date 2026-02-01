@@ -9,6 +9,7 @@
 #include "axiom/einops.hpp"
 #include "axiom/error.hpp"
 #include "axiom/io/io.hpp"
+#include "axiom/linalg.hpp"
 #include "axiom/numeric.hpp"
 #include "axiom/operations.hpp"
 #include "axiom/random.hpp"
@@ -1024,6 +1025,14 @@ Tensor Tensor::matmul(const Tensor &other, bool transpose_self,
                       bool transpose_other) const {
     return ops::matmul(*this, other, transpose_self, transpose_other);
 }
+
+// ============================================================================
+// Linear algebra shortcuts
+// ============================================================================
+
+Tensor Tensor::det() const { return linalg::det(*this); }
+
+Tensor Tensor::inv() const { return linalg::inv(*this); }
 
 // ============================================================================
 // Conditional and masking operations (fluent API)

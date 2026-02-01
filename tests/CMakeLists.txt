@@ -594,3 +594,28 @@ set_tests_properties(io_numpy
     PROPERTIES
         TIMEOUT 30
 )
+
+# Linear algebra tests
+add_executable(test_tensor_linalg
+    test_tensor_linalg.cpp
+)
+
+target_link_libraries(test_tensor_linalg
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_tensor_linalg
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME tensor_linalg
+    COMMAND test_tensor_linalg
+)
+
+set_tests_properties(tensor_linalg
+    PROPERTIES
+        TIMEOUT 60
+)
