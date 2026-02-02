@@ -867,13 +867,13 @@ int main() {
     RUN_TEST(test_vecmat);
     RUN_TEST(test_vecdot);
 
-    // Phase 2: Complex Products
+    // Complex Products
     RUN_TEST(test_tensordot_simple);
     RUN_TEST(test_tensordot_axes);
     RUN_TEST(test_kron_2d);
     RUN_TEST(test_cross_simple);
 
-    // Phase 3: Decomposition Variants
+    // Decomposition Variants
     RUN_TEST(test_svdvals);
     RUN_TEST(test_eigvals);
     RUN_TEST(test_eigvalsh);

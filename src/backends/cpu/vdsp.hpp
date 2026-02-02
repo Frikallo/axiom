@@ -3,10 +3,6 @@
 // Apple Accelerate framework wrappers for high-performance vDSP/vForce
 // operations This provides optimized implementations that take advantage of
 // Apple Silicon
-//
-// NOTE: BLAS operations (GEMM, GEMV, DOT, etc.) are handled by the BLAS backend
-// abstraction layer in blas/blas_accelerate.cpp. This file contains vDSP and
-// vForce wrappers for element-wise operations, reductions, and activations.
 
 #ifdef AXIOM_USE_ACCELERATE
 

@@ -645,7 +645,7 @@ Tensor MPSGraphTernaryOperation::execute_where(const Tensor& condition,
 // MPSGraph Operation Blocks
 // ============================================================================
 
-// Binary arithmetic operations (migrated from custom Metal kernels for fusion benefits)
+// Binary arithmetic operations
 static MPSGraphTensor* add_op(MPSGraph* graph, MPSGraphTensor* a, MPSGraphTensor* b) {
     return [graph additionWithPrimaryTensor:a secondaryTensor:b name:nil];
 }
@@ -773,7 +773,7 @@ static MPSGraphTensor* where_op(MPSGraph* graph, MPSGraphTensor* cond,
                                        name:nil];
 }
 
-// Unary math operations (migrated from custom Metal kernels)
+// Unary math operations
 static MPSGraphTensor* negate_op(MPSGraph* graph, MPSGraphTensor* a) {
     return [graph negativeWithTensor:a name:nil];
 }
@@ -865,7 +865,7 @@ static MPSGraphTensor* isfinite_op(MPSGraph* graph, MPSGraphTensor* a) {
 }
 
 // ============================================================================
-// Reduction Operations (migrated from custom Metal kernels)
+// Reduction Operations
 // ============================================================================
 
 static Tensor executeReduction(const Tensor& input_raw, const std::vector<int>& raw_axes,
@@ -2001,7 +2001,7 @@ public:
 void register_mpsgraph_operations() {
     using namespace ops;
     
-    // Binary arithmetic operations (migrated for automatic fusion benefits)
+    // Binary arithmetic operations
     OperationRegistry::register_operation(OpType::Add, Device::GPU,
         std::make_unique<MPSGraphBinaryOperation>(OpType::Add, "add", add_op));
     
@@ -2078,7 +2078,7 @@ void register_mpsgraph_operations() {
     OperationRegistry::register_operation(OpType::RightShift, Device::GPU,
         std::make_unique<MPSGraphBinaryOperation>(OpType::RightShift, "right_shift", right_shift_op));
     
-    // Unary operations (migrated from custom Metal kernels to MPSGraph)
+    // Unary operations
     OperationRegistry::register_operation(OpType::Negate, Device::GPU,
         std::make_unique<MPSGraphUnaryOperation>(OpType::Negate, "negate", negate_op));
     
@@ -2103,7 +2103,7 @@ void register_mpsgraph_operations() {
     OperationRegistry::register_operation(OpType::Tan, Device::GPU,
         std::make_unique<MPSGraphUnaryOperation>(OpType::Tan, "tan", tan_op));
     
-    // Reduction operations (migrated from custom Metal kernels to MPSGraph)
+    // Reduction operations
     OperationRegistry::register_operation(OpType::Sum, Device::GPU,
         std::make_unique<MPSGraphReductionOperation>(OpType::Sum, "sum"));
     
@@ -2122,7 +2122,7 @@ void register_mpsgraph_operations() {
     OperationRegistry::register_operation(OpType::All, Device::GPU,
         std::make_unique<MPSGraphReductionOperation>(OpType::All, "all"));
     
-    // Matrix Multiplication (migrated from custom Metal kernels to MPSGraph)
+    // Matrix Multiplication
     OperationRegistry::register_operation(OpType::MatMul, Device::GPU,
         std::make_unique<MPSGraphMatMulOperation>());
     

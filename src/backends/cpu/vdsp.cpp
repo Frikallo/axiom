@@ -11,11 +11,6 @@ namespace backends {
 namespace cpu {
 namespace accelerate {
 
-// NOTE: BLAS operations (GEMM, GEMV, DOT, AXPY, NRM2, SCAL) are handled by the
-// BLAS backend abstraction layer in blas/blas_accelerate.cpp. This file only
-// contains vDSP and vForce wrappers for element-wise operations, reductions,
-// and activations.
-
 // ============================================================================
 // vDSP Binary Operations
 // ============================================================================

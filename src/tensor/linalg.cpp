@@ -93,7 +93,7 @@ bool has_lapack() { return backends::cpu::lapack::has_lapack(); }
 const char *lapack_backend_name() { return get_lapack_backend().name(); }
 
 // ============================================================================
-// Phase 1: Core Operations
+// Core Operations
 // ============================================================================
 
 Tensor det(const Tensor &a) {
@@ -570,7 +570,7 @@ Tensor solve(const Tensor &a, const Tensor &b) {
 }
 
 // ============================================================================
-// Phase 2: Matrix Decompositions
+// Matrix Decompositions
 // ============================================================================
 
 SVDResult svd(const Tensor &a, bool full_matrices) {
@@ -1245,7 +1245,7 @@ LUResult lu(const Tensor &a) {
 }
 
 // ============================================================================
-// Phase 3: Eigendecomposition & Advanced Operations
+// Eigendecomposition & Advanced Operations
 // ============================================================================
 
 EigResult eig(const Tensor &a) {
@@ -2494,7 +2494,7 @@ Tensor vecdot(const Tensor &x1, const Tensor &x2, int axis) {
 }
 
 // ============================================================================
-// Phase 2: Complex Products
+// Complex Products
 // ============================================================================
 
 Tensor tensordot(const Tensor &a, const Tensor &b, int axes) {
@@ -2814,7 +2814,7 @@ Tensor cross(const Tensor &x1, const Tensor &x2, int axis) {
 }
 
 // ============================================================================
-// Phase 3: Decomposition Variants
+// Decomposition Variants
 // ============================================================================
 
 Tensor svdvals(const Tensor &x) {
