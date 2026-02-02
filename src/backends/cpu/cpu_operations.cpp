@@ -9,8 +9,8 @@
 #include "axiom/tensor.hpp"
 
 // SIMD optimization headers
-#include "vdsp.hpp"
 #include "simd/simd_dispatch.hpp"
+#include "vdsp.hpp"
 
 // BLAS backend abstraction
 #include "blas/blas_backend.hpp"
@@ -161,22 +161,8 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
         const T *rhs_data = rhs_converted.template typed_data<T>();
         T *result_data = result.template typed_data<T>();
 
-        // Tier 0: OpenMP for large tensors (before vectorized paths)
-        // Note: For very large tensors, parallel scalar is faster than
-        // single-threaded SIMD
-#ifdef AXIOM_USE_OPENMP
-        if (parallel::should_parallelize(total_elements)) {
-            // MSVC OpenMP requires signed loop index
-            ptrdiff_t n = static_cast<ptrdiff_t>(total_elements);
-#pragma omp parallel for schedule(static)
-            for (ptrdiff_t i = 0; i < n; ++i) {
-                result_data[i] = func_(lhs_data[i], rhs_data[i]);
-            }
-            return;
-        }
-#endif
-
         // Tier 1: Try Accelerate (vDSP) for contiguous float32/float64
+        // Accelerate is already internally parallelized and highly optimized
 #ifdef AXIOM_USE_ACCELERATE
         if constexpr (std::is_same_v<T, float>) {
             if constexpr (std::is_same_v<Func, AddFunc>) {
@@ -297,9 +283,20 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
             }
         }
 
-        // Tier 3: Scalar fallback
-        for (size_t i = 0; i < total_elements; ++i) {
-            result_data[i] = func_(lhs_data[i], rhs_data[i]);
+        // Tier 3: Scalar fallback (with OpenMP for large tensors)
+#ifdef AXIOM_USE_OPENMP
+        if (parallel::should_parallelize(total_elements)) {
+            ptrdiff_t n = static_cast<ptrdiff_t>(total_elements);
+#pragma omp parallel for schedule(static)
+            for (ptrdiff_t i = 0; i < n; ++i) {
+                result_data[i] = func_(lhs_data[i], rhs_data[i]);
+            }
+        } else
+#endif
+        {
+            for (size_t i = 0; i < total_elements; ++i) {
+                result_data[i] = func_(lhs_data[i], rhs_data[i]);
+            }
         }
     }
 }
@@ -483,11 +480,25 @@ template <typename Func>
 template <typename T>
 void CPUBinaryOperation<Func>::execute_inplace_typed(Tensor &lhs,
                                                      const Tensor &rhs) const {
-    if (lhs.shape() == rhs.shape()) {
+    if (lhs.shape() == rhs.shape() && lhs.is_contiguous() &&
+        rhs.is_contiguous()) {
         T *lhs_data = lhs.template typed_data<T>();
         const T *rhs_data = rhs.template typed_data<T>();
-        for (size_t i = 0; i < lhs.size(); ++i) {
-            lhs_data[i] = func_(lhs_data[i], rhs_data[i]);
+        size_t n_elements = lhs.size();
+
+#ifdef AXIOM_USE_OPENMP
+        if (parallel::should_parallelize(n_elements)) {
+            ptrdiff_t n = static_cast<ptrdiff_t>(n_elements);
+#pragma omp parallel for schedule(static)
+            for (ptrdiff_t i = 0; i < n; ++i) {
+                lhs_data[i] = func_(lhs_data[i], rhs_data[i]);
+            }
+        } else
+#endif
+        {
+            for (size_t i = 0; i < n_elements; ++i) {
+                lhs_data[i] = func_(lhs_data[i], rhs_data[i]);
+            }
         }
     } else {
         execute_inplace_broadcast<T>(lhs, rhs);
@@ -824,20 +835,8 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
     const T *input_data = input.template typed_data<T>();
     T *result_data = result.template typed_data<T>();
 
-    // Tier 0: OpenMP for large tensors
-#ifdef AXIOM_USE_OPENMP
-    if (input.is_contiguous() && parallel::should_parallelize(total_elements)) {
-        // MSVC OpenMP requires signed loop index
-        ptrdiff_t n = static_cast<ptrdiff_t>(total_elements);
-#pragma omp parallel for schedule(static)
-        for (ptrdiff_t i = 0; i < n; ++i) {
-            result_data[i] = func_(input_data[i]);
-        }
-        return;
-    }
-#endif
-
     // Tier 1: Try Accelerate (vForce/vDSP) for contiguous float32/float64
+    // Accelerate is already internally parallelized and highly optimized
 #ifdef AXIOM_USE_ACCELERATE
     if (input.is_contiguous()) {
         if constexpr (std::is_same_v<T, float>) {
@@ -1150,9 +1149,20 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
         }
     }
 
-    // Tier 3: Scalar fallback
-    for (size_t i = 0; i < total_elements; ++i) {
-        result_data[i] = func_(input_data[i]);
+    // Tier 3: Scalar fallback (with OpenMP for large contiguous tensors)
+#ifdef AXIOM_USE_OPENMP
+    if (input.is_contiguous() && parallel::should_parallelize(total_elements)) {
+        ptrdiff_t n = static_cast<ptrdiff_t>(total_elements);
+#pragma omp parallel for schedule(static)
+        for (ptrdiff_t i = 0; i < n; ++i) {
+            result_data[i] = func_(input_data[i]);
+        }
+    } else
+#endif
+    {
+        for (size_t i = 0; i < total_elements; ++i) {
+            result_data[i] = func_(input_data[i]);
+        }
     }
 }
 
@@ -2294,9 +2304,59 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
 
     size_t result_itemsize = result.itemsize();
     size_t cond_itemsize = condition.itemsize();
+    size_t ndim = output_shape.size();
+    DType a_dtype = a.dtype();
+    DType b_dtype = b.dtype();
+    DType cond_dtype = condition.dtype();
 
-    // Iterate over all elements
-    std::vector<size_t> coords(output_shape.size(), 0);
+    // Parallel path for large tensors
+#ifdef AXIOM_USE_OPENMP
+    if (parallel::should_parallelize(numel)) {
+        ptrdiff_t n = static_cast<ptrdiff_t>(numel);
+#pragma omp parallel for schedule(static)
+        for (ptrdiff_t i = 0; i < n; ++i) {
+            // Compute coordinates from flat index
+            size_t remaining = static_cast<size_t>(i);
+            int64_t cond_offset = 0;
+            int64_t a_offset = 0;
+            int64_t b_offset = 0;
+            int64_t result_offset = 0;
+
+            for (int d = static_cast<int>(ndim) - 1; d >= 0; --d) {
+                size_t coord = remaining % output_shape[d];
+                remaining /= output_shape[d];
+                cond_offset += static_cast<int64_t>(coord) * cond_strides[d];
+                a_offset += static_cast<int64_t>(coord) * a_strides[d];
+                b_offset += static_cast<int64_t>(coord) * b_strides[d];
+                result_offset +=
+                    static_cast<int64_t>(coord) * result_strides[d];
+            }
+
+            // Get condition value
+            bool cond_val = false;
+            if (cond_dtype == DType::Bool) {
+                cond_val =
+                    *reinterpret_cast<const bool *>(cond_data + cond_offset);
+            } else {
+                for (size_t byte = 0; byte < cond_itemsize; ++byte) {
+                    if (cond_data[cond_offset + byte] != 0) {
+                        cond_val = true;
+                        break;
+                    }
+                }
+            }
+
+            T value = cond_val
+                          ? get_tensor_value_at<T>(a_data, a_offset, a_dtype)
+                          : get_tensor_value_at<T>(b_data, b_offset, b_dtype);
+            result_data[result_offset / result_itemsize] = value;
+        }
+        return result;
+    }
+#endif
+
+    // Sequential fallback with coordinate tracking
+    std::vector<size_t> coords(ndim, 0);
 
     for (size_t i = 0; i < numel; ++i) {
         // Compute byte offsets for each input (signed for negative stride
@@ -2306,7 +2366,7 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
         int64_t b_offset = 0;
         int64_t result_offset = 0;
 
-        for (size_t d = 0; d < output_shape.size(); ++d) {
+        for (size_t d = 0; d < ndim; ++d) {
             cond_offset += static_cast<int64_t>(coords[d]) * cond_strides[d];
             a_offset += static_cast<int64_t>(coords[d]) * a_strides[d];
             b_offset += static_cast<int64_t>(coords[d]) * b_strides[d];
@@ -2316,7 +2376,7 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
 
         // Get condition value (handle different condition dtypes)
         bool cond_val = false;
-        if (condition.dtype() == DType::Bool) {
+        if (cond_dtype == DType::Bool) {
             cond_val = *reinterpret_cast<const bool *>(cond_data + cond_offset);
         } else {
             // For numeric types, non-zero is true
@@ -2330,13 +2390,12 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
         }
 
         // Select from a or b based on condition, with proper type conversion
-        T value = cond_val
-                      ? get_tensor_value_at<T>(a_data, a_offset, a.dtype())
-                      : get_tensor_value_at<T>(b_data, b_offset, b.dtype());
+        T value = cond_val ? get_tensor_value_at<T>(a_data, a_offset, a_dtype)
+                           : get_tensor_value_at<T>(b_data, b_offset, b_dtype);
         result_data[result_offset / result_itemsize] = value;
 
         // Increment coordinates
-        for (int d = static_cast<int>(output_shape.size()) - 1; d >= 0; --d) {
+        for (int d = static_cast<int>(ndim) - 1; d >= 0; --d) {
             coords[d]++;
             if (coords[d] < output_shape[d])
                 break;
@@ -2412,10 +2471,24 @@ Tensor CPUMaskedFillOperation::execute_masked_fill_typed(
         mask.is_contiguous()) {
         T *result_data = result.typed_data<T>();
         const uint8_t *mask_data = mask.typed_data<uint8_t>();
+        size_t n_elements = input.size();
 
-        for (size_t i = 0; i < input.size(); ++i) {
-            if (mask_data[i]) {
-                result_data[i] = fill_value;
+#ifdef AXIOM_USE_OPENMP
+        if (parallel::should_parallelize(n_elements)) {
+            ptrdiff_t n = static_cast<ptrdiff_t>(n_elements);
+#pragma omp parallel for schedule(static)
+            for (ptrdiff_t i = 0; i < n; ++i) {
+                if (mask_data[i]) {
+                    result_data[i] = fill_value;
+                }
+            }
+        } else
+#endif
+        {
+            for (size_t i = 0; i < n_elements; ++i) {
+                if (mask_data[i]) {
+                    result_data[i] = fill_value;
+                }
             }
         }
         return result;
@@ -2428,22 +2501,45 @@ Tensor CPUMaskedFillOperation::execute_masked_fill_typed(
 
     T *result_data = result.typed_data<T>();
     size_t total_size = ShapeUtils::size(result_shape);
+    const auto &mask_strides = mask_expanded.strides();
+    const auto &input_strides = input_expanded.strides();
+    const void *mask_ptr = mask_expanded.data();
+    const void *input_ptr = input_expanded.data();
+
+#ifdef AXIOM_USE_OPENMP
+    if (parallel::should_parallelize(total_size)) {
+        ptrdiff_t n = static_cast<ptrdiff_t>(total_size);
+#pragma omp parallel for schedule(static)
+        for (ptrdiff_t i = 0; i < n; ++i) {
+            auto coords =
+                ShapeUtils::unravel_index(static_cast<size_t>(i), result_shape);
+            size_t mask_offset = ShapeUtils::linear_index(coords, mask_strides);
+            bool mask_val =
+                *reinterpret_cast<const uint8_t *>(
+                    static_cast<const uint8_t *>(mask_ptr) + mask_offset) != 0;
+            size_t input_offset =
+                ShapeUtils::linear_index(coords, input_strides);
+            T input_val = *reinterpret_cast<const T *>(
+                static_cast<const uint8_t *>(input_ptr) + input_offset);
+            result_data[i] = mask_val ? fill_value : input_val;
+        }
+        return result;
+    }
+#endif
 
     for (size_t i = 0; i < total_size; ++i) {
         auto coords = ShapeUtils::unravel_index(i, result_shape);
 
         // Get mask value
-        size_t mask_offset =
-            ShapeUtils::linear_index(coords, mask_expanded.strides());
-        bool mask_val = *reinterpret_cast<const uint8_t *>(
-                            static_cast<const uint8_t *>(mask_expanded.data()) +
-                            mask_offset) != 0;
+        size_t mask_offset = ShapeUtils::linear_index(coords, mask_strides);
+        bool mask_val =
+            *reinterpret_cast<const uint8_t *>(
+                static_cast<const uint8_t *>(mask_ptr) + mask_offset) != 0;
 
         // Get input value
-        size_t input_offset =
-            ShapeUtils::linear_index(coords, input_expanded.strides());
+        size_t input_offset = ShapeUtils::linear_index(coords, input_strides);
         T input_val = *reinterpret_cast<const T *>(
-            static_cast<const uint8_t *>(input_expanded.data()) + input_offset);
+            static_cast<const uint8_t *>(input_ptr) + input_offset);
 
         result_data[i] = mask_val ? fill_value : input_val;
     }
@@ -2605,6 +2701,29 @@ Tensor CPUGatherOperation::execute_gather_typed(const Tensor &input, int dim,
     const auto &input_shape = input.shape();
     const auto &indices_shape = indices.shape();
     const auto &input_strides = input.strides();
+    const void *input_ptr = input.data();
+    int64_t dim_size = static_cast<int64_t>(input_shape[norm_dim]);
+
+#ifdef AXIOM_USE_OPENMP
+    if (parallel::should_parallelize(total_size)) {
+        ptrdiff_t n = static_cast<ptrdiff_t>(total_size);
+#pragma omp parallel for schedule(static)
+        for (ptrdiff_t i = 0; i < n; ++i) {
+            auto coords = ShapeUtils::unravel_index(static_cast<size_t>(i),
+                                                    indices_shape);
+            int64_t idx = indices_data[i];
+            if (idx < 0) {
+                idx += dim_size;
+            }
+            coords[norm_dim] = static_cast<size_t>(idx);
+            size_t input_offset =
+                ShapeUtils::linear_index(coords, input_strides);
+            result_data[i] = *reinterpret_cast<const T *>(
+                static_cast<const uint8_t *>(input_ptr) + input_offset);
+        }
+        return result;
+    }
+#endif
 
     for (size_t i = 0; i < total_size; ++i) {
         auto coords = ShapeUtils::unravel_index(i, indices_shape);
@@ -2614,18 +2733,16 @@ Tensor CPUGatherOperation::execute_gather_typed(const Tensor &input, int dim,
 
         // Handle negative indices
         if (idx < 0) {
-            idx += static_cast<int64_t>(input_shape[norm_dim]);
+            idx += dim_size;
         }
 
         // Build input coordinates: replace dim with idx
-        std::vector<size_t> input_coords = coords;
-        input_coords[norm_dim] = static_cast<size_t>(idx);
+        coords[norm_dim] = static_cast<size_t>(idx);
 
         // Get the value from input
-        size_t input_offset =
-            ShapeUtils::linear_index(input_coords, input_strides);
+        size_t input_offset = ShapeUtils::linear_index(coords, input_strides);
         result_data[i] = *reinterpret_cast<const T *>(
-            static_cast<const uint8_t *>(input.data()) + input_offset);
+            static_cast<const uint8_t *>(input_ptr) + input_offset);
     }
 
     return result;
@@ -2779,9 +2896,32 @@ Tensor CPUIndexSelectOperation::execute_index_select_typed(
 
     const auto &input_shape = input.shape();
     const auto &input_strides = input.strides();
-    const auto &result_strides = result.strides();
+    const void *input_ptr = input.data();
+    int64_t dim_size = static_cast<int64_t>(input_shape[norm_dim]);
 
     size_t total_size = result.size();
+
+#ifdef AXIOM_USE_OPENMP
+    if (parallel::should_parallelize(total_size)) {
+        ptrdiff_t n = static_cast<ptrdiff_t>(total_size);
+#pragma omp parallel for schedule(static)
+        for (ptrdiff_t i = 0; i < n; ++i) {
+            auto out_coords =
+                ShapeUtils::unravel_index(static_cast<size_t>(i), output_shape);
+            size_t idx_pos = out_coords[norm_dim];
+            int64_t idx = indices_data[idx_pos];
+            if (idx < 0) {
+                idx += dim_size;
+            }
+            out_coords[norm_dim] = static_cast<size_t>(idx);
+            size_t input_offset =
+                ShapeUtils::linear_index(out_coords, input_strides);
+            result_data[i] = *reinterpret_cast<const T *>(
+                static_cast<const uint8_t *>(input_ptr) + input_offset);
+        }
+        return result;
+    }
+#endif
 
     for (size_t i = 0; i < total_size; ++i) {
         auto out_coords = ShapeUtils::unravel_index(i, output_shape);
@@ -2792,18 +2932,17 @@ Tensor CPUIndexSelectOperation::execute_index_select_typed(
 
         // Handle negative indices
         if (idx < 0) {
-            idx += static_cast<int64_t>(input_shape[norm_dim]);
+            idx += dim_size;
         }
 
         // Build input coordinates
-        std::vector<size_t> input_coords = out_coords;
-        input_coords[norm_dim] = static_cast<size_t>(idx);
+        out_coords[norm_dim] = static_cast<size_t>(idx);
 
         // Get value from input
         size_t input_offset =
-            ShapeUtils::linear_index(input_coords, input_strides);
+            ShapeUtils::linear_index(out_coords, input_strides);
         result_data[i] = *reinterpret_cast<const T *>(
-            static_cast<const uint8_t *>(input.data()) + input_offset);
+            static_cast<const uint8_t *>(input_ptr) + input_offset);
     }
 
     return result;
@@ -2901,6 +3040,52 @@ Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor &input,
 #endif // AXIOM_USE_ACCELERATE
 
     // Process each softmax independently (general case)
+    // Each (outer, inner) pair is independent and can be parallelized
+    size_t total_softmax_ops = outer_size * inner_size;
+    bool is_log = is_log_;
+
+#ifdef AXIOM_USE_OPENMP
+    if (parallel::should_parallelize(total_softmax_ops * axis_size)) {
+        ptrdiff_t n = static_cast<ptrdiff_t>(total_softmax_ops);
+#pragma omp parallel for schedule(static)
+        for (ptrdiff_t flat_idx = 0; flat_idx < n; ++flat_idx) {
+            size_t outer = static_cast<size_t>(flat_idx) / inner_size;
+            size_t inner = static_cast<size_t>(flat_idx) % inner_size;
+
+            // Find max for numerical stability
+            T max_val = std::numeric_limits<T>::lowest();
+            for (size_t k = 0; k < axis_size; ++k) {
+                size_t idx = (outer * axis_size + k) * inner_size + inner;
+                max_val = std::max(max_val, input_data[idx]);
+            }
+
+            // Compute exp(x - max) and sum
+            T sum_exp = T(0);
+            for (size_t k = 0; k < axis_size; ++k) {
+                size_t idx = (outer * axis_size + k) * inner_size + inner;
+                T exp_val = std::exp(input_data[idx] - max_val);
+                result_data[idx] = exp_val;
+                sum_exp += exp_val;
+            }
+
+            // Normalize
+            if (is_log) {
+                T log_sum = std::log(sum_exp);
+                for (size_t k = 0; k < axis_size; ++k) {
+                    size_t idx = (outer * axis_size + k) * inner_size + inner;
+                    result_data[idx] = input_data[idx] - max_val - log_sum;
+                }
+            } else {
+                for (size_t k = 0; k < axis_size; ++k) {
+                    size_t idx = (outer * axis_size + k) * inner_size + inner;
+                    result_data[idx] /= sum_exp;
+                }
+            }
+        }
+        return result;
+    }
+#endif
+
     for (size_t outer = 0; outer < outer_size; ++outer) {
         for (size_t inner = 0; inner < inner_size; ++inner) {
             // Find max for numerical stability
@@ -2920,7 +3105,7 @@ Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor &input,
             }
 
             // Normalize
-            if (is_log_) {
+            if (is_log) {
                 // log_softmax = x - max - log(sum_exp)
                 T log_sum = std::log(sum_exp);
                 for (size_t k = 0; k < axis_size; ++k) {
