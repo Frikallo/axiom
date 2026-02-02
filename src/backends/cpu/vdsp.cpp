@@ -2,9 +2,6 @@
 
 #ifdef AXIOM_USE_ACCELERATE
 
-// Use the new Accelerate LAPACK interface
-#define ACCELERATE_NEW_LAPACK
-
 #include <algorithm>
 #include <cmath>
 #include <vector>

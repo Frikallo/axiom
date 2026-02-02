@@ -30,6 +30,9 @@ struct SimpleAxis {
 
 struct GroupedAxes {
     std::vector<std::string> axes;
+    // Map from axis name to anonymous size (for numeric literals in groups)
+    // e.g., "(h1 2)" has anonymous_sizes["__anon_0"] = 2
+    std::map<std::string, size_t> anonymous_sizes;
 };
 
 struct UnityAxis {

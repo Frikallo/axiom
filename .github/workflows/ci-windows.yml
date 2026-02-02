@@ -1,0 +1,55 @@
+name: Windows
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  BUILD_TYPE: Release
+  AXIOM_SKIP_GPU_TESTS: "1"
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Python Dependencies
+      run: pip install numpy
+
+    - name: Configure CMake
+      run: |
+        cmake -B build `
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+          -DAXIOM_BUILD_TESTS=ON `
+          -DAXIOM_BUILD_EXAMPLES=ON `
+          -DAXIOM_BLAS_BACKEND=native
+
+    - name: Build
+      run: cmake --build build --config ${{ env.BUILD_TYPE }}
+
+    - name: Run Tests
+      working-directory: build
+      shell: pwsh
+      run: |
+        $env:PATH = "${{ github.workspace }}\build\Release;$env:PATH"
+        ctest -C ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+
+    - name: Upload Test Results
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-windows
+        path: build/Testing/

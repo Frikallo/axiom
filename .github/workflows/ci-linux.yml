@@ -1,0 +1,57 @@
+name: Linux
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  BUILD_TYPE: Release
+  AXIOM_SKIP_GPU_TESTS: "1"
+
+jobs:
+  build:
+    name: Build & Test (${{ matrix.blas }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        blas: [openblas, native]
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build python3-numpy
+        if [ "${{ matrix.blas }}" = "openblas" ]; then
+          sudo apt-get install -y libopenblas-dev liblapacke-dev
+        fi
+
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DAXIOM_BUILD_TESTS=ON \
+          -DAXIOM_BUILD_EXAMPLES=ON \
+          -DAXIOM_BLAS_BACKEND=${{ matrix.blas }}
+
+    - name: Build
+      run: cmake --build build --config ${{ env.BUILD_TYPE }}
+
+    - name: Run Tests
+      working-directory: build
+      run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+
+    - name: Upload Test Results
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-linux-${{ matrix.blas }}
+        path: build/Testing/

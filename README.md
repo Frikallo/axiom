@@ -1,6 +1,9 @@
 **Axiom** is an open-source, high-performance C++ tensor library that brings NumPy and PyTorch simplicity to native code. With state-of-the-art SIMD vectorization, BLAS acceleration, and Metal GPU support, Axiom delivers HPC-grade performance while maintaining an intuitive API that feels natural to Python developers.
 
-[![CI](https://github.com/frikallo/axiom/actions/workflows/ci.yml/badge.svg)](https://github.com/frikallo/axiom/actions/workflows/ci.yml)
+[![macOS](https://github.com/frikallo/axiom/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/frikallo/axiom/actions/workflows/ci-macos.yml)
+[![Linux](https://github.com/frikallo/axiom/actions/workflows/ci-linux.yml/badge.svg)](https://github.com/frikallo/axiom/actions/workflows/ci-linux.yml)
+[![Windows](https://github.com/frikallo/axiom/actions/workflows/ci-windows.yml/badge.svg)](https://github.com/frikallo/axiom/actions/workflows/ci-windows.yml)
+[![Code Quality](https://github.com/frikallo/axiom/actions/workflows/ci-code-quality.yml/badge.svg)](https://github.com/frikallo/axiom/actions/workflows/ci-code-quality.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++20](https://img.shields.io/badge/C++-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 
@@ -117,8 +120,6 @@ target_link_libraries(your_target Axiom::axiom)
 using namespace axiom;
 
 int main() {
-    ops::OperationRegistry::initialize_builtin_operations();
-
     // Tensor creation - just like NumPy
     auto a = Tensor::zeros({3, 4});
     auto b = Tensor::ones({4, 5});

@@ -41,16 +41,42 @@ void EinopsExpression::parse_patterns() {
     parsed_output_ = parse_single_pattern(output_pattern_);
 
     // Validation: check that all axes in output exist in input (except for
-    // repeat operations)
+    // repeat operations and special axes like unity/ellipsis)
     auto input_axes = get_pattern_axes(parsed_input_);
     auto output_axes = get_pattern_axes(parsed_output_);
 
     std::set<std::string> input_set(input_axes.begin(), input_axes.end());
     std::set<std::string> output_set(output_axes.begin(), output_axes.end());
 
+    // Collect anonymous sizes from parsed patterns
+    std::set<std::string> known_anonymous;
+    for (const auto &element : parsed_input_.elements) {
+        if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            for (const auto &[name, size] : group.anonymous_sizes) {
+                known_anonymous.insert(name);
+            }
+        }
+    }
+    for (const auto &element : parsed_output_.elements) {
+        if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            for (const auto &[name, size] : group.anonymous_sizes) {
+                known_anonymous.insert(name);
+            }
+        }
+    }
+
     for (const auto &axis : output_set) {
+        // Skip special internal markers
+        if (axis == "__unity__" || axis == "__ellipsis__" ||
+            axis.find("__anon_") == 0 || axis.find("__ellipsis_") == 0) {
+            continue;
+        }
+        // Check if axis is known
         if (input_set.find(axis) == input_set.end() &&
-            axis_sizes_.find(axis) == axis_sizes_.end()) {
+            axis_sizes_.find(axis) == axis_sizes_.end() &&
+            known_anonymous.find(axis) == known_anonymous.end()) {
             throw EinopsParseError(
                 "Axis '" + axis +
                 "' appears in output but not in input and no size specified");
@@ -131,12 +157,36 @@ EinopsExpression::parse_axis_element(const std::string &token) const {
             return UnityAxis{};
         }
 
-        // Grouped axes
+        // Grouped axes - may contain named axes and anonymous numeric sizes
         std::vector<std::string> axes;
+        std::map<std::string, size_t> anonymous_sizes;
         std::istringstream iss(inner);
         std::string axis;
+        int anon_counter = 0;
+
         while (iss >> axis) {
-            if (!axis.empty()) {
+            if (axis.empty()) {
+                continue;
+            }
+
+            // Check if this is a numeric literal (anonymous axis)
+            bool is_numeric = true;
+            for (char c : axis) {
+                if (!std::isdigit(static_cast<unsigned char>(c))) {
+                    is_numeric = false;
+                    break;
+                }
+            }
+
+            if (is_numeric) {
+                // Anonymous axis with fixed size
+                size_t size = std::stoull(axis);
+                std::string anon_name =
+                    "__anon_" + std::to_string(anon_counter++);
+                axes.push_back(anon_name);
+                anonymous_sizes[anon_name] = size;
+            } else {
+                // Named axis
                 axes.push_back(axis);
             }
         }
@@ -145,11 +195,33 @@ EinopsExpression::parse_axis_element(const std::string &token) const {
             throw EinopsParseError("Empty group in pattern: " + token);
         }
 
-        return GroupedAxes{axes};
+        return GroupedAxes{axes, anonymous_sizes};
     } else {
-        // Simple axis
+        // Simple axis or numeric literal at top level
         if (token.empty()) {
             throw EinopsParseError("Empty axis name");
+        }
+
+        // Check if this is a numeric literal (represents unity-like axis)
+        bool is_numeric = true;
+        for (char c : token) {
+            if (!std::isdigit(static_cast<unsigned char>(c))) {
+                is_numeric = false;
+                break;
+            }
+        }
+
+        if (is_numeric) {
+            // Numeric literal at top level - treat as unity if 1, error
+            // otherwise
+            size_t size = std::stoull(token);
+            if (size == 1) {
+                return UnityAxis{};
+            } else {
+                throw EinopsParseError(
+                    "Numeric literal '" + token +
+                    "' not allowed at top level (only '1' or inside groups)");
+            }
         }
 
         // Validate axis name (letters/numbers/underscore)
@@ -171,6 +243,7 @@ EinopsExpression::get_pattern_axes(const ParsedPattern &pattern) const {
         } else if (std::holds_alternative<GroupedAxes>(element)) {
             const auto &group = std::get<GroupedAxes>(element);
             for (const auto &axis : group.axes) {
+                // Include all axes including anonymous ones
                 axes.push_back(axis);
             }
         } else if (std::holds_alternative<UnityAxis>(element)) {
@@ -238,6 +311,25 @@ std::map<std::string, size_t>
 EinopsExpression::infer_axis_sizes(const Tensor &tensor) const {
     std::map<std::string, size_t> sizes =
         axis_sizes_; // Start with provided sizes
+
+    // Add anonymous sizes from parsed patterns
+    for (const auto &element : parsed_input_.elements) {
+        if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            for (const auto &[name, size] : group.anonymous_sizes) {
+                sizes[name] = size;
+            }
+        }
+    }
+    for (const auto &element : parsed_output_.elements) {
+        if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            for (const auto &[name, size] : group.anonymous_sizes) {
+                sizes[name] = size;
+            }
+        }
+    }
+
     const auto &shape = tensor.shape();
 
     // First pass: find ellipsis and calculate how many dimensions it should
@@ -471,7 +563,7 @@ Tensor reduce(const Tensor &tensor, const std::string &pattern,
               const std::string &reduction,
               const std::map<std::string, size_t> &axis_sizes) {
     // Parse the reduction type
-    enum class ReductionOp { Sum, Mean, Max, Min, Prod };
+    enum class ReductionOp { Sum, Mean, Max, Min, Prod, Any, All };
     ReductionOp red_op;
 
     if (reduction == "sum") {
@@ -483,136 +575,273 @@ Tensor reduce(const Tensor &tensor, const std::string &pattern,
     } else if (reduction == "min") {
         red_op = ReductionOp::Min;
     } else if (reduction == "prod") {
-        throw EinopsError("'prod' reduction not yet implemented");
+        red_op = ReductionOp::Prod;
+    } else if (reduction == "any") {
+        red_op = ReductionOp::Any;
+    } else if (reduction == "all") {
+        red_op = ReductionOp::All;
     } else {
-        throw EinopsError("Unknown reduction: " + reduction +
-                          ". Use 'sum', 'mean', 'max', 'min', or 'prod'");
+        throw EinopsError(
+            "Unknown reduction: " + reduction +
+            ". Use 'sum', 'mean', 'max', 'min', 'prod', 'any', or 'all'");
     }
 
     // Parse the einops expression
     EinopsExpression expr(pattern, axis_sizes);
 
-    // Get the input and output axes
-    auto input_axes = expr.get_pattern_axes(
-        expr.parse_single_pattern(pattern.substr(0, pattern.find("->"))));
-    auto output_axes = expr.get_pattern_axes(
-        expr.parse_single_pattern(pattern.substr(pattern.find("->") + 2)));
+    // Split pattern for parsing
+    size_t arrow_pos = pattern.find("->");
+    if (arrow_pos == std::string::npos) {
+        throw EinopsParseError(
+            "Pattern must contain '->' to separate input and output: " +
+            pattern);
+    }
 
-    // First, rearrange if there are any grouped axes to expand
-    Tensor working = tensor;
+    std::string input_pattern_str = pattern.substr(0, arrow_pos);
+    std::string output_pattern_str = pattern.substr(arrow_pos + 2);
+
+    // Trim whitespace
+    input_pattern_str.erase(0, input_pattern_str.find_first_not_of(" \t"));
+    input_pattern_str.erase(input_pattern_str.find_last_not_of(" \t") + 1);
+    output_pattern_str.erase(0, output_pattern_str.find_first_not_of(" \t"));
+    output_pattern_str.erase(output_pattern_str.find_last_not_of(" \t") + 1);
+
+    // Parse patterns
+    auto parsed_input = expr.parse_single_pattern(input_pattern_str);
+    auto parsed_output = expr.parse_single_pattern(output_pattern_str);
 
     // Compute axis sizes from tensor
     auto sizes = expr.infer_axis_sizes(tensor);
 
-    // Check if input has grouped axes that need expanding
-    size_t arrow_pos = pattern.find("->");
-    std::string input_pattern = pattern.substr(0, arrow_pos);
-    input_pattern.erase(0, input_pattern.find_first_not_of(" \t"));
-    input_pattern.erase(input_pattern.find_last_not_of(" \t") + 1);
+    // Step 1: Expand grouped axes in input to individual dimensions
+    // Build the expanded shape and track axis names
+    Tensor working = tensor;
+    std::vector<std::string> expanded_axes;
+    Shape expanded_shape;
 
-    bool has_groups = input_pattern.find('(') != std::string::npos;
-
-    if (has_groups) {
-        // Need to first expand grouped axes
-        // Build an intermediate pattern that expands all groups
-        std::string expanded_input;
-        std::string token;
-        int paren_depth = 0;
-
-        for (char c : input_pattern) {
-            if (c == '(') {
-                paren_depth++;
-                if (paren_depth == 1)
-                    continue; // Skip opening paren
-            } else if (c == ')') {
-                paren_depth--;
-                if (paren_depth == 0)
-                    continue; // Skip closing paren
+    size_t dim_idx = 0;
+    for (const auto &element : parsed_input.elements) {
+        if (std::holds_alternative<SimpleAxis>(element)) {
+            const auto &axis = std::get<SimpleAxis>(element);
+            expanded_axes.push_back(axis.name);
+            expanded_shape.push_back(sizes.at(axis.name));
+            dim_idx++;
+        } else if (std::holds_alternative<UnityAxis>(element)) {
+            expanded_axes.push_back("__unity__");
+            expanded_shape.push_back(1);
+            dim_idx++;
+        } else if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            for (const auto &axis : group.axes) {
+                expanded_axes.push_back(axis);
+                expanded_shape.push_back(sizes.at(axis));
             }
-            expanded_input += c;
-        }
-
-        // Rearrange to expanded form
-        std::string expand_pattern = input_pattern + " -> " + expanded_input;
-        working = rearrange(working, expand_pattern, axis_sizes);
-    }
-
-    // Now figure out which axes to reduce
-    // Output axes that are NOT in input axes need to be reduced
-    std::set<std::string> input_set(input_axes.begin(), input_axes.end());
-    std::set<std::string> output_set(output_axes.begin(), output_axes.end());
-
-    // Find axes that are in input but not in output - these get reduced
-    std::vector<int> reduce_axes;
-    for (size_t i = 0; i < input_axes.size(); ++i) {
-        const auto &axis = input_axes[i];
-        if (axis != "__unity__" && axis != "__ellipsis__" &&
-            output_set.find(axis) == output_set.end()) {
-            reduce_axes.push_back(static_cast<int>(i));
-        }
-    }
-
-    // Apply reduction
-    if (!reduce_axes.empty()) {
-        // Sort axes in descending order to reduce from back to front
-        std::sort(reduce_axes.begin(), reduce_axes.end(), std::greater<int>());
-
-        for (int axis : reduce_axes) {
-            switch (red_op) {
-            case ReductionOp::Sum:
-                working = ops::sum(working, {axis}, false);
-                break;
-            case ReductionOp::Mean:
-                working = ops::mean(working, {axis}, false);
-                break;
-            case ReductionOp::Max:
-                working = ops::max(working, {axis}, false);
-                break;
-            case ReductionOp::Min:
-                working = ops::min(working, {axis}, false);
-                break;
-            case ReductionOp::Prod:
-                // Not implemented
-                break;
+            dim_idx++;
+        } else if (std::holds_alternative<EllipsisAxis>(element)) {
+            // Handle ellipsis - copy remaining dimensions
+            size_t explicit_dims = 0;
+            for (const auto &e : parsed_input.elements) {
+                if (!std::holds_alternative<EllipsisAxis>(e)) {
+                    explicit_dims++;
+                }
             }
-        }
-    }
-
-    // Finally, rearrange to output shape if needed
-    // Build the final output axes list
-    std::vector<std::string> remaining_input;
-    for (const auto &axis : input_axes) {
-        if (axis != "__unity__" && axis != "__ellipsis__" &&
-            output_set.find(axis) != output_set.end()) {
-            remaining_input.push_back(axis);
-        }
-    }
-
-    // Check if we need to reorder
-    bool needs_reorder = false;
-    if (remaining_input.size() == output_axes.size()) {
-        for (size_t i = 0; i < remaining_input.size(); ++i) {
-            if (remaining_input[i] != output_axes[i]) {
-                needs_reorder = true;
-                break;
+            size_t ellipsis_dims = tensor.ndim() - explicit_dims;
+            for (size_t i = 0; i < ellipsis_dims; ++i) {
+                std::string axis_name =
+                    "__ellipsis_" + std::to_string(i) + "__";
+                expanded_axes.push_back(axis_name);
+                expanded_shape.push_back(tensor.shape()[dim_idx + i]);
             }
+            dim_idx += ellipsis_dims;
         }
     }
 
-    if (needs_reorder && working.ndim() > 1) {
-        // Build transpose order
-        std::vector<int> transpose_order;
-        for (const auto &out_axis : output_axes) {
-            for (size_t i = 0; i < remaining_input.size(); ++i) {
-                if (remaining_input[i] == out_axis) {
-                    transpose_order.push_back(static_cast<int>(i));
-                    break;
+    // Reshape to expanded form if needed
+    if (expanded_shape != working.shape()) {
+        working = working.reshape(expanded_shape);
+    }
+
+    // Step 2: Build output axis list and identify which axes to reduce
+    std::vector<std::string> output_axes;
+    std::vector<bool> output_is_unity; // Track which output dims are unity
+
+    for (const auto &element : parsed_output.elements) {
+        if (std::holds_alternative<SimpleAxis>(element)) {
+            const auto &axis = std::get<SimpleAxis>(element);
+            output_axes.push_back(axis.name);
+            output_is_unity.push_back(false);
+        } else if (std::holds_alternative<UnityAxis>(element)) {
+            output_axes.push_back("__unity__");
+            output_is_unity.push_back(true);
+        } else if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            for (const auto &axis : group.axes) {
+                output_axes.push_back(axis);
+                output_is_unity.push_back(false);
+            }
+        } else if (std::holds_alternative<EllipsisAxis>(element)) {
+            // Copy ellipsis axes from input
+            for (const auto &axis : expanded_axes) {
+                if (axis.find("__ellipsis_") == 0) {
+                    output_axes.push_back(axis);
+                    output_is_unity.push_back(false);
                 }
             }
         }
-        if (transpose_order.size() == working.ndim()) {
+    }
+
+    // Step 3: Find axes to reduce (in input but not in output, excluding unity)
+    std::set<std::string> output_set;
+    for (const auto &axis : output_axes) {
+        if (axis != "__unity__") {
+            output_set.insert(axis);
+        }
+    }
+
+    std::vector<int> reduce_dims;
+    std::vector<std::string> axes_after_reduce;
+
+    for (size_t i = 0; i < expanded_axes.size(); ++i) {
+        const auto &axis = expanded_axes[i];
+        bool is_anonymous = axis.find("__anon_") == 0;
+        bool is_in_output = output_set.find(axis) != output_set.end();
+
+        if (!is_in_output && axis != "__unity__") {
+            // This axis should be reduced
+            reduce_dims.push_back(static_cast<int>(i));
+        } else if (!is_anonymous || is_in_output) {
+            axes_after_reduce.push_back(axis);
+        }
+    }
+
+    // Step 4: Apply reduction (reduce all axes at once for efficiency)
+    if (!reduce_dims.empty()) {
+        // Sort axes in ascending order for multi-axis reduction
+        std::sort(reduce_dims.begin(), reduce_dims.end());
+
+        switch (red_op) {
+        case ReductionOp::Sum:
+            working = ops::sum(working, reduce_dims, false);
+            break;
+        case ReductionOp::Mean:
+            working = ops::mean(working, reduce_dims, false);
+            break;
+        case ReductionOp::Max:
+            working = ops::max(working, reduce_dims, false);
+            break;
+        case ReductionOp::Min:
+            working = ops::min(working, reduce_dims, false);
+            break;
+        case ReductionOp::Prod:
+            working = ops::prod(working, reduce_dims, false);
+            break;
+        case ReductionOp::Any:
+            working = ops::any(working, reduce_dims, false);
+            break;
+        case ReductionOp::All:
+            working = ops::all(working, reduce_dims, false);
+            break;
+        }
+    }
+
+    // Step 5: Transpose if axes are reordered in output
+    // Build mapping from axis name to current position
+    std::map<std::string, int> axis_to_pos;
+    for (size_t i = 0; i < axes_after_reduce.size(); ++i) {
+        axis_to_pos[axes_after_reduce[i]] = static_cast<int>(i);
+    }
+
+    // Build transpose order based on output pattern (excluding unity axes)
+    std::vector<int> transpose_order;
+    std::vector<std::string> non_unity_output;
+    for (size_t i = 0; i < output_axes.size(); ++i) {
+        if (!output_is_unity[i]) {
+            non_unity_output.push_back(output_axes[i]);
+        }
+    }
+
+    bool needs_transpose = false;
+    for (const auto &axis : non_unity_output) {
+        auto it = axis_to_pos.find(axis);
+        if (it != axis_to_pos.end()) {
+            transpose_order.push_back(it->second);
+        }
+    }
+
+    if (transpose_order.size() == working.ndim() && working.ndim() > 1) {
+        // Check if transpose is actually needed
+        for (size_t i = 0; i < transpose_order.size(); ++i) {
+            if (transpose_order[i] != static_cast<int>(i)) {
+                needs_transpose = true;
+                break;
+            }
+        }
+        if (needs_transpose) {
             working = working.transpose(transpose_order);
         }
+    }
+
+    // Step 6: Add unity dimensions where needed in output
+    // Count unity axes and their positions
+    std::vector<size_t> unity_positions;
+    for (size_t i = 0; i < output_is_unity.size(); ++i) {
+        if (output_is_unity[i]) {
+            unity_positions.push_back(i);
+        }
+    }
+
+    if (!unity_positions.empty()) {
+        // Build final shape with unity dimensions inserted
+        Shape final_shape;
+        size_t working_dim = 0;
+        for (size_t i = 0; i < output_axes.size(); ++i) {
+            if (output_is_unity[i]) {
+                final_shape.push_back(1);
+            } else {
+                if (working_dim < working.ndim()) {
+                    final_shape.push_back(working.shape()[working_dim]);
+                    working_dim++;
+                }
+            }
+        }
+        working = working.reshape(final_shape);
+    }
+
+    // Step 7: Handle grouped axes in output (merge dimensions)
+    // Build a map of ellipsis axis names to their sizes from expanded_shape
+    std::map<std::string, size_t> ellipsis_sizes;
+    for (size_t i = 0; i < expanded_axes.size(); ++i) {
+        if (expanded_axes[i].find("__ellipsis_") == 0) {
+            ellipsis_sizes[expanded_axes[i]] = expanded_shape[i];
+        }
+    }
+
+    Shape final_output_shape;
+    for (const auto &element : parsed_output.elements) {
+        if (std::holds_alternative<SimpleAxis>(element)) {
+            const auto &axis = std::get<SimpleAxis>(element);
+            final_output_shape.push_back(sizes.at(axis.name));
+        } else if (std::holds_alternative<UnityAxis>(element)) {
+            final_output_shape.push_back(1);
+        } else if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            size_t group_size = 1;
+            for (const auto &axis : group.axes) {
+                group_size *= sizes.at(axis);
+            }
+            final_output_shape.push_back(group_size);
+        } else if (std::holds_alternative<EllipsisAxis>(element)) {
+            // Add ellipsis dimensions
+            for (const auto &axis : expanded_axes) {
+                if (axis.find("__ellipsis_") == 0) {
+                    final_output_shape.push_back(ellipsis_sizes.at(axis));
+                }
+            }
+        }
+    }
+
+    if (working.shape() != final_output_shape) {
+        working = working.reshape(final_output_shape);
     }
 
     return working;

@@ -320,7 +320,7 @@ struct BitwiseXorFunc {
 
 struct LeftShiftFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
-        if constexpr (std::is_integral_v<T>) {
+        if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool>) {
             return a << b;
         } else {
             return T{};
@@ -330,7 +330,7 @@ struct LeftShiftFunc {
 
 struct RightShiftFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
-        if constexpr (std::is_integral_v<T>) {
+        if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool>) {
             return a >> b;
         } else {
             return T{};

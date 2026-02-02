@@ -2694,7 +2694,6 @@ Tensor CPUGatherOperation::execute_gather_typed(const Tensor &input, int dim,
     Tensor indices_i64 = indices.astype(DType::Int64);
     const int64_t *indices_data = indices_i64.typed_data<int64_t>();
 
-    const T *input_data = input.typed_data<T>();
     T *result_data = result.typed_data<T>();
 
     size_t total_size = indices.size();
@@ -2803,8 +2802,6 @@ Tensor CPUScatterOperation::execute_scatter_typed(const Tensor &input, int dim,
         (src.dtype() == input.dtype()) ? src : src.astype(input.dtype());
     const T *src_data = src_converted.typed_data<T>();
 
-    T *result_data = result.typed_data<T>();
-
     size_t total_size = indices.size();
     const auto &result_shape = result.shape();
     const auto &indices_shape = indices.shape();
@@ -2891,7 +2888,6 @@ Tensor CPUIndexSelectOperation::execute_index_select_typed(
 
     Tensor result(output_shape, input.dtype(), Device::CPU);
 
-    const T *input_data = input.typed_data<T>();
     T *result_data = result.typed_data<T>();
 
     const auto &input_shape = input.shape();

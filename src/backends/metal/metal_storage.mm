@@ -24,7 +24,7 @@ bool is_metal_available() {
 }
 
 MetalStorage::MetalStorage(void* device, size_t size_bytes, MetalStorageMode mode)
-    : device_(device), size_bytes_(size_bytes), offset_(0), base_storage_(nullptr),
+    : device_(device), size_bytes_(size_bytes), base_storage_(nullptr), offset_(0),
       storage_mode_(mode) {
     id<MTLDevice> mtl_device = (__bridge id<MTLDevice>)device_;
 
