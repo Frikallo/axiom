@@ -199,6 +199,7 @@ class Tensor {
     Tensor unsqueeze(int axis) const;
     Tensor view(const Shape &new_shape) const;
     Tensor flatten(int start_dim = 0, int end_dim = -1) const;
+    Tensor unflatten(int dim, const Shape &sizes) const;
 
     // NumPy-like aliases and view operations
     Tensor T() const { return transpose(); }
@@ -516,7 +517,8 @@ class Tensor {
     // Matrix building
     static Tensor diag(const Tensor &v, int64_t k = 0);
     static Tensor tri(size_t N, size_t M = 0, int64_t k = 0,
-                      DType dtype = DType::Float64, Device device = Device::CPU);
+                      DType dtype = DType::Float64,
+                      Device device = Device::CPU);
     static Tensor tril(const Tensor &m, int64_t k = 0);
     static Tensor triu(const Tensor &m, int64_t k = 0);
 

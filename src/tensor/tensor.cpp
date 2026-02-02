@@ -612,6 +612,45 @@ Tensor Tensor::flatten(int start_dim, int end_dim) const {
     }
 }
 
+Tensor Tensor::unflatten(int dim, const Shape &sizes) const {
+    // Normalize negative index
+    int ndims = static_cast<int>(ndim());
+    if (dim < 0)
+        dim += ndims;
+
+    if (dim < 0 || dim >= ndims) {
+        throw ShapeError("Invalid unflatten dimension: " + std::to_string(dim) +
+                         " for tensor with " + std::to_string(ndims) +
+                         " dimensions");
+    }
+
+    // Verify sizes product matches the dimension size
+    size_t product = 1;
+    for (size_t s : sizes) {
+        product *= s;
+    }
+    if (product != shape_[dim]) {
+        throw ShapeError("unflatten: sizes product (" +
+                         std::to_string(product) +
+                         ") must match dimension size (" +
+                         std::to_string(shape_[dim]) + ")");
+    }
+
+    // Build new shape: dims before + sizes + dims after
+    Shape new_shape;
+    for (int i = 0; i < dim; ++i) {
+        new_shape.push_back(shape_[i]);
+    }
+    for (size_t s : sizes) {
+        new_shape.push_back(s);
+    }
+    for (int i = dim + 1; i < ndims; ++i) {
+        new_shape.push_back(shape_[i]);
+    }
+
+    return reshape(new_shape);
+}
+
 // ============================================================================
 // NumPy-like aliases and view operations
 // ============================================================================
@@ -1761,7 +1800,8 @@ Tensor Tensor::linspace(double start, double stop, size_t num, bool endpoint,
         break;
     }
     default:
-        throw TypeError::unsupported_dtype(axiom::dtype_name(dtype), "linspace");
+        throw TypeError::unsupported_dtype(axiom::dtype_name(dtype),
+                                           "linspace");
     }
 
     return device == Device::GPU ? t.to(device) : t;
@@ -1788,7 +1828,8 @@ Tensor Tensor::logspace(double start, double stop, size_t num, bool endpoint,
         break;
     }
     default:
-        throw TypeError::unsupported_dtype(axiom::dtype_name(dtype), "logspace");
+        throw TypeError::unsupported_dtype(axiom::dtype_name(dtype),
+                                           "logspace");
     }
 
     return device == Device::GPU ? linear.to(device) : linear;
@@ -1809,8 +1850,8 @@ Tensor Tensor::geomspace(double start, double stop, size_t num, bool endpoint,
     double log_start = std::log10(std::abs(start));
     double log_stop = std::log10(std::abs(stop));
 
-    auto result = logspace(log_start, log_stop, num, endpoint, 10.0, dtype,
-                           Device::CPU);
+    auto result =
+        logspace(log_start, log_stop, num, endpoint, 10.0, dtype, Device::CPU);
 
     if (negative) {
         switch (dtype) {
@@ -1911,8 +1952,7 @@ Tensor Tensor::diag(const Tensor &v, int64_t k) {
     case DTYPE: {                                                              \
         auto *dst = result.typed_data<CTYPE>();                                \
         for (size_t i = 0; i < diag_len; ++i) {                                \
-            dst[i] =                                                           \
-                v.item<CTYPE>({diag_start_row + i, diag_start_col + i});       \
+            dst[i] = v.item<CTYPE>({diag_start_row + i, diag_start_col + i});  \
         }                                                                      \
         break;                                                                 \
     }
@@ -1944,8 +1984,8 @@ Tensor Tensor::tri(size_t N, size_t M, int64_t k, DType dtype, Device device) {
 #define TRI_CASE(DTYPE, CTYPE, ONE)                                            \
     case DTYPE: {                                                              \
         for (size_t i = 0; i < N; ++i) {                                       \
-            int64_t max_col =                                                  \
-                std::min(static_cast<int64_t>(M), static_cast<int64_t>(i) + k + 1);                                      \
+            int64_t max_col = std::min(static_cast<int64_t>(M),                \
+                                       static_cast<int64_t>(i) + k + 1);       \
             for (int64_t j = 0; j < max_col; ++j) {                            \
                 result.set_item<CTYPE>({i, static_cast<size_t>(j)}, ONE);      \
             }                                                                  \
@@ -1990,8 +2030,8 @@ Tensor Tensor::tril(const Tensor &m, int64_t k) {
                 int64_t max_col = std::min(static_cast<int64_t>(cols),         \
                                            static_cast<int64_t>(i) + k + 1);   \
                 for (int64_t j = 0; j < max_col; ++j) {                        \
-                    size_t idx = b * rows * cols + i * cols +                  \
-                                 static_cast<size_t>(j);                       \
+                    size_t idx =                                               \
+                        b * rows * cols + i * cols + static_cast<size_t>(j);   \
                     dst[idx] = src[idx];                                       \
                 }                                                              \
             }                                                                  \
@@ -2007,7 +2047,8 @@ Tensor Tensor::tril(const Tensor &m, int64_t k) {
         TRIL_CASE(DType::Bool, bool)
 #undef TRIL_CASE
     default:
-        throw TypeError::unsupported_dtype(axiom::dtype_name(m.dtype()), "tril");
+        throw TypeError::unsupported_dtype(axiom::dtype_name(m.dtype()),
+                                           "tril");
     }
 
     return result;
@@ -2054,7 +2095,8 @@ Tensor Tensor::triu(const Tensor &m, int64_t k) {
         TRIU_CASE(DType::Bool, bool)
 #undef TRIU_CASE
     default:
-        throw TypeError::unsupported_dtype(axiom::dtype_name(m.dtype()), "triu");
+        throw TypeError::unsupported_dtype(axiom::dtype_name(m.dtype()),
+                                           "triu");
     }
 
     return result;

@@ -245,7 +245,7 @@ void test_creation_routines_cpu() {
     auto logs = Tensor::logspace(0.0, 2.0, 3);
     auto logs_data = logs.typed_data<double>();
     assert(std::abs(logs_data[0] - 1.0) < 1e-10);   // 10^0 = 1
-    assert(std::abs(logs_data[1] - 10.0) < 1e-10); // 10^1 = 10
+    assert(std::abs(logs_data[1] - 10.0) < 1e-10);  // 10^1 = 10
     assert(std::abs(logs_data[2] - 100.0) < 1e-10); // 10^2 = 100
 
     // Test geomspace
@@ -284,10 +284,10 @@ void test_creation_routines_cpu() {
     assert(diag_mat.shape()[0] == 3);
     assert(diag_mat.shape()[1] == 3);
     auto diag_data = diag_mat.typed_data<float>();
-    assert(diag_data[0] == 1.0f);  // [0,0]
-    assert(diag_data[4] == 2.0f);  // [1,1]
-    assert(diag_data[8] == 3.0f);  // [2,2]
-    assert(diag_data[1] == 0.0f);  // [0,1]
+    assert(diag_data[0] == 1.0f); // [0,0]
+    assert(diag_data[4] == 2.0f); // [1,1]
+    assert(diag_data[8] == 3.0f); // [2,2]
+    assert(diag_data[1] == 0.0f); // [0,1]
 
     // Test diag with offset
     auto diag_off = Tensor::diag(vec, 1);
@@ -306,42 +306,67 @@ void test_creation_routines_cpu() {
     // Test tri
     auto tri_mat = Tensor::tri(3, 3, 0, DType::Float64);
     auto tri_data = tri_mat.typed_data<double>();
-    assert(tri_data[0] == 1.0);  // [0,0]
-    assert(tri_data[1] == 0.0);  // [0,1]
-    assert(tri_data[3] == 1.0);  // [1,0]
-    assert(tri_data[4] == 1.0);  // [1,1]
-    assert(tri_data[5] == 0.0);  // [1,2]
+    assert(tri_data[0] == 1.0); // [0,0]
+    assert(tri_data[1] == 0.0); // [0,1]
+    assert(tri_data[3] == 1.0); // [1,0]
+    assert(tri_data[4] == 1.0); // [1,1]
+    assert(tri_data[5] == 0.0); // [1,2]
 
     // Test tril
     auto full_mat = Tensor::full<float>({3, 3}, 1.0f);
     auto lower = Tensor::tril(full_mat);
     auto lower_data = lower.typed_data<float>();
-    assert(lower_data[0] == 1.0f);  // [0,0]
-    assert(lower_data[1] == 0.0f);  // [0,1]
-    assert(lower_data[2] == 0.0f);  // [0,2]
-    assert(lower_data[3] == 1.0f);  // [1,0]
-    assert(lower_data[4] == 1.0f);  // [1,1]
-    assert(lower_data[5] == 0.0f);  // [1,2]
+    assert(lower_data[0] == 1.0f); // [0,0]
+    assert(lower_data[1] == 0.0f); // [0,1]
+    assert(lower_data[2] == 0.0f); // [0,2]
+    assert(lower_data[3] == 1.0f); // [1,0]
+    assert(lower_data[4] == 1.0f); // [1,1]
+    assert(lower_data[5] == 0.0f); // [1,2]
 
     // Test triu
     auto upper = Tensor::triu(full_mat);
     auto upper_data = upper.typed_data<float>();
-    assert(upper_data[0] == 1.0f);  // [0,0]
-    assert(upper_data[1] == 1.0f);  // [0,1]
-    assert(upper_data[2] == 1.0f);  // [0,2]
-    assert(upper_data[3] == 0.0f);  // [1,0]
-    assert(upper_data[4] == 1.0f);  // [1,1]
-    assert(upper_data[5] == 1.0f);  // [1,2]
+    assert(upper_data[0] == 1.0f); // [0,0]
+    assert(upper_data[1] == 1.0f); // [0,1]
+    assert(upper_data[2] == 1.0f); // [0,2]
+    assert(upper_data[3] == 0.0f); // [1,0]
+    assert(upper_data[4] == 1.0f); // [1,1]
+    assert(upper_data[5] == 1.0f); // [1,2]
 
     // Test tril/triu with offset
     auto lower_k1 = Tensor::tril(full_mat, 1);
     auto lower_k1_data = lower_k1.typed_data<float>();
-    assert(lower_k1_data[2] == 0.0f);  // [0,2] still zero
-    assert(lower_k1_data[1] == 1.0f);  // [0,1] now included
+    assert(lower_k1_data[2] == 0.0f); // [0,2] still zero
+    assert(lower_k1_data[1] == 1.0f); // [0,1] now included
 
     auto upper_km1 = Tensor::triu(full_mat, -1);
     auto upper_km1_data = upper_km1.typed_data<float>();
-    assert(upper_km1_data[3] == 1.0f);  // [1,0] now included
+    assert(upper_km1_data[3] == 1.0f); // [1,0] now included
+
+    // Test unflatten (inverse of flatten)
+    auto t3d = Tensor::zeros({2, 3, 4}, DType::Float32);
+    auto flattened = t3d.flatten(1, 2); // shape: [2, 12]
+    assert(flattened.shape()[0] == 2);
+    assert(flattened.shape()[1] == 12);
+
+    auto unflattened = flattened.unflatten(1, {3, 4}); // back to [2, 3, 4]
+    assert(unflattened.shape()[0] == 2);
+    assert(unflattened.shape()[1] == 3);
+    assert(unflattened.shape()[2] == 4);
+
+    // Test unflatten with different split
+    auto unflat2 = flattened.unflatten(1, {2, 6}); // [2, 2, 6]
+    assert(unflat2.shape()[0] == 2);
+    assert(unflat2.shape()[1] == 2);
+    assert(unflat2.shape()[2] == 6);
+
+    // Test unflatten with three dimensions
+    auto unflat3 = flattened.unflatten(1, {2, 2, 3}); // [2, 2, 2, 3]
+    assert(unflat3.ndim() == 4);
+    assert(unflat3.shape()[0] == 2);
+    assert(unflat3.shape()[1] == 2);
+    assert(unflat3.shape()[2] == 2);
+    assert(unflat3.shape()[3] == 3);
 }
 
 //=============================================================================
