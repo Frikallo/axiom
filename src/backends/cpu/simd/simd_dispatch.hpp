@@ -78,6 +78,26 @@ inline void dispatch_binary_min(const T *a, const T *b, T *result, size_t n) {
     xsimd::dispatch<dispatch_arch_list>(BinaryMin{})(a, b, result, n);
 }
 
+template <typename T>
+inline void dispatch_binary_pow(const T *a, const T *b, T *result, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(BinaryPow{})(a, b, result, n);
+}
+
+template <typename T>
+inline void dispatch_binary_atan2(const T *a, const T *b, T *result, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(BinaryAtan2{})(a, b, result, n);
+}
+
+template <typename T>
+inline void dispatch_binary_hypot(const T *a, const T *b, T *result, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(BinaryHypot{})(a, b, result, n);
+}
+
+template <typename T>
+inline void dispatch_binary_fmod(const T *a, const T *b, T *result, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(BinaryFmod{})(a, b, result, n);
+}
+
 // --- Unary Operations ---
 
 template <typename T>
@@ -120,6 +140,56 @@ inline void dispatch_unary_tanh(const T *input, T *output, size_t n) {
     xsimd::dispatch<dispatch_arch_list>(UnaryTanh{})(input, output, n);
 }
 
+template <typename T>
+inline void dispatch_unary_tan(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnaryTan{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_erf(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnaryErf{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_cbrt(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnaryCbrt{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_square(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnarySquare{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_reciprocal(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnaryReciprocal{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_sign(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnarySign{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_floor(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnaryFloor{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_ceil(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnaryCeil{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_round(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnaryRound{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_trunc(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(UnaryTrunc{})(input, output, n);
+}
+
 // --- Reductions ---
 
 template <typename T> inline T dispatch_reduce_sum(const T *data, size_t n) {
@@ -153,6 +223,18 @@ inline void dispatch_activation_sigmoid(const T *input, T *output, size_t n) {
 template <typename T>
 inline void dispatch_activation_gelu(const T *input, T *output, size_t n) {
     xsimd::dispatch<dispatch_arch_list>(ActivationGELU{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_activation_silu(const T *input, T *output, size_t n) {
+    xsimd::dispatch<dispatch_arch_list>(ActivationSiLU{})(input, output, n);
+}
+
+template <typename T>
+inline void dispatch_activation_leaky_relu(const T *input, T *output, size_t n,
+                                           double alpha = 0.01) {
+    xsimd::dispatch<dispatch_arch_list>(ActivationLeakyReLU{alpha})(input,
+                                                                    output, n);
 }
 
 #else // !AXIOM_SIMD_MULTI_ARCH
@@ -190,6 +272,26 @@ inline void dispatch_binary_max(const T *a, const T *b, T *result, size_t n) {
 template <typename T>
 inline void dispatch_binary_min(const T *a, const T *b, T *result, size_t n) {
     BinaryMin{}(xsimd::default_arch{}, a, b, result, n);
+}
+
+template <typename T>
+inline void dispatch_binary_pow(const T *a, const T *b, T *result, size_t n) {
+    BinaryPow{}(xsimd::default_arch{}, a, b, result, n);
+}
+
+template <typename T>
+inline void dispatch_binary_atan2(const T *a, const T *b, T *result, size_t n) {
+    BinaryAtan2{}(xsimd::default_arch{}, a, b, result, n);
+}
+
+template <typename T>
+inline void dispatch_binary_hypot(const T *a, const T *b, T *result, size_t n) {
+    BinaryHypot{}(xsimd::default_arch{}, a, b, result, n);
+}
+
+template <typename T>
+inline void dispatch_binary_fmod(const T *a, const T *b, T *result, size_t n) {
+    BinaryFmod{}(xsimd::default_arch{}, a, b, result, n);
 }
 
 // --- Unary Operations ---
@@ -234,6 +336,56 @@ inline void dispatch_unary_tanh(const T *input, T *output, size_t n) {
     UnaryTanh{}(xsimd::default_arch{}, input, output, n);
 }
 
+template <typename T>
+inline void dispatch_unary_tan(const T *input, T *output, size_t n) {
+    UnaryTan{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_erf(const T *input, T *output, size_t n) {
+    UnaryErf{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_cbrt(const T *input, T *output, size_t n) {
+    UnaryCbrt{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_square(const T *input, T *output, size_t n) {
+    UnarySquare{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_reciprocal(const T *input, T *output, size_t n) {
+    UnaryReciprocal{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_sign(const T *input, T *output, size_t n) {
+    UnarySign{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_floor(const T *input, T *output, size_t n) {
+    UnaryFloor{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_ceil(const T *input, T *output, size_t n) {
+    UnaryCeil{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_round(const T *input, T *output, size_t n) {
+    UnaryRound{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_unary_trunc(const T *input, T *output, size_t n) {
+    UnaryTrunc{}(xsimd::default_arch{}, input, output, n);
+}
+
 // --- Reductions ---
 
 template <typename T> inline T dispatch_reduce_sum(const T *data, size_t n) {
@@ -267,6 +419,17 @@ inline void dispatch_activation_sigmoid(const T *input, T *output, size_t n) {
 template <typename T>
 inline void dispatch_activation_gelu(const T *input, T *output, size_t n) {
     ActivationGELU{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_activation_silu(const T *input, T *output, size_t n) {
+    ActivationSiLU{}(xsimd::default_arch{}, input, output, n);
+}
+
+template <typename T>
+inline void dispatch_activation_leaky_relu(const T *input, T *output, size_t n,
+                                           double alpha = 0.01) {
+    ActivationLeakyReLU{alpha}(xsimd::default_arch{}, input, output, n);
 }
 
 #endif // AXIOM_SIMD_MULTI_ARCH

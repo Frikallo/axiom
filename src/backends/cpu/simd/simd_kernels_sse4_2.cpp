@@ -8,6 +8,10 @@ namespace backends {
 namespace cpu {
 namespace simd {
 
+// ============================================================================
+// Binary Operations
+// ============================================================================
+
 template void BinaryAdd::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
                                                           const float *,
                                                           const float *,
@@ -56,6 +60,43 @@ template void BinaryMin::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
                                                            const double *,
                                                            const double *,
                                                            double *, size_t);
+template void BinaryPow::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                          const float *,
+                                                          const float *,
+                                                          float *, size_t);
+template void BinaryPow::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                           const double *,
+                                                           const double *,
+                                                           double *, size_t);
+template void BinaryAtan2::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                            const float *,
+                                                            const float *,
+                                                            float *, size_t);
+template void BinaryAtan2::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                             const double *,
+                                                             const double *,
+                                                             double *, size_t);
+template void BinaryHypot::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                            const float *,
+                                                            const float *,
+                                                            float *, size_t);
+template void BinaryHypot::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                             const double *,
+                                                             const double *,
+                                                             double *, size_t);
+template void BinaryFmod::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                           const float *,
+                                                           const float *,
+                                                           float *, size_t);
+template void BinaryFmod::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                            const double *,
+                                                            const double *,
+                                                            double *, size_t);
+
+// ============================================================================
+// Unary Operations
+// ============================================================================
+
 template void UnaryNeg::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
                                                          const float *, float *,
                                                          size_t);
@@ -104,6 +145,73 @@ template void UnaryTanh::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
 template void UnaryTanh::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
                                                            const double *,
                                                            double *, size_t);
+template void UnaryTan::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                         const float *, float *,
+                                                         size_t);
+template void UnaryTan::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                          const double *,
+                                                          double *, size_t);
+template void UnaryErf::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                         const float *, float *,
+                                                         size_t);
+template void UnaryErf::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                          const double *,
+                                                          double *, size_t);
+template void UnaryCbrt::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                          const float *,
+                                                          float *, size_t);
+template void UnaryCbrt::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                           const double *,
+                                                           double *, size_t);
+template void UnarySquare::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                            const float *,
+                                                            float *, size_t);
+template void UnarySquare::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                             const double *,
+                                                             double *, size_t);
+template void UnaryReciprocal::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                                const float *,
+                                                                float *,
+                                                                size_t);
+template void UnaryReciprocal::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                                 const double *,
+                                                                 double *,
+                                                                 size_t);
+template void UnarySign::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                          const float *,
+                                                          float *, size_t);
+template void UnarySign::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                           const double *,
+                                                           double *, size_t);
+template void UnaryFloor::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                           const float *,
+                                                           float *, size_t);
+template void UnaryFloor::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                            const double *,
+                                                            double *, size_t);
+template void UnaryCeil::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                          const float *,
+                                                          float *, size_t);
+template void UnaryCeil::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                           const double *,
+                                                           double *, size_t);
+template void UnaryRound::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                           const float *,
+                                                           float *, size_t);
+template void UnaryRound::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                            const double *,
+                                                            double *, size_t);
+template void UnaryTrunc::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                           const float *,
+                                                           float *, size_t);
+template void UnaryTrunc::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                            const double *,
+                                                            double *, size_t);
+
+// ============================================================================
+// Reductions
+// ============================================================================
+
 template float ReduceSum::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
                                                            const float *,
                                                            size_t);
@@ -128,6 +236,11 @@ template float ReduceProd::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
 template double ReduceProd::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
                                                               const double *,
                                                               size_t);
+
+// ============================================================================
+// Activations
+// ============================================================================
+
 template void ActivationReLU::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
                                                                const float *,
                                                                float *, size_t);
@@ -145,6 +258,13 @@ template void ActivationGELU::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
                                                                const float *,
                                                                float *, size_t);
 template void ActivationGELU::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
+                                                                const double *,
+                                                                double *,
+                                                                size_t);
+template void ActivationSiLU::operator()<xsimd::sse4_2, float>(xsimd::sse4_2,
+                                                               const float *,
+                                                               float *, size_t);
+template void ActivationSiLU::operator()<xsimd::sse4_2, double>(xsimd::sse4_2,
                                                                 const double *,
                                                                 double *,
                                                                 size_t);

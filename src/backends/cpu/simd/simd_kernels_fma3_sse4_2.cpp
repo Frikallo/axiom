@@ -10,6 +10,10 @@ namespace simd {
 
 using arch = xsimd::fma3<xsimd::sse4_2>;
 
+// ============================================================================
+// Binary Operations
+// ============================================================================
+
 template void BinaryAdd::operator()<arch, float>(arch, const float *,
                                                  const float *, float *,
                                                  size_t);
@@ -46,6 +50,35 @@ template void BinaryMin::operator()<arch, float>(arch, const float *,
 template void BinaryMin::operator()<arch, double>(arch, const double *,
                                                   const double *, double *,
                                                   size_t);
+template void BinaryPow::operator()<arch, float>(arch, const float *,
+                                                 const float *, float *,
+                                                 size_t);
+template void BinaryPow::operator()<arch, double>(arch, const double *,
+                                                  const double *, double *,
+                                                  size_t);
+template void BinaryAtan2::operator()<arch, float>(arch, const float *,
+                                                   const float *, float *,
+                                                   size_t);
+template void BinaryAtan2::operator()<arch, double>(arch, const double *,
+                                                    const double *, double *,
+                                                    size_t);
+template void BinaryHypot::operator()<arch, float>(arch, const float *,
+                                                   const float *, float *,
+                                                   size_t);
+template void BinaryHypot::operator()<arch, double>(arch, const double *,
+                                                    const double *, double *,
+                                                    size_t);
+template void BinaryFmod::operator()<arch, float>(arch, const float *,
+                                                  const float *, float *,
+                                                  size_t);
+template void BinaryFmod::operator()<arch, double>(arch, const double *,
+                                                   const double *, double *,
+                                                   size_t);
+
+// ============================================================================
+// Unary Operations
+// ============================================================================
+
 template void UnaryNeg::operator()<arch, float>(arch, const float *, float *,
                                                 size_t);
 template void UnaryNeg::operator()<arch, double>(arch, const double *, double *,
@@ -78,6 +111,51 @@ template void UnaryTanh::operator()<arch, float>(arch, const float *, float *,
                                                  size_t);
 template void UnaryTanh::operator()<arch, double>(arch, const double *,
                                                   double *, size_t);
+template void UnaryTan::operator()<arch, float>(arch, const float *, float *,
+                                                size_t);
+template void UnaryTan::operator()<arch, double>(arch, const double *, double *,
+                                                 size_t);
+template void UnaryErf::operator()<arch, float>(arch, const float *, float *,
+                                                size_t);
+template void UnaryErf::operator()<arch, double>(arch, const double *, double *,
+                                                 size_t);
+template void UnaryCbrt::operator()<arch, float>(arch, const float *, float *,
+                                                 size_t);
+template void UnaryCbrt::operator()<arch, double>(arch, const double *,
+                                                  double *, size_t);
+template void UnarySquare::operator()<arch, float>(arch, const float *, float *,
+                                                   size_t);
+template void UnarySquare::operator()<arch, double>(arch, const double *,
+                                                    double *, size_t);
+template void UnaryReciprocal::operator()<arch, float>(arch, const float *,
+                                                       float *, size_t);
+template void UnaryReciprocal::operator()<arch, double>(arch, const double *,
+                                                        double *, size_t);
+template void UnarySign::operator()<arch, float>(arch, const float *, float *,
+                                                 size_t);
+template void UnarySign::operator()<arch, double>(arch, const double *,
+                                                  double *, size_t);
+template void UnaryFloor::operator()<arch, float>(arch, const float *, float *,
+                                                  size_t);
+template void UnaryFloor::operator()<arch, double>(arch, const double *,
+                                                   double *, size_t);
+template void UnaryCeil::operator()<arch, float>(arch, const float *, float *,
+                                                 size_t);
+template void UnaryCeil::operator()<arch, double>(arch, const double *,
+                                                  double *, size_t);
+template void UnaryRound::operator()<arch, float>(arch, const float *, float *,
+                                                  size_t);
+template void UnaryRound::operator()<arch, double>(arch, const double *,
+                                                   double *, size_t);
+template void UnaryTrunc::operator()<arch, float>(arch, const float *, float *,
+                                                  size_t);
+template void UnaryTrunc::operator()<arch, double>(arch, const double *,
+                                                   double *, size_t);
+
+// ============================================================================
+// Reductions
+// ============================================================================
+
 template float ReduceSum::operator()<arch, float>(arch, const float *, size_t);
 template double ReduceSum::operator()<arch, double>(arch, const double *,
                                                     size_t);
@@ -90,6 +168,11 @@ template double ReduceMin::operator()<arch, double>(arch, const double *,
 template float ReduceProd::operator()<arch, float>(arch, const float *, size_t);
 template double ReduceProd::operator()<arch, double>(arch, const double *,
                                                      size_t);
+
+// ============================================================================
+// Activations
+// ============================================================================
+
 template void ActivationReLU::operator()<arch, float>(arch, const float *,
                                                       float *, size_t);
 template void ActivationReLU::operator()<arch, double>(arch, const double *,
@@ -101,6 +184,10 @@ template void ActivationSigmoid::operator()<arch, double>(arch, const double *,
 template void ActivationGELU::operator()<arch, float>(arch, const float *,
                                                       float *, size_t);
 template void ActivationGELU::operator()<arch, double>(arch, const double *,
+                                                       double *, size_t);
+template void ActivationSiLU::operator()<arch, float>(arch, const float *,
+                                                      float *, size_t);
+template void ActivationSiLU::operator()<arch, double>(arch, const double *,
                                                        double *, size_t);
 
 } // namespace simd

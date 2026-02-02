@@ -16,12 +16,75 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <limits>
+#include <string>
 #include <xsimd/xsimd.hpp>
 
 namespace axiom {
 namespace backends {
 namespace cpu {
 namespace simd {
+
+// ============================================================================
+// SIMD Architecture Info
+// ============================================================================
+
+struct SimdInfo {
+    const char *arch_name; // Architecture name (e.g., "neon64", "avx2")
+    size_t alignment;      // Required alignment in bytes
+    size_t float32_width;  // Vector width for float (elements)
+    size_t float64_width;  // Vector width for double (elements)
+    size_t int32_width;    // Vector width for int32_t (elements)
+    size_t int64_width;    // Vector width for int64_t (elements)
+};
+
+// Get compile-time SIMD architecture info
+inline SimdInfo get_simd_info() {
+    using arch = xsimd::default_arch;
+    return SimdInfo{
+        arch::name(),
+        arch::alignment(),
+        xsimd::batch<float>::size,
+        xsimd::batch<double>::size,
+        xsimd::batch<int32_t>::size,
+        xsimd::batch<int64_t>::size,
+    };
+}
+
+// Print SIMD architecture info to stdout
+inline void print_simd_info() {
+    auto info = get_simd_info();
+    std::printf("SIMD Architecture: %s\n", info.arch_name);
+    std::printf("  Alignment: %zu bytes\n", info.alignment);
+    std::printf("  Vector widths:\n");
+    std::printf("    float32: %zu elements (%zu bytes)\n", info.float32_width,
+                info.float32_width * sizeof(float));
+    std::printf("    float64: %zu elements (%zu bytes)\n", info.float64_width,
+                info.float64_width * sizeof(double));
+    std::printf("    int32:   %zu elements (%zu bytes)\n", info.int32_width,
+                info.int32_width * sizeof(int32_t));
+    std::printf("    int64:   %zu elements (%zu bytes)\n", info.int64_width,
+                info.int64_width * sizeof(int64_t));
+}
+
+// Get SIMD info as a formatted string
+inline std::string simd_info_string() {
+    auto info = get_simd_info();
+    char buf[512];
+    std::snprintf(buf, sizeof(buf),
+                  "SIMD: %s (align=%zu, f32x%zu, f64x%zu, i32x%zu, i64x%zu)",
+                  info.arch_name, info.alignment, info.float32_width,
+                  info.float64_width, info.int32_width, info.int64_width);
+    return std::string(buf);
+}
+
+// ============================================================================
+// SIMD Support Detection
+// ============================================================================
+
+template <typename T>
+inline constexpr bool has_support = xsimd::has_simd_register<T>::value;
 
 // ============================================================================
 // Binary Operation Kernels
@@ -53,6 +116,26 @@ struct BinaryMax {
 };
 
 struct BinaryMin {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *a, const T *b, T *result, size_t n);
+};
+
+struct BinaryPow {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *a, const T *b, T *result, size_t n);
+};
+
+struct BinaryAtan2 {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *a, const T *b, T *result, size_t n);
+};
+
+struct BinaryHypot {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *a, const T *b, T *result, size_t n);
+};
+
+struct BinaryFmod {
     template <class Arch, typename T>
     void operator()(Arch, const T *a, const T *b, T *result, size_t n);
 };
@@ -101,6 +184,56 @@ struct UnaryTanh {
     void operator()(Arch, const T *input, T *output, size_t n);
 };
 
+struct UnaryTan {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct UnaryErf {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct UnaryCbrt {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct UnarySquare {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct UnaryReciprocal {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct UnarySign {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct UnaryFloor {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct UnaryCeil {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct UnaryRound {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct UnaryTrunc {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
 // ============================================================================
 // Reduction Kernels
 // ============================================================================
@@ -142,6 +275,17 @@ struct ActivationSigmoid {
 struct ActivationGELU {
     template <class Arch, typename T>
     void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct ActivationSiLU {
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n);
+};
+
+struct ActivationLeakyReLU {
+    double alpha;
+    template <class Arch, typename T>
+    void operator()(Arch, const T *input, T *output, size_t n) const;
 };
 
 // ============================================================================
@@ -243,6 +387,72 @@ void BinaryMin::operator()(Arch, const T *a, const T *b, T *result, size_t n) {
     }
     for (; i < n; ++i) {
         result[i] = std::min(a[i], b[i]);
+    }
+}
+
+template <class Arch, typename T>
+void BinaryPow::operator()(Arch, const T *a, const T *b, T *result, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto va = batch::load_unaligned(a + i);
+        auto vb = batch::load_unaligned(b + i);
+        xsimd::pow(va, vb).store_unaligned(result + i);
+    }
+    for (; i < n; ++i) {
+        result[i] = std::pow(a[i], b[i]);
+    }
+}
+
+template <class Arch, typename T>
+void BinaryAtan2::operator()(Arch, const T *a, const T *b, T *result,
+                             size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto va = batch::load_unaligned(a + i);
+        auto vb = batch::load_unaligned(b + i);
+        xsimd::atan2(va, vb).store_unaligned(result + i);
+    }
+    for (; i < n; ++i) {
+        result[i] = std::atan2(a[i], b[i]);
+    }
+}
+
+template <class Arch, typename T>
+void BinaryHypot::operator()(Arch, const T *a, const T *b, T *result,
+                             size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto va = batch::load_unaligned(a + i);
+        auto vb = batch::load_unaligned(b + i);
+        xsimd::hypot(va, vb).store_unaligned(result + i);
+    }
+    for (; i < n; ++i) {
+        result[i] = std::hypot(a[i], b[i]);
+    }
+}
+
+template <class Arch, typename T>
+void BinaryFmod::operator()(Arch, const T *a, const T *b, T *result, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto va = batch::load_unaligned(a + i);
+        auto vb = batch::load_unaligned(b + i);
+        xsimd::fmod(va, vb).store_unaligned(result + i);
+    }
+    for (; i < n; ++i) {
+        result[i] = std::fmod(a[i], b[i]);
     }
 }
 
@@ -365,6 +575,163 @@ void UnaryTanh::operator()(Arch, const T *input, T *output, size_t n) {
     }
     for (; i < n; ++i) {
         output[i] = std::tanh(input[i]);
+    }
+}
+
+template <class Arch, typename T>
+void UnaryTan::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        xsimd::tan(v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        output[i] = std::tan(input[i]);
+    }
+}
+
+template <class Arch, typename T>
+void UnaryErf::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        xsimd::erf(v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        output[i] = std::erf(input[i]);
+    }
+}
+
+template <class Arch, typename T>
+void UnaryCbrt::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        xsimd::cbrt(v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        output[i] = std::cbrt(input[i]);
+    }
+}
+
+template <class Arch, typename T>
+void UnarySquare::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        (v * v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        output[i] = input[i] * input[i];
+    }
+}
+
+template <class Arch, typename T>
+void UnaryReciprocal::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    batch one(static_cast<T>(1));
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        (one / v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        output[i] = T{1} / input[i];
+    }
+}
+
+template <class Arch, typename T>
+void UnarySign::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    batch zero(static_cast<T>(0));
+    batch one(static_cast<T>(1));
+    batch neg_one(static_cast<T>(-1));
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        auto pos = xsimd::select(v > zero, one, zero);
+        auto neg = xsimd::select(v < zero, neg_one, zero);
+        (pos + neg).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        T x = input[i];
+        output[i] = (x > T{0}) ? T{1} : ((x < T{0}) ? T{-1} : T{0});
+    }
+}
+
+template <class Arch, typename T>
+void UnaryFloor::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        xsimd::floor(v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        output[i] = std::floor(input[i]);
+    }
+}
+
+template <class Arch, typename T>
+void UnaryCeil::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        xsimd::ceil(v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        output[i] = std::ceil(input[i]);
+    }
+}
+
+template <class Arch, typename T>
+void UnaryRound::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        xsimd::round(v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        output[i] = std::round(input[i]);
+    }
+}
+
+template <class Arch, typename T>
+void UnaryTrunc::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        xsimd::trunc(v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        output[i] = std::trunc(input[i]);
     }
 }
 
@@ -526,6 +893,43 @@ void ActivationGELU::operator()(Arch, const T *input, T *output, size_t n) {
         output[i] =
             T{0.5} * x *
             (T{1} + std::tanh(sqrt_2_over_pi * (x + coeff * x * x * x)));
+    }
+}
+
+template <class Arch, typename T>
+void ActivationSiLU::operator()(Arch, const T *input, T *output, size_t n) {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    batch one(static_cast<T>(1));
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        auto sigmoid = one / (one + xsimd::exp(-v));
+        (v * sigmoid).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        T x = input[i];
+        output[i] = x / (T{1} + std::exp(-x));
+    }
+}
+
+template <class Arch, typename T>
+void ActivationLeakyReLU::operator()(Arch, const T *input, T *output,
+                                     size_t n) const {
+    using batch = xsimd::batch<T, Arch>;
+    constexpr size_t width = batch::size;
+    batch zero(static_cast<T>(0));
+    batch alpha_vec(static_cast<T>(alpha));
+    size_t i = 0;
+
+    for (; i + width <= n; i += width) {
+        auto v = batch::load_unaligned(input + i);
+        xsimd::select(v > zero, v, alpha_vec * v).store_unaligned(output + i);
+    }
+    for (; i < n; ++i) {
+        T x = input[i];
+        output[i] = x > T{0} ? x : static_cast<T>(alpha) * x;
     }
 }
 

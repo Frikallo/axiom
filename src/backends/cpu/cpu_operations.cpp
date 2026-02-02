@@ -10,7 +10,7 @@
 
 // SIMD optimization headers
 #include "cpu_accelerate.hpp"
-#include "cpu_simd.hpp"
+#include "simd/simd_dispatch.hpp"
 
 // BLAS backend abstraction
 #include "blas/blas_backend.hpp"
@@ -251,65 +251,47 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
 #endif // AXIOM_USE_ACCELERATE
 
         // Tier 2: XSIMD for vectorizable types (all platforms)
+        // Uses runtime dispatch for optimal SIMD on each CPU
         if constexpr (simd::has_support<T>) {
-            // Basic arithmetic
+            // Basic arithmetic - runtime dispatched for best performance
             if constexpr (std::is_same_v<Func, AddFunc>) {
-                simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                        total_elements, simd::VecAdd{});
+                simd::dispatch_binary_add(lhs_data, rhs_data, result_data,
+                                          total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, SubtractFunc>) {
-                simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                        total_elements, simd::VecSub{});
+                simd::dispatch_binary_sub(lhs_data, rhs_data, result_data,
+                                          total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, MultiplyFunc>) {
-                simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                        total_elements, simd::VecMul{});
+                simd::dispatch_binary_mul(lhs_data, rhs_data, result_data,
+                                          total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, DivideFunc>) {
-                simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                        total_elements, simd::VecDiv{});
+                simd::dispatch_binary_div(lhs_data, rhs_data, result_data,
+                                          total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, MaximumFunc>) {
-                simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                        total_elements, simd::VecMax{});
+                simd::dispatch_binary_max(lhs_data, rhs_data, result_data,
+                                          total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, MinimumFunc>) {
-                simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                        total_elements, simd::VecMin{});
+                simd::dispatch_binary_min(lhs_data, rhs_data, result_data,
+                                          total_elements);
                 return;
             }
-            // Math functions (floating point only)
+            // Math functions (floating point only) - runtime dispatched
             if constexpr (std::is_floating_point_v<T>) {
                 if constexpr (std::is_same_v<Func, PowerFunc>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecPow{});
+                    simd::dispatch_binary_pow(lhs_data, rhs_data, result_data,
+                                              total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, Atan2Func>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecAtan2{});
+                    simd::dispatch_binary_atan2(lhs_data, rhs_data, result_data,
+                                                total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, HypotFunc>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements, simd::VecHypot{});
-                    return;
-                }
-            }
-            // Bitwise operations (integer types only)
-            if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool>) {
-                if constexpr (std::is_same_v<Func, BitwiseAndFunc>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements,
-                                            simd::VecBitwiseAnd{});
-                    return;
-                } else if constexpr (std::is_same_v<Func, BitwiseOrFunc>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements,
-                                            simd::VecBitwiseOr{});
-                    return;
-                } else if constexpr (std::is_same_v<Func, BitwiseXorFunc>) {
-                    simd::binary_vectorized(lhs_data, rhs_data, result_data,
-                                            total_elements,
-                                            simd::VecBitwiseXor{});
+                    simd::dispatch_binary_hypot(lhs_data, rhs_data, result_data,
+                                                total_elements);
                     return;
                 }
             }
@@ -1044,127 +1026,123 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
 #endif // AXIOM_USE_ACCELERATE
 
     // Tier 2: XSIMD for vectorizable types (all platforms)
+    // Uses runtime dispatch for optimal SIMD on each CPU
     if constexpr (simd::has_support<T>) {
         if (input.is_contiguous()) {
-            // Basic unary operations
+            // Basic unary operations - runtime dispatched
             if constexpr (std::is_same_v<Func, AbsFunc>) {
                 if constexpr (std::is_signed_v<T>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecAbs{});
+                    simd::dispatch_unary_abs(input_data, result_data,
+                                             total_elements);
                     return;
                 }
             } else if constexpr (std::is_same_v<Func, NegateFunc>) {
                 if constexpr (std::is_signed_v<T>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecNeg{});
+                    simd::dispatch_unary_neg(input_data, result_data,
+                                             total_elements);
                     return;
                 }
             } else if constexpr (std::is_same_v<Func, SquareFunc>) {
-                simd::unary_vectorized(input_data, result_data, total_elements,
-                                       simd::VecSquare{});
+                simd::dispatch_unary_square(input_data, result_data,
+                                            total_elements);
                 return;
             } else if constexpr (std::is_same_v<Func, SignFunc>) {
                 if constexpr (std::is_signed_v<T>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecSign{});
+                    simd::dispatch_unary_sign(input_data, result_data,
+                                              total_elements);
                     return;
                 }
-            } else if constexpr (std::is_same_v<Func, LogicalNotFunc>) {
-                simd::unary_vectorized(input_data, result_data, total_elements,
-                                       simd::VecLogicalNot{});
-                return;
             }
 
-            // Activation functions (signed types only)
+            // Activation functions - runtime dispatched
             if constexpr (std::is_signed_v<T>) {
                 if constexpr (std::is_same_v<Func, ReLUFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecReLU{});
+                    simd::dispatch_activation_relu(input_data, result_data,
+                                                   total_elements);
                     return;
                 }
             }
 
-            // Floating point operations
+            // Floating point operations - all runtime dispatched
             if constexpr (std::is_floating_point_v<T>) {
                 // Activation functions
                 if constexpr (std::is_same_v<Func, SigmoidFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecSigmoid{});
+                    simd::dispatch_activation_sigmoid(input_data, result_data,
+                                                      total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, SiLUFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecSiLU{});
+                    simd::dispatch_activation_silu(input_data, result_data,
+                                                   total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, GELUFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecGELU{});
+                    simd::dispatch_activation_gelu(input_data, result_data,
+                                                   total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, ReciprocalFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements,
-                                           simd::VecReciprocal{});
+                    simd::dispatch_unary_reciprocal(input_data, result_data,
+                                                    total_elements);
                     return;
                 }
 
                 // Rounding operations
 #ifndef AXIOM_USE_ACCELERATE
                 if constexpr (std::is_same_v<Func, FloorFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecFloor{});
+                    simd::dispatch_unary_floor(input_data, result_data,
+                                               total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, CeilFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecCeil{});
+                    simd::dispatch_unary_ceil(input_data, result_data,
+                                              total_elements);
                     return;
                 } else
 #endif
                     if constexpr (std::is_same_v<Func, RoundFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecRound{});
+                    simd::dispatch_unary_round(input_data, result_data,
+                                               total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, TruncFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecTrunc{});
+                    simd::dispatch_unary_trunc(input_data, result_data,
+                                               total_elements);
                     return;
                 }
 
 #ifndef AXIOM_USE_ACCELERATE
                 // Math functions for non-Apple platforms
                 if constexpr (std::is_same_v<Func, ExpFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecExp{});
+                    simd::dispatch_unary_exp(input_data, result_data,
+                                             total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, LogFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecLog{});
+                    simd::dispatch_unary_log(input_data, result_data,
+                                             total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, SqrtFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecSqrt{});
+                    simd::dispatch_unary_sqrt(input_data, result_data,
+                                              total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, SinFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecSin{});
+                    simd::dispatch_unary_sin(input_data, result_data,
+                                             total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, CosFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecCos{});
+                    simd::dispatch_unary_cos(input_data, result_data,
+                                             total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, TanFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecTan{});
+                    simd::dispatch_unary_tan(input_data, result_data,
+                                             total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, TanhFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecTanh{});
+                    simd::dispatch_unary_tanh(input_data, result_data,
+                                              total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, ErfFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecErf{});
+                    simd::dispatch_unary_erf(input_data, result_data,
+                                             total_elements);
                     return;
                 } else if constexpr (std::is_same_v<Func, CbrtFunc>) {
-                    simd::unary_vectorized(input_data, result_data,
-                                           total_elements, simd::VecCbrt{});
+                    simd::dispatch_unary_cbrt(input_data, result_data,
+                                              total_elements);
                     return;
                 }
 #endif // !AXIOM_USE_ACCELERATE
@@ -1414,14 +1392,15 @@ fallback_path:
             size_t n = input.size();
             AccumT result_val;
 
+            // Runtime dispatched reductions for optimal SIMD
             if constexpr (std::is_same_v<Func, SumFunc>) {
-                result_val = simd::reduce_sum(data, n);
+                result_val = simd::dispatch_reduce_sum(data, n);
             } else if constexpr (std::is_same_v<Func, MaxFunc>) {
-                result_val = simd::reduce_max(data, n);
+                result_val = simd::dispatch_reduce_max(data, n);
             } else if constexpr (std::is_same_v<Func, MinFunc>) {
-                result_val = simd::reduce_min(data, n);
+                result_val = simd::dispatch_reduce_min(data, n);
             } else if constexpr (std::is_same_v<Func, ProdFunc>) {
-                result_val = simd::reduce_prod(data, n);
+                result_val = simd::dispatch_reduce_prod(data, n);
             } else {
                 goto scalar_fallback;
             }
