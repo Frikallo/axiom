@@ -224,6 +224,126 @@ void test_factory_functions_gpu() {
     assert(z_f.memory_order() == MemoryOrder::ColMajor);
 }
 
+void test_creation_routines_cpu() {
+    // Test linspace
+    auto lin = Tensor::linspace(0.0, 10.0, 5);
+    assert(lin.size() == 5);
+    auto lin_data = lin.typed_data<double>();
+    assert(std::abs(lin_data[0] - 0.0) < 1e-10);
+    assert(std::abs(lin_data[1] - 2.5) < 1e-10);
+    assert(std::abs(lin_data[2] - 5.0) < 1e-10);
+    assert(std::abs(lin_data[3] - 7.5) < 1e-10);
+    assert(std::abs(lin_data[4] - 10.0) < 1e-10);
+
+    // Test linspace without endpoint
+    auto lin_noend = Tensor::linspace(0.0, 10.0, 5, false);
+    auto lin_noend_data = lin_noend.typed_data<double>();
+    assert(std::abs(lin_noend_data[0] - 0.0) < 1e-10);
+    assert(std::abs(lin_noend_data[1] - 2.0) < 1e-10);
+
+    // Test logspace
+    auto logs = Tensor::logspace(0.0, 2.0, 3);
+    auto logs_data = logs.typed_data<double>();
+    assert(std::abs(logs_data[0] - 1.0) < 1e-10);   // 10^0 = 1
+    assert(std::abs(logs_data[1] - 10.0) < 1e-10); // 10^1 = 10
+    assert(std::abs(logs_data[2] - 100.0) < 1e-10); // 10^2 = 100
+
+    // Test geomspace
+    auto geom = Tensor::geomspace(1.0, 1000.0, 4);
+    auto geom_data = geom.typed_data<double>();
+    assert(std::abs(geom_data[0] - 1.0) < 1e-10);
+    assert(std::abs(geom_data[1] - 10.0) < 1e-10);
+    assert(std::abs(geom_data[2] - 100.0) < 1e-10);
+    assert(std::abs(geom_data[3] - 1000.0) < 1e-10);
+
+    // Test zeros_like, ones_like, empty_like
+    auto proto = Tensor::zeros({2, 3}, DType::Float32, Device::CPU);
+    auto zl = Tensor::zeros_like(proto);
+    assert(zl.shape() == proto.shape());
+    assert(zl.dtype() == proto.dtype());
+    assert(zl.device() == proto.device());
+
+    auto ol = Tensor::ones_like(proto);
+    auto ol_data = ol.typed_data<float>();
+    for (size_t i = 0; i < ol.size(); ++i) {
+        assert(ol_data[i] == 1.0f);
+    }
+
+    auto el = Tensor::empty_like(proto);
+    assert(el.shape() == proto.shape());
+
+    auto fl = Tensor::full_like(proto, 7.5f);
+    auto fl_data = fl.typed_data<float>();
+    for (size_t i = 0; i < fl.size(); ++i) {
+        assert(fl_data[i] == 7.5f);
+    }
+
+    // Test diag (construct from 1D)
+    auto vec = Tensor::from_data(std::vector<float>{1, 2, 3}.data(), {3});
+    auto diag_mat = Tensor::diag(vec);
+    assert(diag_mat.shape()[0] == 3);
+    assert(diag_mat.shape()[1] == 3);
+    auto diag_data = diag_mat.typed_data<float>();
+    assert(diag_data[0] == 1.0f);  // [0,0]
+    assert(diag_data[4] == 2.0f);  // [1,1]
+    assert(diag_data[8] == 3.0f);  // [2,2]
+    assert(diag_data[1] == 0.0f);  // [0,1]
+
+    // Test diag with offset
+    auto diag_off = Tensor::diag(vec, 1);
+    assert(diag_off.shape()[0] == 4);
+    assert(diag_off.shape()[1] == 4);
+
+    // Test diag (extract from 2D)
+    auto mat = Tensor::eye(3, DType::Float32);
+    auto extracted = Tensor::diag(mat);
+    assert(extracted.size() == 3);
+    auto ext_data = extracted.typed_data<float>();
+    for (size_t i = 0; i < 3; ++i) {
+        assert(ext_data[i] == 1.0f);
+    }
+
+    // Test tri
+    auto tri_mat = Tensor::tri(3, 3, 0, DType::Float64);
+    auto tri_data = tri_mat.typed_data<double>();
+    assert(tri_data[0] == 1.0);  // [0,0]
+    assert(tri_data[1] == 0.0);  // [0,1]
+    assert(tri_data[3] == 1.0);  // [1,0]
+    assert(tri_data[4] == 1.0);  // [1,1]
+    assert(tri_data[5] == 0.0);  // [1,2]
+
+    // Test tril
+    auto full_mat = Tensor::full<float>({3, 3}, 1.0f);
+    auto lower = Tensor::tril(full_mat);
+    auto lower_data = lower.typed_data<float>();
+    assert(lower_data[0] == 1.0f);  // [0,0]
+    assert(lower_data[1] == 0.0f);  // [0,1]
+    assert(lower_data[2] == 0.0f);  // [0,2]
+    assert(lower_data[3] == 1.0f);  // [1,0]
+    assert(lower_data[4] == 1.0f);  // [1,1]
+    assert(lower_data[5] == 0.0f);  // [1,2]
+
+    // Test triu
+    auto upper = Tensor::triu(full_mat);
+    auto upper_data = upper.typed_data<float>();
+    assert(upper_data[0] == 1.0f);  // [0,0]
+    assert(upper_data[1] == 1.0f);  // [0,1]
+    assert(upper_data[2] == 1.0f);  // [0,2]
+    assert(upper_data[3] == 0.0f);  // [1,0]
+    assert(upper_data[4] == 1.0f);  // [1,1]
+    assert(upper_data[5] == 1.0f);  // [1,2]
+
+    // Test tril/triu with offset
+    auto lower_k1 = Tensor::tril(full_mat, 1);
+    auto lower_k1_data = lower_k1.typed_data<float>();
+    assert(lower_k1_data[2] == 0.0f);  // [0,2] still zero
+    assert(lower_k1_data[1] == 1.0f);  // [0,1] now included
+
+    auto upper_km1 = Tensor::triu(full_mat, -1);
+    auto upper_km1_data = upper_km1.typed_data<float>();
+    assert(upper_km1_data[3] == 1.0f);  // [1,0] now included
+}
+
 //=============================================================================
 // Data Access and Indexing Tests
 //=============================================================================
@@ -894,6 +1014,9 @@ int main() {
     if (is_gpu_available()) {
         runner.run_test("Factory Functions (GPU)", test_factory_functions_gpu);
     }
+
+    // Creation routines tests (linspace, logspace, diag, tri, tril, triu, etc.)
+    runner.run_test("Creation Routines (CPU)", test_creation_routines_cpu);
 
     // Data access tests
     runner.run_test("Data Access (CPU)", test_data_access_cpu);

@@ -491,6 +491,35 @@ class Tensor {
     static Tensor arange(int64_t end, DType dtype = DType::Int32,
                          Device device = Device::CPU);
 
+    // Numerical ranges
+    static Tensor linspace(double start, double stop, size_t num = 50,
+                           bool endpoint = true, DType dtype = DType::Float64,
+                           Device device = Device::CPU);
+    static Tensor logspace(double start, double stop, size_t num = 50,
+                           bool endpoint = true, double base = 10.0,
+                           DType dtype = DType::Float64,
+                           Device device = Device::CPU);
+    static Tensor geomspace(double start, double stop, size_t num = 50,
+                            bool endpoint = true, DType dtype = DType::Float64,
+                            Device device = Device::CPU);
+
+    // Like variants (create tensor with same shape/dtype as prototype)
+    static Tensor zeros_like(const Tensor &prototype);
+    static Tensor ones_like(const Tensor &prototype);
+    static Tensor empty_like(const Tensor &prototype);
+    template <typename T>
+    static Tensor full_like(const Tensor &prototype, const T &value) {
+        return full(prototype.shape(), value, prototype.device(),
+                    prototype.memory_order());
+    }
+
+    // Matrix building
+    static Tensor diag(const Tensor &v, int64_t k = 0);
+    static Tensor tri(size_t N, size_t M = 0, int64_t k = 0,
+                      DType dtype = DType::Float64, Device device = Device::CPU);
+    static Tensor tril(const Tensor &m, int64_t k = 0);
+    static Tensor triu(const Tensor &m, int64_t k = 0);
+
     template <typename T>
     static Tensor full(const Shape &shape, const T &value,
                        Device device = Device::CPU,

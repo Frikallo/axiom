@@ -1715,6 +1715,351 @@ Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
     return tensor;
 }
 
+Tensor Tensor::linspace(double start, double stop, size_t num, bool endpoint,
+                        DType dtype, Device device) {
+    if (num == 0) {
+        return Tensor::empty({0}, dtype, device);
+    }
+    if (num == 1) {
+        auto t = Tensor({1}, dtype, Device::CPU);
+        switch (dtype) {
+        case DType::Float32:
+            t.typed_data<float>()[0] = static_cast<float>(start);
+            break;
+        case DType::Float64:
+            t.typed_data<double>()[0] = start;
+            break;
+        default:
+            throw TypeError::unsupported_dtype(axiom::dtype_name(dtype),
+                                               "linspace");
+        }
+        return device == Device::GPU ? t.to(device) : t;
+    }
+
+    double step = endpoint ? (stop - start) / (num - 1) : (stop - start) / num;
+    auto t = Tensor({num}, dtype, Device::CPU);
+
+    switch (dtype) {
+    case DType::Float32: {
+        auto *data = t.typed_data<float>();
+        for (size_t i = 0; i < num; ++i) {
+            data[i] = static_cast<float>(start + i * step);
+        }
+        if (endpoint && num > 1) {
+            data[num - 1] = static_cast<float>(stop);
+        }
+        break;
+    }
+    case DType::Float64: {
+        auto *data = t.typed_data<double>();
+        for (size_t i = 0; i < num; ++i) {
+            data[i] = start + i * step;
+        }
+        if (endpoint && num > 1) {
+            data[num - 1] = stop;
+        }
+        break;
+    }
+    default:
+        throw TypeError::unsupported_dtype(axiom::dtype_name(dtype), "linspace");
+    }
+
+    return device == Device::GPU ? t.to(device) : t;
+}
+
+Tensor Tensor::logspace(double start, double stop, size_t num, bool endpoint,
+                        double base, DType dtype, Device device) {
+    // logspace(start, stop) = base^linspace(start, stop)
+    auto linear = linspace(start, stop, num, endpoint, dtype, Device::CPU);
+
+    switch (dtype) {
+    case DType::Float32: {
+        auto *data = linear.typed_data<float>();
+        for (size_t i = 0; i < num; ++i) {
+            data[i] = static_cast<float>(std::pow(base, data[i]));
+        }
+        break;
+    }
+    case DType::Float64: {
+        auto *data = linear.typed_data<double>();
+        for (size_t i = 0; i < num; ++i) {
+            data[i] = std::pow(base, data[i]);
+        }
+        break;
+    }
+    default:
+        throw TypeError::unsupported_dtype(axiom::dtype_name(dtype), "logspace");
+    }
+
+    return device == Device::GPU ? linear.to(device) : linear;
+}
+
+Tensor Tensor::geomspace(double start, double stop, size_t num, bool endpoint,
+                         DType dtype, Device device) {
+    if (start == 0 || stop == 0) {
+        throw ValueError("Geometric sequence cannot include zero");
+    }
+    if ((start < 0) != (stop < 0)) {
+        throw ValueError(
+            "Geometric sequence start and stop must have the same sign");
+    }
+
+    // geomspace is equivalent to logspace with log endpoints
+    bool negative = start < 0;
+    double log_start = std::log10(std::abs(start));
+    double log_stop = std::log10(std::abs(stop));
+
+    auto result = logspace(log_start, log_stop, num, endpoint, 10.0, dtype,
+                           Device::CPU);
+
+    if (negative) {
+        switch (dtype) {
+        case DType::Float32: {
+            auto *data = result.typed_data<float>();
+            for (size_t i = 0; i < num; ++i) {
+                data[i] = -data[i];
+            }
+            break;
+        }
+        case DType::Float64: {
+            auto *data = result.typed_data<double>();
+            for (size_t i = 0; i < num; ++i) {
+                data[i] = -data[i];
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    return device == Device::GPU ? result.to(device) : result;
+}
+
+Tensor Tensor::zeros_like(const Tensor &prototype) {
+    return zeros(prototype.shape(), prototype.dtype(), prototype.device(),
+                 prototype.memory_order());
+}
+
+Tensor Tensor::ones_like(const Tensor &prototype) {
+    return ones(prototype.shape(), prototype.dtype(), prototype.device(),
+                prototype.memory_order());
+}
+
+Tensor Tensor::empty_like(const Tensor &prototype) {
+    return empty(prototype.shape(), prototype.dtype(), prototype.device(),
+                 prototype.memory_order());
+}
+
+Tensor Tensor::diag(const Tensor &v, int64_t k) {
+    if (v.ndim() == 1) {
+        // Construct diagonal matrix from 1D input
+        size_t n = v.shape()[0];
+        size_t mat_size = n + std::abs(k);
+        auto result = zeros({mat_size, mat_size}, v.dtype(), v.device(),
+                            v.memory_order());
+
+        if (v.device() != Device::CPU) {
+            throw DeviceError::cpu_only("diag");
+        }
+
+        size_t row_offset = k < 0 ? static_cast<size_t>(-k) : 0;
+        size_t col_offset = k > 0 ? static_cast<size_t>(k) : 0;
+
+        switch (v.dtype()) {
+#define DIAG_CASE(DTYPE, CTYPE)                                                \
+    case DTYPE: {                                                              \
+        const auto *src = v.typed_data<CTYPE>();                               \
+        for (size_t i = 0; i < n; ++i) {                                       \
+            result.set_item<CTYPE>({row_offset + i, col_offset + i}, src[i]);  \
+        }                                                                      \
+        break;                                                                 \
+    }
+            DIAG_CASE(DType::Float32, float)
+            DIAG_CASE(DType::Float64, double)
+            DIAG_CASE(DType::Int32, int32_t)
+            DIAG_CASE(DType::Int64, int64_t)
+            DIAG_CASE(DType::Complex64, complex64_t)
+            DIAG_CASE(DType::Complex128, complex128_t)
+#undef DIAG_CASE
+        default:
+            throw TypeError::unsupported_dtype(axiom::dtype_name(v.dtype()),
+                                               "diag");
+        }
+        return result;
+    } else if (v.ndim() == 2) {
+        // Extract diagonal from 2D input
+        size_t rows = v.shape()[0];
+        size_t cols = v.shape()[1];
+        size_t diag_start_row = k < 0 ? static_cast<size_t>(-k) : 0;
+        size_t diag_start_col = k > 0 ? static_cast<size_t>(k) : 0;
+
+        if (diag_start_row >= rows || diag_start_col >= cols) {
+            return empty({0}, v.dtype(), v.device());
+        }
+
+        size_t diag_len =
+            std::min(rows - diag_start_row, cols - diag_start_col);
+        auto result = empty({diag_len}, v.dtype(), Device::CPU);
+
+        if (v.device() != Device::CPU) {
+            throw DeviceError::cpu_only("diag");
+        }
+
+        switch (v.dtype()) {
+#define DIAG_EXTRACT_CASE(DTYPE, CTYPE)                                        \
+    case DTYPE: {                                                              \
+        auto *dst = result.typed_data<CTYPE>();                                \
+        for (size_t i = 0; i < diag_len; ++i) {                                \
+            dst[i] =                                                           \
+                v.item<CTYPE>({diag_start_row + i, diag_start_col + i});       \
+        }                                                                      \
+        break;                                                                 \
+    }
+            DIAG_EXTRACT_CASE(DType::Float32, float)
+            DIAG_EXTRACT_CASE(DType::Float64, double)
+            DIAG_EXTRACT_CASE(DType::Int32, int32_t)
+            DIAG_EXTRACT_CASE(DType::Int64, int64_t)
+            DIAG_EXTRACT_CASE(DType::Complex64, complex64_t)
+            DIAG_EXTRACT_CASE(DType::Complex128, complex128_t)
+#undef DIAG_EXTRACT_CASE
+        default:
+            throw TypeError::unsupported_dtype(axiom::dtype_name(v.dtype()),
+                                               "diag");
+        }
+        return result;
+    } else {
+        throw ShapeError("diag requires 1-D or 2-D input, got " +
+                         std::to_string(v.ndim()) + "-D");
+    }
+}
+
+Tensor Tensor::tri(size_t N, size_t M, int64_t k, DType dtype, Device device) {
+    if (M == 0) {
+        M = N;
+    }
+    auto result = zeros({N, M}, dtype, Device::CPU);
+
+    switch (dtype) {
+#define TRI_CASE(DTYPE, CTYPE, ONE)                                            \
+    case DTYPE: {                                                              \
+        for (size_t i = 0; i < N; ++i) {                                       \
+            int64_t max_col =                                                  \
+                std::min(static_cast<int64_t>(M), static_cast<int64_t>(i) + k + 1);                                      \
+            for (int64_t j = 0; j < max_col; ++j) {                            \
+                result.set_item<CTYPE>({i, static_cast<size_t>(j)}, ONE);      \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        TRI_CASE(DType::Float32, float, 1.0f)
+        TRI_CASE(DType::Float64, double, 1.0)
+        TRI_CASE(DType::Int32, int32_t, 1)
+        TRI_CASE(DType::Int64, int64_t, 1)
+        TRI_CASE(DType::Bool, bool, true)
+#undef TRI_CASE
+    default:
+        throw TypeError::unsupported_dtype(axiom::dtype_name(dtype), "tri");
+    }
+
+    return device == Device::GPU ? result.to(device) : result;
+}
+
+Tensor Tensor::tril(const Tensor &m, int64_t k) {
+    if (m.ndim() < 2) {
+        throw ShapeError("tril requires at least 2-D input, got " +
+                         std::to_string(m.ndim()) + "-D");
+    }
+
+    auto result = zeros_like(m);
+    if (m.device() != Device::CPU) {
+        throw DeviceError::cpu_only("tril");
+    }
+
+    size_t rows = m.shape()[m.ndim() - 2];
+    size_t cols = m.shape()[m.ndim() - 1];
+    size_t batch_size = m.size() / (rows * cols);
+
+    switch (m.dtype()) {
+#define TRIL_CASE(DTYPE, CTYPE)                                                \
+    case DTYPE: {                                                              \
+        const auto *src = m.typed_data<CTYPE>();                               \
+        auto *dst = result.typed_data<CTYPE>();                                \
+        for (size_t b = 0; b < batch_size; ++b) {                              \
+            for (size_t i = 0; i < rows; ++i) {                                \
+                int64_t max_col = std::min(static_cast<int64_t>(cols),         \
+                                           static_cast<int64_t>(i) + k + 1);   \
+                for (int64_t j = 0; j < max_col; ++j) {                        \
+                    size_t idx = b * rows * cols + i * cols +                  \
+                                 static_cast<size_t>(j);                       \
+                    dst[idx] = src[idx];                                       \
+                }                                                              \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        TRIL_CASE(DType::Float32, float)
+        TRIL_CASE(DType::Float64, double)
+        TRIL_CASE(DType::Int32, int32_t)
+        TRIL_CASE(DType::Int64, int64_t)
+        TRIL_CASE(DType::Complex64, complex64_t)
+        TRIL_CASE(DType::Complex128, complex128_t)
+        TRIL_CASE(DType::Bool, bool)
+#undef TRIL_CASE
+    default:
+        throw TypeError::unsupported_dtype(axiom::dtype_name(m.dtype()), "tril");
+    }
+
+    return result;
+}
+
+Tensor Tensor::triu(const Tensor &m, int64_t k) {
+    if (m.ndim() < 2) {
+        throw ShapeError("triu requires at least 2-D input, got " +
+                         std::to_string(m.ndim()) + "-D");
+    }
+
+    auto result = zeros_like(m);
+    if (m.device() != Device::CPU) {
+        throw DeviceError::cpu_only("triu");
+    }
+
+    size_t rows = m.shape()[m.ndim() - 2];
+    size_t cols = m.shape()[m.ndim() - 1];
+    size_t batch_size = m.size() / (rows * cols);
+
+    switch (m.dtype()) {
+#define TRIU_CASE(DTYPE, CTYPE)                                                \
+    case DTYPE: {                                                              \
+        const auto *src = m.typed_data<CTYPE>();                               \
+        auto *dst = result.typed_data<CTYPE>();                                \
+        for (size_t b = 0; b < batch_size; ++b) {                              \
+            for (size_t i = 0; i < rows; ++i) {                                \
+                int64_t min_col =                                              \
+                    std::max(int64_t(0), static_cast<int64_t>(i) + k);         \
+                for (size_t j = static_cast<size_t>(min_col); j < cols; ++j) { \
+                    size_t idx = b * rows * cols + i * cols + j;               \
+                    dst[idx] = src[idx];                                       \
+                }                                                              \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        TRIU_CASE(DType::Float32, float)
+        TRIU_CASE(DType::Float64, double)
+        TRIU_CASE(DType::Int32, int32_t)
+        TRIU_CASE(DType::Int64, int64_t)
+        TRIU_CASE(DType::Complex64, complex64_t)
+        TRIU_CASE(DType::Complex128, complex128_t)
+        TRIU_CASE(DType::Bool, bool)
+#undef TRIU_CASE
+    default:
+        throw TypeError::unsupported_dtype(axiom::dtype_name(m.dtype()), "triu");
+    }
+
+    return result;
+}
+
 // ============================================================================
 // File I/O method implementations
 // ============================================================================
