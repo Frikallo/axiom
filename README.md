@@ -42,14 +42,9 @@ If you know NumPy or PyTorch, you already know Axiom.
 
 ### Axiom is fast.
 
-| Operation | CPU | GPU | Speedup |
-|-----------|-----|-----|---------|
-| MatMul 2048² | 4.2ms | 0.8ms | **5×** |
-| MatMul 4096² | 32ms | 1.8ms | **18×** |
-| Softmax 10M | 2.8ms | 0.4ms | **7×** |
-| LayerNorm | 1.2ms | 0.15ms | **8×** |
+<img src="assets/matmul_benchmark.svg" alt="Matmul Benchmark" width="100%">
 
-**Full GPU acceleration.** Every op on Metal.
+**3500+ GFLOPS** on M4 Pro. Beats Eigen & PyTorch.
 
 </td>
 </tr>
