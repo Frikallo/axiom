@@ -164,6 +164,86 @@ Tensor matrix_power(const Tensor &a, int n);
 std::pair<Tensor, Tensor> multi_dot(const std::vector<Tensor> &tensors);
 
 // ============================================================================
+// Matrix and Vector Products (NumPy parity)
+// ============================================================================
+
+// Dot product with NumPy semantics:
+// - 1D @ 1D: inner product (scalar result)
+// - 1D @ 2D: (N,) @ (N,M) = (M,) vector-matrix product
+// - 2D @ 1D: (M,N) @ (N,) = (M,) matrix-vector product
+// - 2D @ 2D: matrix multiplication
+// - ND @ ND: sum product over last axis of a and second-to-last of b
+Tensor dot(const Tensor &a, const Tensor &b);
+
+// Vector dot product (conjugates first argument for complex)
+// Flattens both inputs to 1D, conjugates a, then computes dot product
+Tensor vdot(const Tensor &a, const Tensor &b);
+
+// Inner product of two arrays
+// For 1D arrays: ordinary dot product
+// For ND arrays: sum product over last axes
+Tensor inner(const Tensor &a, const Tensor &b);
+
+// Outer product of two vectors
+// a: (M,) and b: (N,) -> result: (M, N)
+Tensor outer(const Tensor &a, const Tensor &b);
+
+// Matrix-vector product
+// x1: (..., M, N) matrix, x2: (..., N) vector -> (..., M)
+// Uses BLAS sgemv/dgemv for optimal performance
+Tensor matvec(const Tensor &x1, const Tensor &x2);
+
+// Vector-matrix product
+// x1: (..., M) vector, x2: (..., M, N) matrix -> (..., N)
+// Uses BLAS sgemv/dgemv with transpose for optimal performance
+Tensor vecmat(const Tensor &x1, const Tensor &x2);
+
+// Vector dot product along specified axis (NumPy Array API)
+// Computes dot product of vectors along the given axis
+// x1, x2: same shape, axis specifies which dimension to contract
+Tensor vecdot(const Tensor &x1, const Tensor &x2, int axis = -1);
+
+// Tensor contraction (generalized dot product)
+// axes=N: contract last N axes of a with first N axes of b
+Tensor tensordot(const Tensor &a, const Tensor &b, int axes = 2);
+
+// Tensor contraction with explicit axes
+// axes: pair of (a_axes, b_axes) to contract
+Tensor tensordot(const Tensor &a, const Tensor &b,
+                 const std::pair<std::vector<int>, std::vector<int>> &axes);
+
+// Kronecker product
+// For 2D: result[i*p+k, j*q+l] = a[i,j] * b[k,l]
+// where a is (m,n) and b is (p,q), result is (m*p, n*q)
+Tensor kron(const Tensor &a, const Tensor &b);
+
+// Cross product of two 3-element vectors
+// x1, x2: (..., 3) arrays with 3-element vectors
+// axis: axis with dimension 3 (default -1)
+Tensor cross(const Tensor &x1, const Tensor &x2, int axis = -1);
+
+// ============================================================================
+// Decomposition Variants
+// ============================================================================
+
+// Singular values only (more efficient than full SVD)
+// Returns 1D tensor of singular values for each matrix in batch
+Tensor svdvals(const Tensor &x);
+
+// Eigenvalues only (more efficient than full eigendecomposition)
+// Returns eigenvalues which may be complex for non-symmetric matrices
+Tensor eigvals(const Tensor &a);
+
+// Eigenvalues of symmetric/Hermitian matrix only
+// Returns real eigenvalues (always real for symmetric/Hermitian)
+Tensor eigvalsh(const Tensor &a);
+
+// Sign and (natural) logarithm of determinant
+// More numerically stable than computing det directly for large matrices
+// Returns pair (sign, logabsdet) where det(a) = sign * exp(logabsdet)
+std::pair<Tensor, Tensor> slogdet(const Tensor &a);
+
+// ============================================================================
 // Utility Functions
 // ============================================================================
 

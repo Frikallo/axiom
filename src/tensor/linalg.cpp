@@ -1,11 +1,13 @@
 #include <axiom/linalg.hpp>
 #include <axiom/operations.hpp>
 
+#include "backends/cpu/blas/blas_backend.hpp"
 #include "backends/cpu/lapack/lapack_backend.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -1895,6 +1897,1197 @@ std::pair<Tensor, Tensor> multi_dot(const std::vector<Tensor> &tensors) {
         result = result.matmul(tensors[i]);
     }
     return {result, Tensor()};
+}
+
+// ============================================================================
+// Matrix and Vector Products (NumPy parity)
+// ============================================================================
+
+Tensor dot(const Tensor &a, const Tensor &b) {
+    // NumPy dot semantics:
+    // 1D @ 1D -> scalar (inner product)
+    // 1D @ 2D -> (N,) @ (N,M) = (M,) vector-matrix
+    // 2D @ 1D -> (M,N) @ (N,) = (M,) matrix-vector
+    // 2D @ 2D -> matmul
+    // ND @ ND -> sum product over last axis of a, second-to-last of b
+
+    auto a_work = ensure_cpu_contiguous_colmajor(a);
+    auto b_work = ensure_cpu_contiguous_colmajor(b);
+
+    // 1D @ 1D: inner product -> scalar
+    if (a.ndim() == 1 && b.ndim() == 1) {
+        if (a.shape()[0] != b.shape()[0]) {
+            throw ShapeError("dot: vectors must have same length, got " +
+                             std::to_string(a.shape()[0]) + " and " +
+                             std::to_string(b.shape()[0]));
+        }
+
+        size_t n = a.shape()[0];
+
+        // Use BLAS for float/double
+        if (a.dtype() == DType::Float32 && b.dtype() == DType::Float32) {
+            auto &backend = backends::cpu::blas::get_blas_backend();
+            float result = backend.sdot(n, a_work.typed_data<float>(), 1,
+                                        b_work.typed_data<float>(), 1);
+            return Tensor::full({}, result);
+        } else if (a.dtype() == DType::Float64 && b.dtype() == DType::Float64) {
+            auto &backend = backends::cpu::blas::get_blas_backend();
+            double result = backend.ddot(n, a_work.typed_data<double>(), 1,
+                                         b_work.typed_data<double>(), 1);
+            return Tensor::full({}, result);
+        } else {
+            // Fallback for other types: promote and compute manually
+            auto promoted_dtype = ops::promote_types(a.dtype(), b.dtype());
+            auto a_promoted = a.astype(promoted_dtype);
+            auto b_promoted = b.astype(promoted_dtype);
+
+            if (promoted_dtype == DType::Complex64) {
+                using cplx = std::complex<float>;
+                const cplx *a_data = a_promoted.typed_data<cplx>();
+                const cplx *b_data = b_promoted.typed_data<cplx>();
+                cplx sum(0.0f, 0.0f);
+                for (size_t i = 0; i < n; ++i) {
+                    sum += a_data[i] * b_data[i];
+                }
+                return Tensor::full({}, sum);
+            } else if (promoted_dtype == DType::Complex128) {
+                using cplx = std::complex<double>;
+                const cplx *a_data = a_promoted.typed_data<cplx>();
+                const cplx *b_data = b_promoted.typed_data<cplx>();
+                cplx sum(0.0, 0.0);
+                for (size_t i = 0; i < n; ++i) {
+                    sum += a_data[i] * b_data[i];
+                }
+                return Tensor::full({}, sum);
+            } else {
+                // Convert to float64 for other types
+                return dot(a.astype(DType::Float64), b.astype(DType::Float64));
+            }
+        }
+    }
+
+    // 2D @ 2D or higher: use matmul
+    if (a.ndim() >= 2 && b.ndim() >= 2) {
+        return a.matmul(b);
+    }
+
+    // 1D @ 2D: (N,) @ (N, M) -> (M,)
+    if (a.ndim() == 1 && b.ndim() == 2) {
+        // Reshape a to (1, N), matmul, then squeeze
+        auto a_reshaped = a.reshape({1, a.shape()[0]});
+        auto result = a_reshaped.matmul(b);
+        return result.squeeze(0);
+    }
+
+    // 2D @ 1D: (M, N) @ (N,) -> (M,)
+    if (a.ndim() == 2 && b.ndim() == 1) {
+        return matvec(a, b);
+    }
+
+    // ND @ 1D: sum product over last axis of a with b
+    if (a.ndim() > 2 && b.ndim() == 1) {
+        if (a.shape()[a.ndim() - 1] != b.shape()[0]) {
+            throw ShapeError("dot: last axis of a must match b length");
+        }
+        // Reshape a to (..., K) as 2D: (prod_batch, K)
+        size_t k = a.shape()[a.ndim() - 1];
+        size_t batch = a.size() / k;
+        auto a_2d = a.reshape({batch, k});
+        auto result_1d = matvec(a_2d, b);
+        // Reshape back to batch_shape
+        Shape result_shape;
+        for (size_t i = 0; i + 1 < a.ndim(); ++i) {
+            result_shape.push_back(a.shape()[i]);
+        }
+        return result_1d.reshape(result_shape);
+    }
+
+    // 1D @ ND: not standard NumPy behavior, treat as (1, N) @ ND
+    if (a.ndim() == 1 && b.ndim() > 2) {
+        auto a_2d = a.reshape({1, a.shape()[0]});
+        auto result = a_2d.matmul(b);
+        return result.squeeze(-2);
+    }
+
+    throw ShapeError("dot: unsupported dimension combination");
+}
+
+Tensor vdot(const Tensor &a, const Tensor &b) {
+    // vdot flattens both inputs and conjugates the first argument
+    auto a_flat = a.flatten();
+    auto b_flat = b.flatten();
+
+    if (a_flat.shape()[0] != b_flat.shape()[0]) {
+        throw ShapeError("vdot: arrays must have same number of elements");
+    }
+
+    // Conjugate first argument for complex types
+    Tensor a_conj;
+    if (a.dtype() == DType::Complex64 || a.dtype() == DType::Complex128) {
+        a_conj = ops::conj(a_flat);
+    } else {
+        a_conj = a_flat;
+    }
+
+    return dot(a_conj, b_flat);
+}
+
+Tensor inner(const Tensor &a, const Tensor &b) {
+    // Inner product: sum product over last axes
+    // For 1D arrays: ordinary dot product (same as dot)
+    // For ND arrays: sum over last axis of a and last axis of b
+
+    if (a.ndim() == 1 && b.ndim() == 1) {
+        return dot(a, b);
+    }
+
+    if (a.shape()[a.ndim() - 1] != b.shape()[b.ndim() - 1]) {
+        throw ShapeError("inner: last dimensions must match, got " +
+                         std::to_string(a.shape()[a.ndim() - 1]) + " and " +
+                         std::to_string(b.shape()[b.ndim() - 1]));
+    }
+
+    // For ND arrays, result shape is a.shape[:-1] + b.shape[:-1]
+    // We implement via transpose + matmul
+    // inner(a, b) = a @ b.T for 2D case
+
+    if (a.ndim() == 2 && b.ndim() == 2) {
+        return a.matmul(b.transpose());
+    }
+
+    // General case: batch processing
+    // Result shape: a.shape[:-1] + b.shape[:-1]
+    Shape result_shape;
+    for (size_t i = 0; i + 1 < a.ndim(); ++i) {
+        result_shape.push_back(a.shape()[i]);
+    }
+    for (size_t i = 0; i + 1 < b.ndim(); ++i) {
+        result_shape.push_back(b.shape()[i]);
+    }
+
+    size_t k = a.shape()[a.ndim() - 1];
+    size_t a_batch = a.size() / k;
+    size_t b_batch = b.size() / k;
+
+    auto promoted_dtype = ops::promote_types(a.dtype(), b.dtype());
+    auto a_work = a.astype(promoted_dtype).reshape({a_batch, k});
+    auto b_work = b.astype(promoted_dtype).reshape({b_batch, k});
+
+    Tensor result = Tensor(result_shape, promoted_dtype);
+
+    if (promoted_dtype == DType::Float32) {
+        float *result_data = result.typed_data<float>();
+        const float *a_data = a_work.typed_data<float>();
+        const float *b_data = b_work.typed_data<float>();
+        auto &backend = backends::cpu::blas::get_blas_backend();
+
+        for (size_t i = 0; i < a_batch; ++i) {
+            for (size_t j = 0; j < b_batch; ++j) {
+                result_data[i * b_batch + j] =
+                    backend.sdot(k, a_data + i * k, 1, b_data + j * k, 1);
+            }
+        }
+    } else if (promoted_dtype == DType::Float64) {
+        double *result_data = result.typed_data<double>();
+        const double *a_data = a_work.typed_data<double>();
+        const double *b_data = b_work.typed_data<double>();
+        auto &backend = backends::cpu::blas::get_blas_backend();
+
+        for (size_t i = 0; i < a_batch; ++i) {
+            for (size_t j = 0; j < b_batch; ++j) {
+                result_data[i * b_batch + j] =
+                    backend.ddot(k, a_data + i * k, 1, b_data + j * k, 1);
+            }
+        }
+    } else {
+        // Manual computation for complex types
+        return inner(a.astype(DType::Float64), b.astype(DType::Float64));
+    }
+
+    return result;
+}
+
+Tensor outer(const Tensor &a, const Tensor &b) {
+    // Outer product: flatten both inputs, compute outer product
+    auto a_flat = a.flatten();
+    auto b_flat = b.flatten();
+
+    size_t m = a_flat.shape()[0];
+    size_t n = b_flat.shape()[0];
+
+    auto promoted_dtype = ops::promote_types(a.dtype(), b.dtype());
+    auto a_work = a_flat.astype(promoted_dtype);
+    auto b_work = b_flat.astype(promoted_dtype);
+
+    Tensor result = Tensor({m, n}, promoted_dtype);
+
+    if (promoted_dtype == DType::Float32) {
+        float *result_data = result.typed_data<float>();
+        const float *a_data = a_work.typed_data<float>();
+        const float *b_data = b_work.typed_data<float>();
+
+        for (size_t i = 0; i < m; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                result_data[i * n + j] = a_data[i] * b_data[j];
+            }
+        }
+    } else if (promoted_dtype == DType::Float64) {
+        double *result_data = result.typed_data<double>();
+        const double *a_data = a_work.typed_data<double>();
+        const double *b_data = b_work.typed_data<double>();
+
+        for (size_t i = 0; i < m; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                result_data[i * n + j] = a_data[i] * b_data[j];
+            }
+        }
+    } else if (promoted_dtype == DType::Complex64) {
+        using cplx = std::complex<float>;
+        cplx *result_data = result.typed_data<cplx>();
+        const cplx *a_data = a_work.typed_data<cplx>();
+        const cplx *b_data = b_work.typed_data<cplx>();
+
+        for (size_t i = 0; i < m; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                result_data[i * n + j] = a_data[i] * b_data[j];
+            }
+        }
+    } else if (promoted_dtype == DType::Complex128) {
+        using cplx = std::complex<double>;
+        cplx *result_data = result.typed_data<cplx>();
+        const cplx *a_data = a_work.typed_data<cplx>();
+        const cplx *b_data = b_work.typed_data<cplx>();
+
+        for (size_t i = 0; i < m; ++i) {
+            for (size_t j = 0; j < n; ++j) {
+                result_data[i * n + j] = a_data[i] * b_data[j];
+            }
+        }
+    } else {
+        return outer(a.astype(DType::Float64), b.astype(DType::Float64));
+    }
+
+    return result;
+}
+
+Tensor matvec(const Tensor &x1, const Tensor &x2) {
+    // Matrix-vector product: (..., M, N) @ (..., N) -> (..., M)
+    if (x1.ndim() < 2) {
+        throw ShapeError("matvec: first argument must be at least 2D matrix");
+    }
+    if (x2.ndim() < 1) {
+        throw ShapeError("matvec: second argument must be at least 1D vector");
+    }
+
+    size_t m = x1.shape()[x1.ndim() - 2];
+    size_t n = x1.shape()[x1.ndim() - 1];
+
+    if (x2.shape()[x2.ndim() - 1] != n) {
+        throw ShapeError("matvec: matrix columns (" + std::to_string(n) +
+                         ") must match vector length (" +
+                         std::to_string(x2.shape()[x2.ndim() - 1]) + ")");
+    }
+
+    auto promoted_dtype = ops::promote_types(x1.dtype(), x2.dtype());
+    auto mat = ensure_cpu_contiguous_colmajor(x1.astype(promoted_dtype));
+    auto vec = ensure_cpu_contiguous_colmajor(x2.astype(promoted_dtype));
+
+    // Handle batching
+    size_t batch_size = compute_batch_size(x1.shape());
+    Shape batch_shape = get_batch_shape(x1.shape());
+
+    Shape result_shape = batch_shape;
+    result_shape.push_back(m);
+
+    Tensor result = Tensor(result_shape, promoted_dtype);
+
+    if (promoted_dtype == DType::Float32) {
+        auto &backend = backends::cpu::blas::get_blas_backend();
+        const float *mat_data = mat.typed_data<float>();
+        const float *vec_data = vec.typed_data<float>();
+        float *result_data = result.typed_data<float>();
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            const float *mat_batch = mat_data + b * m * n;
+            const float *vec_batch = vec_data + (x2.ndim() > 1 ? b * n : 0);
+            float *result_batch = result_data + b * m;
+
+            // BLAS gemv with row-major: y = A * x
+            // A is (m, n), x is (n,), y is (m,)
+            // sgemv(trans=false, M=m, N=n, alpha, A, lda=n, x, incx, beta, y,
+            // incy)
+            backend.sgemv(false, m, n, 1.0f, mat_batch, n, vec_batch, 1, 0.0f,
+                          result_batch, 1);
+        }
+    } else if (promoted_dtype == DType::Float64) {
+        auto &backend = backends::cpu::blas::get_blas_backend();
+        const double *mat_data = mat.typed_data<double>();
+        const double *vec_data = vec.typed_data<double>();
+        double *result_data = result.typed_data<double>();
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            const double *mat_batch = mat_data + b * m * n;
+            const double *vec_batch = vec_data + (x2.ndim() > 1 ? b * n : 0);
+            double *result_batch = result_data + b * m;
+
+            backend.dgemv(false, m, n, 1.0, mat_batch, n, vec_batch, 1, 0.0,
+                          result_batch, 1);
+        }
+    } else {
+        // Manual computation for complex types
+        if (promoted_dtype == DType::Complex64) {
+            using cplx = std::complex<float>;
+            const cplx *mat_data = mat.typed_data<cplx>();
+            const cplx *vec_data = vec.typed_data<cplx>();
+            cplx *result_data = result.typed_data<cplx>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                const cplx *mat_batch = mat_data + b * m * n;
+                const cplx *vec_batch = vec_data + (x2.ndim() > 1 ? b * n : 0);
+                cplx *result_batch = result_data + b * m;
+
+                for (size_t i = 0; i < m; ++i) {
+                    cplx sum(0.0f, 0.0f);
+                    for (size_t j = 0; j < n; ++j) {
+                        sum += mat_batch[i * n + j] * vec_batch[j];
+                    }
+                    result_batch[i] = sum;
+                }
+            }
+        } else if (promoted_dtype == DType::Complex128) {
+            using cplx = std::complex<double>;
+            const cplx *mat_data = mat.typed_data<cplx>();
+            const cplx *vec_data = vec.typed_data<cplx>();
+            cplx *result_data = result.typed_data<cplx>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                const cplx *mat_batch = mat_data + b * m * n;
+                const cplx *vec_batch = vec_data + (x2.ndim() > 1 ? b * n : 0);
+                cplx *result_batch = result_data + b * m;
+
+                for (size_t i = 0; i < m; ++i) {
+                    cplx sum(0.0, 0.0);
+                    for (size_t j = 0; j < n; ++j) {
+                        sum += mat_batch[i * n + j] * vec_batch[j];
+                    }
+                    result_batch[i] = sum;
+                }
+            }
+        } else {
+            return matvec(x1.astype(DType::Float64), x2.astype(DType::Float64));
+        }
+    }
+
+    return result;
+}
+
+Tensor vecmat(const Tensor &x1, const Tensor &x2) {
+    // Vector-matrix product: (..., M) @ (..., M, N) -> (..., N)
+    if (x1.ndim() < 1) {
+        throw ShapeError("vecmat: first argument must be at least 1D vector");
+    }
+    if (x2.ndim() < 2) {
+        throw ShapeError("vecmat: second argument must be at least 2D matrix");
+    }
+
+    size_t m = x2.shape()[x2.ndim() - 2];
+    size_t n = x2.shape()[x2.ndim() - 1];
+
+    if (x1.shape()[x1.ndim() - 1] != m) {
+        throw ShapeError("vecmat: vector length (" +
+                         std::to_string(x1.shape()[x1.ndim() - 1]) +
+                         ") must match matrix rows (" + std::to_string(m) +
+                         ")");
+    }
+
+    auto promoted_dtype = ops::promote_types(x1.dtype(), x2.dtype());
+    auto vec = ensure_cpu_contiguous_colmajor(x1.astype(promoted_dtype));
+    auto mat = ensure_cpu_contiguous_colmajor(x2.astype(promoted_dtype));
+
+    // Handle batching
+    size_t batch_size = compute_batch_size(x2.shape());
+    Shape batch_shape = get_batch_shape(x2.shape());
+
+    Shape result_shape = batch_shape;
+    result_shape.push_back(n);
+
+    Tensor result = Tensor(result_shape, promoted_dtype);
+
+    if (promoted_dtype == DType::Float32) {
+        auto &backend = backends::cpu::blas::get_blas_backend();
+        const float *vec_data = vec.typed_data<float>();
+        const float *mat_data = mat.typed_data<float>();
+        float *result_data = result.typed_data<float>();
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            const float *vec_batch = vec_data + (x1.ndim() > 1 ? b * m : 0);
+            const float *mat_batch = mat_data + b * m * n;
+            float *result_batch = result_data + b * n;
+
+            // vecmat: v @ A where v is (m,), A is (m,n) -> (n,)
+            // This equals A^T @ v for column vector interpretation
+            // BLAS row-major: sgemv(trans=true, M=m, N=n, ...) computes y = A^T
+            // @ x
+            backend.sgemv(true, m, n, 1.0f, mat_batch, n, vec_batch, 1, 0.0f,
+                          result_batch, 1);
+        }
+    } else if (promoted_dtype == DType::Float64) {
+        auto &backend = backends::cpu::blas::get_blas_backend();
+        const double *vec_data = vec.typed_data<double>();
+        const double *mat_data = mat.typed_data<double>();
+        double *result_data = result.typed_data<double>();
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            const double *vec_batch = vec_data + (x1.ndim() > 1 ? b * m : 0);
+            const double *mat_batch = mat_data + b * m * n;
+            double *result_batch = result_data + b * n;
+
+            backend.dgemv(true, m, n, 1.0, mat_batch, n, vec_batch, 1, 0.0,
+                          result_batch, 1);
+        }
+    } else {
+        // Manual computation for complex types
+        if (promoted_dtype == DType::Complex64) {
+            using cplx = std::complex<float>;
+            const cplx *vec_data = vec.typed_data<cplx>();
+            const cplx *mat_data = mat.typed_data<cplx>();
+            cplx *result_data = result.typed_data<cplx>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                const cplx *vec_batch = vec_data + (x1.ndim() > 1 ? b * m : 0);
+                const cplx *mat_batch = mat_data + b * m * n;
+                cplx *result_batch = result_data + b * n;
+
+                for (size_t j = 0; j < n; ++j) {
+                    cplx sum(0.0f, 0.0f);
+                    for (size_t i = 0; i < m; ++i) {
+                        sum += vec_batch[i] * mat_batch[i * n + j];
+                    }
+                    result_batch[j] = sum;
+                }
+            }
+        } else if (promoted_dtype == DType::Complex128) {
+            using cplx = std::complex<double>;
+            const cplx *vec_data = vec.typed_data<cplx>();
+            const cplx *mat_data = mat.typed_data<cplx>();
+            cplx *result_data = result.typed_data<cplx>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                const cplx *vec_batch = vec_data + (x1.ndim() > 1 ? b * m : 0);
+                const cplx *mat_batch = mat_data + b * m * n;
+                cplx *result_batch = result_data + b * n;
+
+                for (size_t j = 0; j < n; ++j) {
+                    cplx sum(0.0, 0.0);
+                    for (size_t i = 0; i < m; ++i) {
+                        sum += vec_batch[i] * mat_batch[i * n + j];
+                    }
+                    result_batch[j] = sum;
+                }
+            }
+        } else {
+            return vecmat(x1.astype(DType::Float64), x2.astype(DType::Float64));
+        }
+    }
+
+    return result;
+}
+
+Tensor vecdot(const Tensor &x1, const Tensor &x2, int axis) {
+    // Vector dot product along specified axis
+    if (x1.shape() != x2.shape()) {
+        throw ShapeError("vecdot: inputs must have the same shape");
+    }
+
+    // Normalize axis
+    int ndim = static_cast<int>(x1.ndim());
+    if (axis < 0) {
+        axis += ndim;
+    }
+    if (axis < 0 || axis >= ndim) {
+        throw ShapeError("vecdot: axis out of range");
+    }
+
+    size_t k = x1.shape()[axis];
+    auto promoted_dtype = ops::promote_types(x1.dtype(), x2.dtype());
+    auto a = x1.astype(promoted_dtype);
+    auto b = x2.astype(promoted_dtype);
+
+    // Result shape: remove the contracted axis
+    Shape result_shape;
+    for (int i = 0; i < ndim; ++i) {
+        if (i != axis) {
+            result_shape.push_back(x1.shape()[i]);
+        }
+    }
+    if (result_shape.empty()) {
+        result_shape = {};
+    }
+
+    // Move contracted axis to last position for efficient iteration
+    std::vector<int> perm;
+    for (int i = 0; i < ndim; ++i) {
+        if (i != axis) {
+            perm.push_back(i);
+        }
+    }
+    perm.push_back(axis);
+
+    auto a_perm = a.transpose(perm).ascontiguousarray();
+    auto b_perm = b.transpose(perm).ascontiguousarray();
+
+    size_t outer_size = a_perm.size() / k;
+    Tensor result = Tensor(result_shape, promoted_dtype);
+
+    if (promoted_dtype == DType::Float32) {
+        auto &backend = backends::cpu::blas::get_blas_backend();
+        const float *a_data = a_perm.typed_data<float>();
+        const float *b_data = b_perm.typed_data<float>();
+        float *result_data = result.typed_data<float>();
+
+        for (size_t i = 0; i < outer_size; ++i) {
+            result_data[i] =
+                backend.sdot(k, a_data + i * k, 1, b_data + i * k, 1);
+        }
+    } else if (promoted_dtype == DType::Float64) {
+        auto &backend = backends::cpu::blas::get_blas_backend();
+        const double *a_data = a_perm.typed_data<double>();
+        const double *b_data = b_perm.typed_data<double>();
+        double *result_data = result.typed_data<double>();
+
+        for (size_t i = 0; i < outer_size; ++i) {
+            result_data[i] =
+                backend.ddot(k, a_data + i * k, 1, b_data + i * k, 1);
+        }
+    } else if (promoted_dtype == DType::Complex64) {
+        using cplx = std::complex<float>;
+        const cplx *a_data = a_perm.typed_data<cplx>();
+        const cplx *b_data = b_perm.typed_data<cplx>();
+        cplx *result_data = result.typed_data<cplx>();
+
+        for (size_t i = 0; i < outer_size; ++i) {
+            cplx sum(0.0f, 0.0f);
+            for (size_t j = 0; j < k; ++j) {
+                sum += a_data[i * k + j] * b_data[i * k + j];
+            }
+            result_data[i] = sum;
+        }
+    } else if (promoted_dtype == DType::Complex128) {
+        using cplx = std::complex<double>;
+        const cplx *a_data = a_perm.typed_data<cplx>();
+        const cplx *b_data = b_perm.typed_data<cplx>();
+        cplx *result_data = result.typed_data<cplx>();
+
+        for (size_t i = 0; i < outer_size; ++i) {
+            cplx sum(0.0, 0.0);
+            for (size_t j = 0; j < k; ++j) {
+                sum += a_data[i * k + j] * b_data[i * k + j];
+            }
+            result_data[i] = sum;
+        }
+    } else {
+        return vecdot(x1.astype(DType::Float64), x2.astype(DType::Float64),
+                      axis);
+    }
+
+    return result;
+}
+
+// ============================================================================
+// Phase 2: Complex Products
+// ============================================================================
+
+Tensor tensordot(const Tensor &a, const Tensor &b, int axes) {
+    // Contract last 'axes' dimensions of a with first 'axes' dimensions of b
+    if (axes < 0) {
+        throw ValueError("tensordot: axes must be non-negative");
+    }
+    if (static_cast<size_t>(axes) > a.ndim() ||
+        static_cast<size_t>(axes) > b.ndim()) {
+        throw ShapeError("tensordot: axes exceeds tensor dimensions");
+    }
+
+    // Validate contracted dimensions match
+    for (int i = 0; i < axes; ++i) {
+        size_t a_dim = a.shape()[a.ndim() - axes + i];
+        size_t b_dim = b.shape()[i];
+        if (a_dim != b_dim) {
+            throw ShapeError("tensordot: dimension mismatch at axis " +
+                             std::to_string(i));
+        }
+    }
+
+    // Build axes pair
+    std::vector<int> a_axes, b_axes;
+    for (int i = 0; i < axes; ++i) {
+        a_axes.push_back(static_cast<int>(a.ndim()) - axes + i);
+        b_axes.push_back(i);
+    }
+
+    return tensordot(a, b, {a_axes, b_axes});
+}
+
+Tensor tensordot(const Tensor &a, const Tensor &b,
+                 const std::pair<std::vector<int>, std::vector<int>> &axes) {
+    // General tensor contraction
+    // 1. Move contracted axes to end of a, beginning of b
+    // 2. Reshape to 2D matrices
+    // 3. matmul
+    // 4. Reshape to result
+
+    const auto &a_axes = axes.first;
+    const auto &b_axes = axes.second;
+
+    if (a_axes.size() != b_axes.size()) {
+        throw ValueError("tensordot: axes lists must have same length");
+    }
+
+    int n_contract = static_cast<int>(a_axes.size());
+
+    // Normalize and validate axes
+    std::vector<int> a_axes_norm, b_axes_norm;
+    for (int ax : a_axes) {
+        int norm_ax = ax < 0 ? ax + static_cast<int>(a.ndim()) : ax;
+        if (norm_ax < 0 || norm_ax >= static_cast<int>(a.ndim())) {
+            throw ShapeError("tensordot: invalid axis for first tensor");
+        }
+        a_axes_norm.push_back(norm_ax);
+    }
+    for (int ax : b_axes) {
+        int norm_ax = ax < 0 ? ax + static_cast<int>(b.ndim()) : ax;
+        if (norm_ax < 0 || norm_ax >= static_cast<int>(b.ndim())) {
+            throw ShapeError("tensordot: invalid axis for second tensor");
+        }
+        b_axes_norm.push_back(norm_ax);
+    }
+
+    // Check contracted dimensions match
+    for (size_t i = 0; i < a_axes_norm.size(); ++i) {
+        if (a.shape()[a_axes_norm[i]] != b.shape()[b_axes_norm[i]]) {
+            throw ShapeError("tensordot: contracted dimensions must match");
+        }
+    }
+
+    // Build permutation for a: free axes first, then contracted
+    std::vector<int> a_perm;
+    std::set<int> a_contracted(a_axes_norm.begin(), a_axes_norm.end());
+    for (int i = 0; i < static_cast<int>(a.ndim()); ++i) {
+        if (a_contracted.find(i) == a_contracted.end()) {
+            a_perm.push_back(i);
+        }
+    }
+    for (int ax : a_axes_norm) {
+        a_perm.push_back(ax);
+    }
+
+    // Build permutation for b: contracted first, then free
+    std::vector<int> b_perm;
+    for (int ax : b_axes_norm) {
+        b_perm.push_back(ax);
+    }
+    std::set<int> b_contracted(b_axes_norm.begin(), b_axes_norm.end());
+    for (int i = 0; i < static_cast<int>(b.ndim()); ++i) {
+        if (b_contracted.find(i) == b_contracted.end()) {
+            b_perm.push_back(i);
+        }
+    }
+
+    // Calculate shapes
+    size_t a_free_size = 1, a_contract_size = 1;
+    Shape a_free_shape;
+    for (int i = 0; i < static_cast<int>(a.ndim()) - n_contract; ++i) {
+        size_t dim = a.shape()[a_perm[i]];
+        a_free_size *= dim;
+        a_free_shape.push_back(dim);
+    }
+    for (int i = 0; i < n_contract; ++i) {
+        a_contract_size *= a.shape()[a_axes_norm[i]];
+    }
+
+    size_t b_free_size = 1;
+    Shape b_free_shape;
+    for (int i = n_contract; i < static_cast<int>(b.ndim()); ++i) {
+        size_t dim = b.shape()[b_perm[i]];
+        b_free_size *= dim;
+        b_free_shape.push_back(dim);
+    }
+
+    // Permute and reshape
+    auto a_perm_t = a.transpose(a_perm).ascontiguousarray();
+    auto b_perm_t = b.transpose(b_perm).ascontiguousarray();
+
+    auto a_2d = a_perm_t.reshape({a_free_size, a_contract_size});
+    auto b_2d = b_perm_t.reshape({a_contract_size, b_free_size});
+
+    // Matrix multiply
+    auto result_2d = a_2d.matmul(b_2d);
+
+    // Reshape to final shape
+    Shape result_shape;
+    for (size_t dim : a_free_shape) {
+        result_shape.push_back(dim);
+    }
+    for (size_t dim : b_free_shape) {
+        result_shape.push_back(dim);
+    }
+
+    if (result_shape.empty()) {
+        // Scalar result
+        return result_2d.reshape({});
+    }
+
+    return result_2d.reshape(result_shape);
+}
+
+Tensor kron(const Tensor &a, const Tensor &b) {
+    // Kronecker product
+    // For 2D: result[i*p+k, j*q+l] = a[i,j] * b[k,l]
+    // General approach: use broadcasting and reshape
+
+    auto promoted_dtype = ops::promote_types(a.dtype(), b.dtype());
+    auto a_work = a.astype(promoted_dtype);
+    auto b_work = b.astype(promoted_dtype);
+
+    // Handle dimensions - extend to at least 2D
+    size_t ndim = std::max(a.ndim(), b.ndim());
+    ndim = std::max(ndim, static_cast<size_t>(2));
+
+    // Pad shapes to same ndim
+    Shape a_shape = a.shape();
+    Shape b_shape = b.shape();
+    while (a_shape.size() < ndim) {
+        a_shape.insert(a_shape.begin(), 1);
+    }
+    while (b_shape.size() < ndim) {
+        b_shape.insert(b_shape.begin(), 1);
+    }
+
+    auto a_reshaped = a_work.reshape(a_shape);
+    auto b_reshaped = b_work.reshape(b_shape);
+
+    // For Kronecker product, we interleave dimensions:
+    // a.reshape(..., m, 1, n, 1) * b.reshape(..., 1, p, 1, q)
+    // -> reshape to (..., m*p, n*q)
+
+    // Build interleaved shapes
+    Shape a_interleaved, b_interleaved;
+    for (size_t i = 0; i < ndim; ++i) {
+        a_interleaved.push_back(a_shape[i]);
+        a_interleaved.push_back(1);
+    }
+    for (size_t i = 0; i < ndim; ++i) {
+        b_interleaved.push_back(1);
+        b_interleaved.push_back(b_shape[i]);
+    }
+
+    auto a_int = a_reshaped.reshape(a_interleaved);
+    auto b_int = b_reshaped.reshape(b_interleaved);
+
+    // Multiply with broadcasting
+    auto product = ops::multiply(a_int, b_int);
+
+    // Reshape to final result
+    Shape result_shape;
+    for (size_t i = 0; i < ndim; ++i) {
+        result_shape.push_back(a_shape[i] * b_shape[i]);
+    }
+
+    return product.reshape(result_shape);
+}
+
+Tensor cross(const Tensor &x1, const Tensor &x2, int axis) {
+    // Cross product of two 3-element vectors
+    if (x1.shape() != x2.shape()) {
+        throw ShapeError("cross: inputs must have the same shape");
+    }
+
+    // Normalize axis
+    int ndim = static_cast<int>(x1.ndim());
+    if (axis < 0) {
+        axis += ndim;
+    }
+    if (axis < 0 || axis >= ndim) {
+        throw ShapeError("cross: axis out of range");
+    }
+
+    if (x1.shape()[axis] != 3) {
+        throw ShapeError("cross: dimension at axis must be 3, got " +
+                         std::to_string(x1.shape()[axis]));
+    }
+
+    auto promoted_dtype = ops::promote_types(x1.dtype(), x2.dtype());
+    auto a = x1.astype(promoted_dtype);
+    auto b = x2.astype(promoted_dtype);
+
+    // Move axis to last position for easier indexing
+    std::vector<int> perm;
+    for (int i = 0; i < ndim; ++i) {
+        if (i != axis) {
+            perm.push_back(i);
+        }
+    }
+    perm.push_back(axis);
+
+    auto a_perm = a.transpose(perm).ascontiguousarray();
+    auto b_perm = b.transpose(perm).ascontiguousarray();
+
+    // Result has same shape
+    Tensor result = Tensor(a_perm.shape(), promoted_dtype);
+
+    size_t outer_size = a_perm.size() / 3;
+
+    // Cross product formula: c = a x b
+    // c[0] = a[1]*b[2] - a[2]*b[1]
+    // c[1] = a[2]*b[0] - a[0]*b[2]
+    // c[2] = a[0]*b[1] - a[1]*b[0]
+
+    if (promoted_dtype == DType::Float32) {
+        const float *a_data = a_perm.typed_data<float>();
+        const float *b_data = b_perm.typed_data<float>();
+        float *result_data = result.typed_data<float>();
+
+        for (size_t i = 0; i < outer_size; ++i) {
+            const float *ai = a_data + i * 3;
+            const float *bi = b_data + i * 3;
+            float *ci = result_data + i * 3;
+
+            ci[0] = ai[1] * bi[2] - ai[2] * bi[1];
+            ci[1] = ai[2] * bi[0] - ai[0] * bi[2];
+            ci[2] = ai[0] * bi[1] - ai[1] * bi[0];
+        }
+    } else if (promoted_dtype == DType::Float64) {
+        const double *a_data = a_perm.typed_data<double>();
+        const double *b_data = b_perm.typed_data<double>();
+        double *result_data = result.typed_data<double>();
+
+        for (size_t i = 0; i < outer_size; ++i) {
+            const double *ai = a_data + i * 3;
+            const double *bi = b_data + i * 3;
+            double *ci = result_data + i * 3;
+
+            ci[0] = ai[1] * bi[2] - ai[2] * bi[1];
+            ci[1] = ai[2] * bi[0] - ai[0] * bi[2];
+            ci[2] = ai[0] * bi[1] - ai[1] * bi[0];
+        }
+    } else if (promoted_dtype == DType::Complex64) {
+        using cplx = std::complex<float>;
+        const cplx *a_data = a_perm.typed_data<cplx>();
+        const cplx *b_data = b_perm.typed_data<cplx>();
+        cplx *result_data = result.typed_data<cplx>();
+
+        for (size_t i = 0; i < outer_size; ++i) {
+            const cplx *ai = a_data + i * 3;
+            const cplx *bi = b_data + i * 3;
+            cplx *ci = result_data + i * 3;
+
+            ci[0] = ai[1] * bi[2] - ai[2] * bi[1];
+            ci[1] = ai[2] * bi[0] - ai[0] * bi[2];
+            ci[2] = ai[0] * bi[1] - ai[1] * bi[0];
+        }
+    } else if (promoted_dtype == DType::Complex128) {
+        using cplx = std::complex<double>;
+        const cplx *a_data = a_perm.typed_data<cplx>();
+        const cplx *b_data = b_perm.typed_data<cplx>();
+        cplx *result_data = result.typed_data<cplx>();
+
+        for (size_t i = 0; i < outer_size; ++i) {
+            const cplx *ai = a_data + i * 3;
+            const cplx *bi = b_data + i * 3;
+            cplx *ci = result_data + i * 3;
+
+            ci[0] = ai[1] * bi[2] - ai[2] * bi[1];
+            ci[1] = ai[2] * bi[0] - ai[0] * bi[2];
+            ci[2] = ai[0] * bi[1] - ai[1] * bi[0];
+        }
+    } else {
+        return cross(x1.astype(DType::Float64), x2.astype(DType::Float64),
+                     axis);
+    }
+
+    // Permute back to original axis order
+    std::vector<int> inv_perm(ndim);
+    for (int i = 0; i < ndim; ++i) {
+        inv_perm[perm[i]] = i;
+    }
+
+    return result.transpose(inv_perm);
+}
+
+// ============================================================================
+// Phase 3: Decomposition Variants
+// ============================================================================
+
+Tensor svdvals(const Tensor &x) {
+    // Singular values only - more efficient wrapper around svd
+    auto [U, S, Vh] = svd(x, false);
+    return S;
+}
+
+Tensor eigvals(const Tensor &a) {
+    // Eigenvalues only - wrapper around eig
+    auto [eigenvalues, eigenvectors] = eig(a);
+    return eigenvalues;
+}
+
+Tensor eigvalsh(const Tensor &a) {
+    // Eigenvalues of symmetric/Hermitian matrix only
+    auto [eigenvalues, eigenvectors] = eigh(a);
+    return eigenvalues;
+}
+
+std::pair<Tensor, Tensor> slogdet(const Tensor &a) {
+    // Sign and log determinant using LU decomposition
+    // More numerically stable than computing det directly
+    validate_square_matrix(a, "slogdet");
+
+    auto &backend = get_lapack_backend();
+
+    size_t n = a.shape()[a.ndim() - 1];
+    size_t batch_size = compute_batch_size(a.shape());
+    Shape batch_shape = get_batch_shape(a.shape());
+
+    Shape result_shape = batch_shape.empty() ? Shape({}) : batch_shape;
+
+    Tensor sign_result, logabsdet_result;
+
+    if (a.dtype() == DType::Float32) {
+        auto a_work = ensure_cpu_contiguous_colmajor(a).clone();
+        float *a_data = a_work.typed_data<float>();
+
+        sign_result = Tensor(result_shape, DType::Float32);
+        logabsdet_result = Tensor(result_shape, DType::Float32);
+        float *sign_data = sign_result.typed_data<float>();
+        float *logdet_data = logabsdet_result.typed_data<float>();
+
+        std::vector<int> ipiv(n);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            float *a_batch = a_data + b * n * n;
+
+            // Transpose to column-major
+            std::vector<float> a_col(n * n);
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * n + i] = a_batch[i * n + j];
+                }
+            }
+
+            int info =
+                backend.sgetrf(static_cast<int>(n), static_cast<int>(n),
+                               a_col.data(), static_cast<int>(n), ipiv.data());
+
+            if (info > 0) {
+                // Singular matrix
+                sign_data[b] = 0.0f;
+                logdet_data[b] = -std::numeric_limits<float>::infinity();
+            } else if (info < 0) {
+                check_lapack_info(info, "sgetrf");
+            } else {
+                // Compute sign and log|det| from diagonal of U
+                float log_abs_det = 0.0f;
+                int sign = 1;
+
+                for (size_t i = 0; i < n; ++i) {
+                    float diag = a_col[i * n + i];
+                    if (diag < 0) {
+                        sign = -sign;
+                        log_abs_det += std::log(-diag);
+                    } else if (diag > 0) {
+                        log_abs_det += std::log(diag);
+                    } else {
+                        // Zero diagonal -> singular
+                        sign = 0;
+                        log_abs_det = -std::numeric_limits<float>::infinity();
+                        break;
+                    }
+
+                    // Account for pivoting
+                    if (ipiv[i] != static_cast<int>(i + 1)) {
+                        sign = -sign;
+                    }
+                }
+
+                sign_data[b] = static_cast<float>(sign);
+                logdet_data[b] = log_abs_det;
+            }
+        }
+    } else if (a.dtype() == DType::Float64) {
+        auto a_work =
+            ensure_cpu_contiguous_colmajor(a.astype(DType::Float64)).clone();
+        double *a_data = a_work.typed_data<double>();
+
+        sign_result = Tensor(result_shape, DType::Float64);
+        logabsdet_result = Tensor(result_shape, DType::Float64);
+        double *sign_data = sign_result.typed_data<double>();
+        double *logdet_data = logabsdet_result.typed_data<double>();
+
+        std::vector<int> ipiv(n);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            double *a_batch = a_data + b * n * n;
+
+            std::vector<double> a_col(n * n);
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * n + i] = a_batch[i * n + j];
+                }
+            }
+
+            int info =
+                backend.dgetrf(static_cast<int>(n), static_cast<int>(n),
+                               a_col.data(), static_cast<int>(n), ipiv.data());
+
+            if (info > 0) {
+                sign_data[b] = 0.0;
+                logdet_data[b] = -std::numeric_limits<double>::infinity();
+            } else if (info < 0) {
+                check_lapack_info(info, "dgetrf");
+            } else {
+                double log_abs_det = 0.0;
+                int sign = 1;
+
+                for (size_t i = 0; i < n; ++i) {
+                    double diag = a_col[i * n + i];
+                    if (diag < 0) {
+                        sign = -sign;
+                        log_abs_det += std::log(-diag);
+                    } else if (diag > 0) {
+                        log_abs_det += std::log(diag);
+                    } else {
+                        sign = 0;
+                        log_abs_det = -std::numeric_limits<double>::infinity();
+                        break;
+                    }
+
+                    if (ipiv[i] != static_cast<int>(i + 1)) {
+                        sign = -sign;
+                    }
+                }
+
+                sign_data[b] = static_cast<double>(sign);
+                logdet_data[b] = log_abs_det;
+            }
+        }
+    } else if (a.dtype() == DType::Complex64) {
+        using complex64_t = std::complex<float>;
+        auto a_work = ensure_cpu_contiguous_colmajor(a).clone();
+        complex64_t *a_data = a_work.typed_data<complex64_t>();
+
+        sign_result = Tensor(result_shape, DType::Complex64);
+        logabsdet_result = Tensor(result_shape, DType::Float32);
+        complex64_t *sign_data = sign_result.typed_data<complex64_t>();
+        float *logdet_data = logabsdet_result.typed_data<float>();
+
+        std::vector<int> ipiv(n);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            complex64_t *a_batch = a_data + b * n * n;
+
+            std::vector<complex64_t> a_col(n * n);
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * n + i] = a_batch[i * n + j];
+                }
+            }
+
+            int info =
+                backend.cgetrf(static_cast<int>(n), static_cast<int>(n),
+                               a_col.data(), static_cast<int>(n), ipiv.data());
+
+            if (info > 0) {
+                sign_data[b] = complex64_t(0.0f, 0.0f);
+                logdet_data[b] = -std::numeric_limits<float>::infinity();
+            } else if (info < 0) {
+                check_lapack_info(info, "cgetrf");
+            } else {
+                float log_abs_det = 0.0f;
+                complex64_t sign_val(1.0f, 0.0f);
+
+                for (size_t i = 0; i < n; ++i) {
+                    complex64_t diag = a_col[i * n + i];
+                    float abs_diag = std::abs(diag);
+
+                    if (abs_diag == 0.0f) {
+                        sign_val = complex64_t(0.0f, 0.0f);
+                        log_abs_det = -std::numeric_limits<float>::infinity();
+                        break;
+                    }
+
+                    log_abs_det += std::log(abs_diag);
+                    sign_val *= diag / abs_diag; // Unit complex number
+
+                    if (ipiv[i] != static_cast<int>(i + 1)) {
+                        sign_val = -sign_val;
+                    }
+                }
+
+                sign_data[b] = sign_val;
+                logdet_data[b] = log_abs_det;
+            }
+        }
+    } else if (a.dtype() == DType::Complex128) {
+        using complex128_t = std::complex<double>;
+        auto a_work =
+            ensure_cpu_contiguous_colmajor(a.astype(DType::Complex128)).clone();
+        complex128_t *a_data = a_work.typed_data<complex128_t>();
+
+        sign_result = Tensor(result_shape, DType::Complex128);
+        logabsdet_result = Tensor(result_shape, DType::Float64);
+        complex128_t *sign_data = sign_result.typed_data<complex128_t>();
+        double *logdet_data = logabsdet_result.typed_data<double>();
+
+        std::vector<int> ipiv(n);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            complex128_t *a_batch = a_data + b * n * n;
+
+            std::vector<complex128_t> a_col(n * n);
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * n + i] = a_batch[i * n + j];
+                }
+            }
+
+            int info =
+                backend.zgetrf(static_cast<int>(n), static_cast<int>(n),
+                               a_col.data(), static_cast<int>(n), ipiv.data());
+
+            if (info > 0) {
+                sign_data[b] = complex128_t(0.0, 0.0);
+                logdet_data[b] = -std::numeric_limits<double>::infinity();
+            } else if (info < 0) {
+                check_lapack_info(info, "zgetrf");
+            } else {
+                double log_abs_det = 0.0;
+                complex128_t sign_val(1.0, 0.0);
+
+                for (size_t i = 0; i < n; ++i) {
+                    complex128_t diag = a_col[i * n + i];
+                    double abs_diag = std::abs(diag);
+
+                    if (abs_diag == 0.0) {
+                        sign_val = complex128_t(0.0, 0.0);
+                        log_abs_det = -std::numeric_limits<double>::infinity();
+                        break;
+                    }
+
+                    log_abs_det += std::log(abs_diag);
+                    sign_val *= diag / abs_diag;
+
+                    if (ipiv[i] != static_cast<int>(i + 1)) {
+                        sign_val = -sign_val;
+                    }
+                }
+
+                sign_data[b] = sign_val;
+                logdet_data[b] = log_abs_det;
+            }
+        }
+    } else {
+        return slogdet(a.astype(DType::Float64));
+    }
+
+    return {sign_result, logabsdet_result};
 }
 
 } // namespace linalg

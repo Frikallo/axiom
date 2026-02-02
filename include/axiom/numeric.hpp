@@ -54,6 +54,32 @@ template <typename T> constexpr T epsilon() {
 constexpr float epsilon_f = std::numeric_limits<float>::epsilon();
 constexpr double epsilon_d = std::numeric_limits<double>::epsilon();
 
+// Mathematical constants
+template <typename T> constexpr T pi() {
+    static_assert(std::is_floating_point_v<T>,
+                  "pi<T> requires floating-point type");
+    return T(3.14159265358979323846264338327950288L);
+}
+
+template <typename T> constexpr T e() {
+    static_assert(std::is_floating_point_v<T>,
+                  "e<T> requires floating-point type");
+    return T(2.71828182845904523536028747135266250L);
+}
+
+template <typename T> constexpr T euler_gamma() {
+    static_assert(std::is_floating_point_v<T>,
+                  "euler_gamma<T> requires floating-point type");
+    return T(0.57721566490153286060651209008240243L);
+}
+
+constexpr float pi_f = 3.14159265358979323846264338327950288f;
+constexpr double pi_d = 3.14159265358979323846264338327950288;
+constexpr float e_f = 2.71828182845904523536028747135266250f;
+constexpr double e_d = 2.71828182845904523536028747135266250;
+constexpr float euler_gamma_f = 0.57721566490153286060651209008240243f;
+constexpr double euler_gamma_d = 0.57721566490153286060651209008240243;
+
 // ============================================================================
 // Value classification
 // ============================================================================

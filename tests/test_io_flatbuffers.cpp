@@ -47,7 +47,8 @@ namespace fs = std::filesystem;
 
 // Temporary test file path (cross-platform)
 std::string get_test_path(const std::string &name) {
-    return (fs::temp_directory_path() / ("axiom_test_" + name + ".axfb")).string();
+    return (fs::temp_directory_path() / ("axiom_test_" + name + ".axfb"))
+        .string();
 }
 
 void cleanup_file(const std::string &path) {
@@ -347,7 +348,8 @@ TEST(test_is_axfb_file) {
 
 TEST(test_format_detection_unknown) {
     // Create a file with random content
-    std::string path = (fs::temp_directory_path() / "axiom_test_unknown.bin").string();
+    std::string path =
+        (fs::temp_directory_path() / "axiom_test_unknown.bin").string();
     std::ofstream f(path, std::ios::binary);
     f << "random content that is not a valid format";
     f.close();

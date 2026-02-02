@@ -450,6 +450,311 @@ void test_matrix_power_zero() {
 }
 
 // ============================================================================
+// Test: NumPy Parity - Phase 1: Core Products
+// ============================================================================
+
+void test_dot_1d_1d() {
+    // 1D @ 1D = scalar (inner product)
+    // [1, 2, 3] . [4, 5, 6] = 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
+    float a_data[] = {1.0f, 2.0f, 3.0f};
+    float b_data[] = {4.0f, 5.0f, 6.0f};
+    auto a = axiom::Tensor::from_data(a_data, {3});
+    auto b = axiom::Tensor::from_data(b_data, {3});
+
+    auto result = axiom::linalg::dot(a, b);
+
+    ASSERT(result.ndim() == 0, "dot 1D@1D should be scalar");
+    ASSERT(std::abs(result.item<float>() - 32.0f) < 1e-5f, "1*4+2*5+3*6=32");
+}
+
+void test_dot_2d_2d() {
+    // 2D @ 2D = matmul
+    float a_data[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    float b_data[] = {5.0f, 6.0f, 7.0f, 8.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2, 2});
+    auto b = axiom::Tensor::from_data(b_data, {2, 2});
+
+    auto result = axiom::linalg::dot(a, b);
+    auto expected = a.matmul(b);
+
+    ASSERT(result.shape() == axiom::Shape({2, 2}), "dot 2D@2D shape");
+    ASSERT(result.allclose(expected, 1e-5f), "dot 2D@2D equals matmul");
+}
+
+void test_dot_1d_2d() {
+    // 1D @ 2D: (3,) @ (3, 2) -> (2,)
+    float a_data[] = {1.0f, 2.0f, 3.0f};
+    float b_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    auto a = axiom::Tensor::from_data(a_data, {3});
+    auto b = axiom::Tensor::from_data(b_data, {3, 2});
+
+    auto result = axiom::linalg::dot(a, b);
+
+    ASSERT(result.shape() == axiom::Shape({2}), "dot 1D@2D shape");
+    // [1,2,3] @ [[1,2],[3,4],[5,6]] = [1*1+2*3+3*5, 1*2+2*4+3*6] = [22, 28]
+    ASSERT(std::abs(result.item<float>({0}) - 22.0f) < 1e-5f, "result[0]=22");
+    ASSERT(std::abs(result.item<float>({1}) - 28.0f) < 1e-5f, "result[1]=28");
+}
+
+void test_dot_2d_1d() {
+    // 2D @ 1D: (2, 3) @ (3,) -> (2,)
+    float a_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    float b_data[] = {1.0f, 2.0f, 3.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2, 3});
+    auto b = axiom::Tensor::from_data(b_data, {3});
+
+    auto result = axiom::linalg::dot(a, b);
+
+    ASSERT(result.shape() == axiom::Shape({2}), "dot 2D@1D shape");
+    // [[1,2,3],[4,5,6]] @ [1,2,3] = [1+4+9, 4+10+18] = [14, 32]
+    ASSERT(std::abs(result.item<float>({0}) - 14.0f) < 1e-5f, "result[0]=14");
+    ASSERT(std::abs(result.item<float>({1}) - 32.0f) < 1e-5f, "result[1]=32");
+}
+
+void test_vdot_real() {
+    // vdot flattens and computes dot product
+    float a_data[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    float b_data[] = {5.0f, 6.0f, 7.0f, 8.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2, 2});
+    auto b = axiom::Tensor::from_data(b_data, {2, 2});
+
+    auto result = axiom::linalg::vdot(a, b);
+
+    // 1*5 + 2*6 + 3*7 + 4*8 = 5 + 12 + 21 + 32 = 70
+    ASSERT(result.ndim() == 0, "vdot should be scalar");
+    ASSERT(std::abs(result.item<float>() - 70.0f) < 1e-5f, "vdot = 70");
+}
+
+void test_inner_1d() {
+    // inner for 1D is same as dot
+    float a_data[] = {1.0f, 2.0f, 3.0f};
+    float b_data[] = {4.0f, 5.0f, 6.0f};
+    auto a = axiom::Tensor::from_data(a_data, {3});
+    auto b = axiom::Tensor::from_data(b_data, {3});
+
+    auto result = axiom::linalg::inner(a, b);
+    auto expected = axiom::linalg::dot(a, b);
+
+    ASSERT(result.ndim() == 0, "inner 1D should be scalar");
+    ASSERT(result.allclose(expected, 1e-5f), "inner 1D equals dot");
+}
+
+void test_inner_2d() {
+    // inner for 2D: a @ b.T
+    float a_data[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    float b_data[] = {5.0f, 6.0f, 7.0f, 8.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2, 2});
+    auto b = axiom::Tensor::from_data(b_data, {2, 2});
+
+    auto result = axiom::linalg::inner(a, b);
+    auto expected = a.matmul(b.transpose());
+
+    ASSERT(result.shape() == axiom::Shape({2, 2}), "inner 2D shape");
+    ASSERT(result.allclose(expected, 1e-5f), "inner 2D equals a @ b.T");
+}
+
+void test_outer() {
+    // outer product: (m,) x (n,) -> (m, n)
+    float a_data[] = {1.0f, 2.0f, 3.0f};
+    float b_data[] = {4.0f, 5.0f};
+    auto a = axiom::Tensor::from_data(a_data, {3});
+    auto b = axiom::Tensor::from_data(b_data, {2});
+
+    auto result = axiom::linalg::outer(a, b);
+
+    ASSERT(result.shape() == axiom::Shape({3, 2}), "outer shape (3,2)");
+    // [[1*4, 1*5], [2*4, 2*5], [3*4, 3*5]] = [[4,5],[8,10],[12,15]]
+    ASSERT(std::abs(result.item<float>({0, 0}) - 4.0f) < 1e-5f, "[0,0]=4");
+    ASSERT(std::abs(result.item<float>({1, 1}) - 10.0f) < 1e-5f, "[1,1]=10");
+    ASSERT(std::abs(result.item<float>({2, 0}) - 12.0f) < 1e-5f, "[2,0]=12");
+}
+
+void test_matvec() {
+    // Matrix-vector product: (2,3) @ (3,) -> (2,)
+    float a_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    float b_data[] = {1.0f, 2.0f, 3.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2, 3});
+    auto b = axiom::Tensor::from_data(b_data, {3});
+
+    auto result = axiom::linalg::matvec(a, b);
+
+    ASSERT(result.shape() == axiom::Shape({2}), "matvec shape");
+    // [1+4+9, 4+10+18] = [14, 32]
+    ASSERT(std::abs(result.item<float>({0}) - 14.0f) < 1e-5f, "matvec[0]=14");
+    ASSERT(std::abs(result.item<float>({1}) - 32.0f) < 1e-5f, "matvec[1]=32");
+}
+
+void test_vecmat() {
+    // Vector-matrix product: (2,) @ (2,3) -> (3,)
+    float a_data[] = {1.0f, 2.0f};
+    float b_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2});
+    auto b = axiom::Tensor::from_data(b_data, {2, 3});
+
+    auto result = axiom::linalg::vecmat(a, b);
+
+    ASSERT(result.shape() == axiom::Shape({3}), "vecmat shape");
+    // [1,2] @ [[1,2,3],[4,5,6]] = [1*1+2*4, 1*2+2*5, 1*3+2*6] = [9, 12, 15]
+    ASSERT(std::abs(result.item<float>({0}) - 9.0f) < 1e-5f, "vecmat[0]=9");
+    ASSERT(std::abs(result.item<float>({1}) - 12.0f) < 1e-5f, "vecmat[1]=12");
+    ASSERT(std::abs(result.item<float>({2}) - 15.0f) < 1e-5f, "vecmat[2]=15");
+}
+
+void test_vecdot() {
+    // Vector dot product along axis
+    float a_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    float b_data[] = {1.0f, 1.0f, 1.0f, 2.0f, 2.0f, 2.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2, 3});
+    auto b = axiom::Tensor::from_data(b_data, {2, 3});
+
+    auto result = axiom::linalg::vecdot(a, b, -1); // contract last axis
+
+    ASSERT(result.shape() == axiom::Shape({2}), "vecdot shape");
+    // Row 0: 1*1+2*1+3*1 = 6, Row 1: 4*2+5*2+6*2 = 30
+    ASSERT(std::abs(result.item<float>({0}) - 6.0f) < 1e-5f, "vecdot[0]=6");
+    ASSERT(std::abs(result.item<float>({1}) - 30.0f) < 1e-5f, "vecdot[1]=30");
+}
+
+// ============================================================================
+// Test: NumPy Parity - Phase 2: Complex Products
+// ============================================================================
+
+void test_tensordot_simple() {
+    // tensordot with axes=1: contract last axis of a with first axis of b
+    float a_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    float b_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2, 3});
+    auto b = axiom::Tensor::from_data(b_data, {3, 2});
+
+    auto result = axiom::linalg::tensordot(a, b, 1);
+
+    // This is just matmul when axes=1
+    auto expected = a.matmul(b);
+    ASSERT(result.shape() == expected.shape(), "tensordot axes=1 shape");
+    ASSERT(result.allclose(expected, 1e-5f), "tensordot axes=1 equals matmul");
+}
+
+void test_tensordot_axes() {
+    // tensordot with explicit axes
+    float a_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    float b_data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2, 3});
+    auto b = axiom::Tensor::from_data(b_data, {2, 3});
+
+    // Contract axis 1 of a with axis 1 of b
+    auto result =
+        axiom::linalg::tensordot(a, b, {{1}, {1}}); // a @ b.T essentially
+
+    ASSERT(result.shape() == axiom::Shape({2, 2}), "tensordot explicit shape");
+    auto expected = a.matmul(b.transpose());
+    ASSERT(result.allclose(expected, 1e-5f), "tensordot explicit equals a@b.T");
+}
+
+void test_kron_2d() {
+    // Kronecker product
+    float a_data[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    float b_data[] = {0.0f, 5.0f, 6.0f, 7.0f};
+    auto a = axiom::Tensor::from_data(a_data, {2, 2});
+    auto b = axiom::Tensor::from_data(b_data, {2, 2});
+
+    auto result = axiom::linalg::kron(a, b);
+
+    ASSERT(result.shape() == axiom::Shape({4, 4}), "kron shape (4,4)");
+    // Top-left 2x2 block should be 1*b = [[0,5],[6,7]]
+    ASSERT(std::abs(result.item<float>({0, 0}) - 0.0f) < 1e-5f, "kron[0,0]=0");
+    ASSERT(std::abs(result.item<float>({0, 1}) - 5.0f) < 1e-5f, "kron[0,1]=5");
+    ASSERT(std::abs(result.item<float>({1, 0}) - 6.0f) < 1e-5f, "kron[1,0]=6");
+    // Top-right 2x2 block should be 2*b = [[0,10],[12,14]]
+    ASSERT(std::abs(result.item<float>({0, 2}) - 0.0f) < 1e-5f, "kron[0,2]=0");
+    ASSERT(std::abs(result.item<float>({0, 3}) - 10.0f) < 1e-5f,
+           "kron[0,3]=10");
+}
+
+void test_cross_simple() {
+    // Cross product of two 3D vectors
+    // [1,0,0] x [0,1,0] = [0,0,1]
+    float a_data[] = {1.0f, 0.0f, 0.0f};
+    float b_data[] = {0.0f, 1.0f, 0.0f};
+    auto a = axiom::Tensor::from_data(a_data, {3});
+    auto b = axiom::Tensor::from_data(b_data, {3});
+
+    auto result = axiom::linalg::cross(a, b);
+
+    ASSERT(result.shape() == axiom::Shape({3}), "cross shape");
+    ASSERT(std::abs(result.item<float>({0}) - 0.0f) < 1e-5f, "cross[0]=0");
+    ASSERT(std::abs(result.item<float>({1}) - 0.0f) < 1e-5f, "cross[1]=0");
+    ASSERT(std::abs(result.item<float>({2}) - 1.0f) < 1e-5f, "cross[2]=1");
+}
+
+// ============================================================================
+// Test: NumPy Parity - Phase 3: Decomposition Variants
+// ============================================================================
+
+void test_svdvals() {
+    // svdvals should return just singular values
+    float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    auto a = axiom::Tensor::from_data(data, {2, 3});
+
+    auto s = axiom::linalg::svdvals(a);
+    auto [U, S_full, Vh] = axiom::linalg::svd(a, false);
+
+    ASSERT(s.shape() == S_full.shape(), "svdvals shape matches svd.S");
+    ASSERT(s.allclose(S_full, 1e-5f), "svdvals equals svd.S");
+}
+
+void test_eigvals() {
+    // eigvals should return just eigenvalues
+    float data[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    auto a = axiom::Tensor::from_data(data, {2, 2});
+
+    auto eigs = axiom::linalg::eigvals(a);
+    auto [eigenvalues, eigenvectors] = axiom::linalg::eig(a);
+
+    ASSERT(eigs.shape() == eigenvalues.shape(), "eigvals shape matches");
+    ASSERT(eigs.allclose(eigenvalues, 1e-5), "eigvals equals eig.eigenvalues");
+}
+
+void test_eigvalsh() {
+    // eigvalsh for symmetric matrix
+    float data[] = {2.0f, 1.0f, 1.0f, 2.0f};
+    auto a = axiom::Tensor::from_data(data, {2, 2});
+
+    auto eigs = axiom::linalg::eigvalsh(a);
+    auto [eigenvalues, eigenvectors] = axiom::linalg::eigh(a);
+
+    ASSERT(eigs.shape() == eigenvalues.shape(), "eigvalsh shape matches");
+    ASSERT(eigs.allclose(eigenvalues, 1e-5f),
+           "eigvalsh equals eigh.eigenvalues");
+}
+
+void test_slogdet_positive() {
+    // slogdet for matrix with positive determinant
+    float data[] = {1.0f, 2.0f, 3.0f, 5.0f}; // det = 1*5 - 2*3 = -1
+    auto a = axiom::Tensor::from_data(data, {2, 2});
+
+    auto [sign, logabsdet] = axiom::linalg::slogdet(a);
+
+    // det = -1, so sign = -1, logabsdet = log(1) = 0
+    ASSERT(std::abs(sign.item<float>() - (-1.0f)) < 1e-5f, "slogdet sign = -1");
+    ASSERT(std::abs(logabsdet.item<float>() - 0.0f) < 1e-4f,
+           "slogdet logdet=0");
+}
+
+void test_slogdet_negative() {
+    // slogdet consistency check: sign * exp(logabsdet) = det
+    float data[] = {4.0f, 7.0f, 2.0f, 6.0f}; // det = 4*6 - 7*2 = 10
+    auto a = axiom::Tensor::from_data(data, {2, 2});
+
+    auto [sign, logabsdet] = axiom::linalg::slogdet(a);
+    auto det = axiom::linalg::det(a);
+
+    float reconstructed =
+        sign.item<float>() * std::exp(logabsdet.item<float>());
+    ASSERT(std::abs(reconstructed - det.item<float>()) < 1e-4f,
+           "sign*exp(logdet) = det");
+}
+
+// ============================================================================
 // Test: has_lapack
 // ============================================================================
 
@@ -548,6 +853,32 @@ int main() {
     RUN_TEST(test_matrix_power_square);
     RUN_TEST(test_matrix_power_negative);
     RUN_TEST(test_matrix_power_zero);
+
+    // New NumPy parity tests - Phase 1: Core Products
+    RUN_TEST(test_dot_1d_1d);
+    RUN_TEST(test_dot_2d_2d);
+    RUN_TEST(test_dot_1d_2d);
+    RUN_TEST(test_dot_2d_1d);
+    RUN_TEST(test_vdot_real);
+    RUN_TEST(test_inner_1d);
+    RUN_TEST(test_inner_2d);
+    RUN_TEST(test_outer);
+    RUN_TEST(test_matvec);
+    RUN_TEST(test_vecmat);
+    RUN_TEST(test_vecdot);
+
+    // Phase 2: Complex Products
+    RUN_TEST(test_tensordot_simple);
+    RUN_TEST(test_tensordot_axes);
+    RUN_TEST(test_kron_2d);
+    RUN_TEST(test_cross_simple);
+
+    // Phase 3: Decomposition Variants
+    RUN_TEST(test_svdvals);
+    RUN_TEST(test_eigvals);
+    RUN_TEST(test_eigvalsh);
+    RUN_TEST(test_slogdet_positive);
+    RUN_TEST(test_slogdet_negative);
 
     std::cout << "\n========================================" << std::endl;
     std::cout << "Test Suite Summary:" << std::endl;
