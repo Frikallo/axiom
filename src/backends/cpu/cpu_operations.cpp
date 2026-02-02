@@ -9,7 +9,7 @@
 #include "axiom/tensor.hpp"
 
 // SIMD optimization headers
-#include "cpu_accelerate.hpp"
+#include "vdsp.hpp"
 #include "simd/simd_dispatch.hpp"
 
 // BLAS backend abstraction

@@ -255,7 +255,7 @@ set(AXIOM_SOURCES
 # Add platform-specific BLAS backends
 if(AXIOM_HAS_ACCELERATE)
     list(APPEND AXIOM_SOURCES
-        src/backends/cpu/cpu_accelerate.cpp
+        src/backends/cpu/vdsp.cpp
         src/backends/cpu/blas/blas_accelerate.cpp
         src/backends/cpu/lapack/lapack_accelerate.cpp
     )
