@@ -204,7 +204,7 @@ lint: $(BUILD_DIR)/CMakeCache.txt  ## Run clang-tidy static analysis
 		echo "$(YELLOW)clang-tidy not found. Install with: brew install llvm$(RESET)"; \
 		exit 0; \
 	fi
-	@find src/tensor -name '*.cpp' | while read file; do \
+	@find src -name '*.cpp' | while read file; do \
 		echo "  Checking $$file..."; \
 		clang-tidy -p $(BUILD_DIR) $(CLANG_TIDY_ARGS) "$$file" --quiet 2>/dev/null || true; \
 	done
@@ -217,7 +217,7 @@ lint-fix: $(BUILD_DIR)/CMakeCache.txt  ## Run clang-tidy and apply fixes
 		echo "$(RED)clang-tidy not found. Install with: brew install llvm$(RESET)"; \
 		exit 1; \
 	fi
-	@find src/tensor -name '*.cpp' | while read file; do \
+	@find src -name '*.cpp' | while read file; do \
 		echo "  Fixing $$file..."; \
 		clang-tidy -p $(BUILD_DIR) $(CLANG_TIDY_ARGS) "$$file" --fix --quiet 2>/dev/null || true; \
 	done
