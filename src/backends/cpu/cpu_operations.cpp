@@ -361,6 +361,10 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(
         }
     }
 
+    // Precompute divisors for fast index calculations (FXdiv optimization)
+    // This converts repeated divisions into multiplications + shifts
+    ShapeDivisors shape_divisors(result_shape);
+
     // OpenMP parallel path for large broadcast operations
 #ifdef AXIOM_USE_OPENMP
     if (parallel::should_parallelize(total_elements)) {
@@ -368,14 +372,15 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(
         ptrdiff_t n = static_cast<ptrdiff_t>(total_elements);
 #pragma omp parallel for schedule(static)
         for (ptrdiff_t i = 0; i < n; ++i) {
-            // Compute coordinates from flat index
+            // Compute coordinates from flat index using fast division
             size_t remaining = static_cast<size_t>(i);
             int64_t lhs_byte_offset = 0;
             int64_t rhs_byte_offset = 0;
 
             for (int d = static_cast<int>(ndim) - 1; d >= 0; --d) {
-                size_t coord = remaining % result_shape[d];
-                remaining /= result_shape[d];
+                auto result = fxdiv_divide_size_t(remaining, shape_divisors[d]);
+                size_t coord = result.remainder;
+                remaining = result.quotient;
                 lhs_byte_offset +=
                     static_cast<int64_t>(coord) * lhs_bcast_strides[d];
                 rhs_byte_offset +=
@@ -2309,13 +2314,16 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
     DType b_dtype = b.dtype();
     DType cond_dtype = condition.dtype();
 
+    // Precompute divisors for fast index calculations (FXdiv optimization)
+    ShapeDivisors shape_divisors(output_shape);
+
     // Parallel path for large tensors
 #ifdef AXIOM_USE_OPENMP
     if (parallel::should_parallelize(numel)) {
         ptrdiff_t n = static_cast<ptrdiff_t>(numel);
 #pragma omp parallel for schedule(static)
         for (ptrdiff_t i = 0; i < n; ++i) {
-            // Compute coordinates from flat index
+            // Compute coordinates from flat index using fast division
             size_t remaining = static_cast<size_t>(i);
             int64_t cond_offset = 0;
             int64_t a_offset = 0;
@@ -2323,8 +2331,10 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
             int64_t result_offset = 0;
 
             for (int d = static_cast<int>(ndim) - 1; d >= 0; --d) {
-                size_t coord = remaining % output_shape[d];
-                remaining /= output_shape[d];
+                auto divresult =
+                    fxdiv_divide_size_t(remaining, shape_divisors[d]);
+                size_t coord = divresult.remainder;
+                remaining = divresult.quotient;
                 cond_offset += static_cast<int64_t>(coord) * cond_strides[d];
                 a_offset += static_cast<int64_t>(coord) * a_strides[d];
                 b_offset += static_cast<int64_t>(coord) * b_strides[d];
@@ -2703,13 +2713,16 @@ Tensor CPUGatherOperation::execute_gather_typed(const Tensor &input, int dim,
     const void *input_ptr = input.data();
     int64_t dim_size = static_cast<int64_t>(input_shape[norm_dim]);
 
+    // Precompute divisors for fast index calculations (FXdiv optimization)
+    ShapeDivisors shape_divisors(indices_shape);
+
 #ifdef AXIOM_USE_OPENMP
     if (parallel::should_parallelize(total_size)) {
         ptrdiff_t n = static_cast<ptrdiff_t>(total_size);
 #pragma omp parallel for schedule(static)
         for (ptrdiff_t i = 0; i < n; ++i) {
-            auto coords = ShapeUtils::unravel_index(static_cast<size_t>(i),
-                                                    indices_shape);
+            std::vector<size_t> coords(indices_shape.size());
+            shape_divisors.unravel_into(static_cast<size_t>(i), coords);
             int64_t idx = indices_data[i];
             if (idx < 0) {
                 idx += dim_size;
@@ -2724,8 +2737,10 @@ Tensor CPUGatherOperation::execute_gather_typed(const Tensor &input, int dim,
     }
 #endif
 
+    // Sequential path with reused coords vector
+    std::vector<size_t> coords(indices_shape.size());
     for (size_t i = 0; i < total_size; ++i) {
-        auto coords = ShapeUtils::unravel_index(i, indices_shape);
+        shape_divisors.unravel_into(i, coords);
 
         // Get the index value
         int64_t idx = indices_data[i];
@@ -2807,8 +2822,16 @@ Tensor CPUScatterOperation::execute_scatter_typed(const Tensor &input, int dim,
     const auto &indices_shape = indices.shape();
     const auto &result_strides = result.strides();
 
+    // Precompute divisors for fast index calculations (FXdiv optimization)
+    ShapeDivisors shape_divisors(indices_shape);
+
+    // Sequential path with reused coords vector (scatter is typically not
+    // parallelized)
+    std::vector<size_t> coords(indices_shape.size());
+    std::vector<size_t> result_coords(result_shape.size());
+
     for (size_t i = 0; i < total_size; ++i) {
-        auto coords = ShapeUtils::unravel_index(i, indices_shape);
+        shape_divisors.unravel_into(i, coords);
 
         // Get the index value
         int64_t idx = indices_data[i];
@@ -2819,7 +2842,7 @@ Tensor CPUScatterOperation::execute_scatter_typed(const Tensor &input, int dim,
         }
 
         // Build result coordinates: replace dim with idx
-        std::vector<size_t> result_coords = coords;
+        result_coords = coords;
         result_coords[norm_dim] = static_cast<size_t>(idx);
 
         // Set the value in result
@@ -2897,13 +2920,17 @@ Tensor CPUIndexSelectOperation::execute_index_select_typed(
 
     size_t total_size = result.size();
 
+    // Precompute divisors for fast index calculations (FXdiv optimization)
+    ShapeDivisors shape_divisors(output_shape);
+
 #ifdef AXIOM_USE_OPENMP
     if (parallel::should_parallelize(total_size)) {
         ptrdiff_t n = static_cast<ptrdiff_t>(total_size);
 #pragma omp parallel for schedule(static)
         for (ptrdiff_t i = 0; i < n; ++i) {
-            auto out_coords =
-                ShapeUtils::unravel_index(static_cast<size_t>(i), output_shape);
+            // Use preallocated coords vector per thread
+            std::vector<size_t> out_coords(output_shape.size());
+            shape_divisors.unravel_into(static_cast<size_t>(i), out_coords);
             size_t idx_pos = out_coords[norm_dim];
             int64_t idx = indices_data[idx_pos];
             if (idx < 0) {
@@ -2919,8 +2946,10 @@ Tensor CPUIndexSelectOperation::execute_index_select_typed(
     }
 #endif
 
+    // Sequential path with reused coords vector
+    std::vector<size_t> out_coords(output_shape.size());
     for (size_t i = 0; i < total_size; ++i) {
-        auto out_coords = ShapeUtils::unravel_index(i, output_shape);
+        shape_divisors.unravel_into(i, out_coords);
 
         // Get the index for this dimension
         size_t idx_pos = out_coords[norm_dim];
