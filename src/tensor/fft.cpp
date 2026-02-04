@@ -562,5 +562,246 @@ Tensor rfftfreq(int64_t n, double d, DType dtype, Device device) {
     return result;
 }
 
+// ============================================================================
+// Window Functions
+// ============================================================================
+
+Tensor hann_window(int64_t M, bool periodic, DType dtype, Device device) {
+    if (M <= 0) {
+        throw ValueError("hann_window: M must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    // For periodic window, use M+1 points but return only first M
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    const double pi = M_PI;
+
+    switch (dtype) {
+    case DType::Float32: {
+        float *data = result.typed_data<float>();
+        for (int64_t i = 0; i < M; ++i) {
+            data[i] =
+                static_cast<float>(0.5 - 0.5 * std::cos(2.0 * pi * i / N));
+        }
+        break;
+    }
+    case DType::Float64: {
+        double *data = result.typed_data<double>();
+        for (int64_t i = 0; i < M; ++i) {
+            data[i] = 0.5 - 0.5 * std::cos(2.0 * pi * i / N);
+        }
+        break;
+    }
+    default:
+        throw TypeError("hann_window: unsupported dtype");
+    }
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+Tensor hamming_window(int64_t M, bool periodic, DType dtype, Device device) {
+    if (M <= 0) {
+        throw ValueError("hamming_window: M must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    const double pi = M_PI;
+    const double alpha = 0.54;
+    const double beta = 0.46;
+
+    switch (dtype) {
+    case DType::Float32: {
+        float *data = result.typed_data<float>();
+        for (int64_t i = 0; i < M; ++i) {
+            data[i] =
+                static_cast<float>(alpha - beta * std::cos(2.0 * pi * i / N));
+        }
+        break;
+    }
+    case DType::Float64: {
+        double *data = result.typed_data<double>();
+        for (int64_t i = 0; i < M; ++i) {
+            data[i] = alpha - beta * std::cos(2.0 * pi * i / N);
+        }
+        break;
+    }
+    default:
+        throw TypeError("hamming_window: unsupported dtype");
+    }
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+Tensor blackman_window(int64_t M, bool periodic, DType dtype, Device device) {
+    if (M <= 0) {
+        throw ValueError("blackman_window: M must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    const double pi = M_PI;
+    const double a0 = 0.42;
+    const double a1 = 0.5;
+    const double a2 = 0.08;
+
+    switch (dtype) {
+    case DType::Float32: {
+        float *data = result.typed_data<float>();
+        for (int64_t i = 0; i < M; ++i) {
+            double x = 2.0 * pi * i / N;
+            data[i] = static_cast<float>(a0 - a1 * std::cos(x) +
+                                         a2 * std::cos(2.0 * x));
+        }
+        break;
+    }
+    case DType::Float64: {
+        double *data = result.typed_data<double>();
+        for (int64_t i = 0; i < M; ++i) {
+            double x = 2.0 * pi * i / N;
+            data[i] = a0 - a1 * std::cos(x) + a2 * std::cos(2.0 * x);
+        }
+        break;
+    }
+    default:
+        throw TypeError("blackman_window: unsupported dtype");
+    }
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+Tensor bartlett_window(int64_t M, bool periodic, DType dtype, Device device) {
+    if (M <= 0) {
+        throw ValueError("bartlett_window: M must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    switch (dtype) {
+    case DType::Float32: {
+        float *data = result.typed_data<float>();
+        for (int64_t i = 0; i < M; ++i) {
+            // Triangular window: 1 - |2i/N - 1|
+            double val = 1.0 - std::abs(2.0 * i / N - 1.0);
+            data[i] = static_cast<float>(val);
+        }
+        break;
+    }
+    case DType::Float64: {
+        double *data = result.typed_data<double>();
+        for (int64_t i = 0; i < M; ++i) {
+            data[i] = 1.0 - std::abs(2.0 * i / N - 1.0);
+        }
+        break;
+    }
+    default:
+        throw TypeError("bartlett_window: unsupported dtype");
+    }
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+// Modified Bessel function of the first kind, order 0
+// Used for Kaiser window
+namespace {
+double bessel_i0(double x) {
+    // Polynomial approximation
+    double ax = std::abs(x);
+    if (ax < 3.75) {
+        double y = x / 3.75;
+        y = y * y;
+        return 1.0 + y * (3.5156229 +
+                          y * (3.0899424 +
+                               y * (1.2067492 +
+                                    y * (0.2659732 +
+                                         y * (0.0360768 + y * 0.0045813)))));
+    } else {
+        double y = 3.75 / ax;
+        return (std::exp(ax) / std::sqrt(ax)) *
+               (0.39894228 +
+                y * (0.01328592 +
+                     y * (0.00225319 +
+                          y * (-0.00157565 +
+                               y * (0.00916281 +
+                                    y * (-0.02057706 +
+                                         y * (0.02635537 +
+                                              y * (-0.01647633 +
+                                                   y * 0.00392377))))))));
+    }
+}
+} // namespace
+
+Tensor kaiser_window(int64_t M, double beta, bool periodic, DType dtype,
+                     Device device) {
+    if (M <= 0) {
+        throw ValueError("kaiser_window: M must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    double alpha = static_cast<double>(N) / 2.0;
+    double i0_beta = bessel_i0(beta);
+
+    switch (dtype) {
+    case DType::Float32: {
+        float *data = result.typed_data<float>();
+        for (int64_t i = 0; i < M; ++i) {
+            double ratio = (i - alpha) / alpha;
+            double arg = beta * std::sqrt(1.0 - ratio * ratio);
+            data[i] = static_cast<float>(bessel_i0(arg) / i0_beta);
+        }
+        break;
+    }
+    case DType::Float64: {
+        double *data = result.typed_data<double>();
+        for (int64_t i = 0; i < M; ++i) {
+            double ratio = (i - alpha) / alpha;
+            double arg = beta * std::sqrt(1.0 - ratio * ratio);
+            data[i] = bessel_i0(arg) / i0_beta;
+        }
+        break;
+    }
+    default:
+        throw TypeError("kaiser_window: unsupported dtype");
+    }
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
 } // namespace fft
 } // namespace axiom

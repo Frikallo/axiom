@@ -151,5 +151,71 @@ Tensor fftfreq(int64_t n, double d = 1.0, DType dtype = DType::Float64,
 Tensor rfftfreq(int64_t n, double d = 1.0, DType dtype = DType::Float64,
                 Device device = Device::CPU);
 
+// ============================================================================
+// Window Functions
+// ============================================================================
+
+/**
+ * Hann (Hanning) window.
+ * w[n] = 0.5 - 0.5 * cos(2*pi*n / (M-1))
+ * @param M Number of points in the output window
+ * @param periodic If true, returns a periodic window (for spectral analysis)
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor hann_window(int64_t M, bool periodic = true,
+                   DType dtype = DType::Float32, Device device = Device::CPU);
+
+/**
+ * Hamming window.
+ * w[n] = 0.54 - 0.46 * cos(2*pi*n / (M-1))
+ * @param M Number of points in the output window
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor hamming_window(int64_t M, bool periodic = true,
+                      DType dtype = DType::Float32,
+                      Device device = Device::CPU);
+
+/**
+ * Blackman window.
+ * w[n] = 0.42 - 0.5*cos(2*pi*n/(M-1)) + 0.08*cos(4*pi*n/(M-1))
+ * @param M Number of points in the output window
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor blackman_window(int64_t M, bool periodic = true,
+                       DType dtype = DType::Float32,
+                       Device device = Device::CPU);
+
+/**
+ * Bartlett (triangular) window.
+ * @param M Number of points in the output window
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor bartlett_window(int64_t M, bool periodic = true,
+                       DType dtype = DType::Float32,
+                       Device device = Device::CPU);
+
+/**
+ * Kaiser window.
+ * @param M Number of points in the output window
+ * @param beta Shape parameter for the window (default: 12.0)
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor kaiser_window(int64_t M, double beta = 12.0, bool periodic = true,
+                     DType dtype = DType::Float32, Device device = Device::CPU);
+
 } // namespace fft
 } // namespace axiom

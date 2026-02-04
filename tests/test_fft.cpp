@@ -192,6 +192,104 @@ void test_fft2_roundtrip() {
            "FFT2 roundtrip should recover original");
 }
 
+// ============================================================================
+// Window Function Tests
+// ============================================================================
+
+void test_hann_window() {
+    auto w = axiom::fft::hann_window(10);
+    ASSERT(w.shape() == axiom::Shape({10}), "Hann window shape wrong");
+    ASSERT(w.dtype() == axiom::DType::Float32, "Hann window dtype wrong");
+
+    // Hann window should start at 0 for periodic window
+    const float *data = w.typed_data<float>();
+    ASSERT(std::abs(data[0]) < 1e-6, "Hann window should start near 0");
+
+    // Middle should be close to 1
+    ASSERT(data[5] > 0.9f, "Hann window middle should be near 1");
+}
+
+void test_hann_window_symmetric() {
+    auto w = axiom::fft::hann_window(10, false);
+    ASSERT(w.shape() == axiom::Shape({10}), "Hann symmetric shape wrong");
+
+    // Symmetric window: first and last should both be near 0
+    const float *data = w.typed_data<float>();
+    ASSERT(std::abs(data[0]) < 1e-6, "Hann symmetric should start near 0");
+    ASSERT(std::abs(data[9]) < 1e-6, "Hann symmetric should end near 0");
+}
+
+void test_hamming_window() {
+    auto w = axiom::fft::hamming_window(10);
+    ASSERT(w.shape() == axiom::Shape({10}), "Hamming window shape wrong");
+    ASSERT(w.dtype() == axiom::DType::Float32, "Hamming window dtype wrong");
+
+    // Hamming window starts at 0.08 (alpha - beta = 0.54 - 0.46)
+    const float *data = w.typed_data<float>();
+    ASSERT(std::abs(data[0] - 0.08f) < 0.01f,
+           "Hamming window should start at ~0.08");
+}
+
+void test_blackman_window() {
+    auto w = axiom::fft::blackman_window(10);
+    ASSERT(w.shape() == axiom::Shape({10}), "Blackman window shape wrong");
+    ASSERT(w.dtype() == axiom::DType::Float32, "Blackman window dtype wrong");
+
+    // Blackman window starts near 0
+    const float *data = w.typed_data<float>();
+    ASSERT(std::abs(data[0]) < 0.01f, "Blackman window should start near 0");
+}
+
+void test_bartlett_window() {
+    auto w = axiom::fft::bartlett_window(10);
+    ASSERT(w.shape() == axiom::Shape({10}), "Bartlett window shape wrong");
+    ASSERT(w.dtype() == axiom::DType::Float32, "Bartlett window dtype wrong");
+
+    // Bartlett (triangular) window starts at 0
+    const float *data = w.typed_data<float>();
+    ASSERT(std::abs(data[0]) < 1e-6, "Bartlett window should start at 0");
+
+    // Peak should be at center
+    ASSERT(data[5] > 0.9f, "Bartlett window middle should be near 1");
+}
+
+void test_kaiser_window() {
+    auto w = axiom::fft::kaiser_window(10, 12.0);
+    ASSERT(w.shape() == axiom::Shape({10}), "Kaiser window shape wrong");
+    ASSERT(w.dtype() == axiom::DType::Float32, "Kaiser window dtype wrong");
+
+    // Kaiser window should be symmetric and positive
+    const float *data = w.typed_data<float>();
+    for (size_t i = 0; i < 10; ++i) {
+        ASSERT(data[i] > 0.0f, "Kaiser window values should be positive");
+    }
+
+    // Peak should be at center
+    ASSERT(data[4] > data[0], "Kaiser window should peak in middle");
+    ASSERT(data[5] > data[0], "Kaiser window should peak in middle");
+}
+
+void test_window_float64() {
+    auto w = axiom::fft::hann_window(8, true, axiom::DType::Float64);
+    ASSERT(w.dtype() == axiom::DType::Float64, "Window should support Float64");
+    ASSERT(w.shape() == axiom::Shape({8}), "Window shape wrong");
+}
+
+void test_window_size_1() {
+    // For M=1, Hann window is 0.5 - 0.5*cos(0) = 0 (mathematically correct)
+    auto w = axiom::fft::hann_window(1);
+    ASSERT(w.shape() == axiom::Shape({1}), "Window size 1 shape wrong");
+    ASSERT(std::abs(w.item<float>({0})) < 1e-6,
+           "Hann window size 1 should be 0");
+
+    // Hamming has non-zero offset, so it's 0.08 for M=1
+    auto w2 = axiom::fft::hamming_window(1);
+    ASSERT(w2.shape() == axiom::Shape({1}),
+           "Hamming window size 1 shape wrong");
+    ASSERT(std::abs(w2.item<float>({0}) - 0.08f) < 0.01f,
+           "Hamming window size 1 should be ~0.08");
+}
+
 int main() {
     axiom::ops::OperationRegistry::initialize_builtin_operations();
 
@@ -213,6 +311,16 @@ int main() {
     RUN_TEST(test_rfftfreq);
     RUN_TEST(test_fft2_shape);
     RUN_TEST(test_fft2_roundtrip);
+
+    // Window function tests
+    RUN_TEST(test_hann_window);
+    RUN_TEST(test_hann_window_symmetric);
+    RUN_TEST(test_hamming_window);
+    RUN_TEST(test_blackman_window);
+    RUN_TEST(test_bartlett_window);
+    RUN_TEST(test_kaiser_window);
+    RUN_TEST(test_window_float64);
+    RUN_TEST(test_window_size_1);
 
     std::cout << "\n========================================" << std::endl;
     std::cout << "Test Summary: " << tests_passed << " / " << tests_run
