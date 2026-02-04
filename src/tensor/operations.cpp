@@ -2273,11 +2273,6 @@ size_t pool_output_size(size_t input_size, int kernel_size, int stride,
     return (input_size + 2 * padding - kernel_size) / stride + 1;
 }
 
-// Helper to expand single int to vector
-std::vector<int> expand_param(int value, size_t ndim) {
-    return std::vector<int>(ndim, value);
-}
-
 } // namespace
 
 Tensor max_pool1d(const Tensor &input, int kernel_size, int stride,

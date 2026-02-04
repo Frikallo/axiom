@@ -1118,10 +1118,6 @@ Tensor einsum(const std::string &equation,
             size_t a_k_pos = sub_a.find(k);
             size_t b_k_pos = sub_b.find(k);
 
-            // Check if this is a standard matmul pattern
-            bool a_contract_last = (a_k_pos == sub_a.length() - 1);
-            bool b_contract_first_nonbatch = true;
-
             // Identify batch dimensions
             std::vector<char> batch_dims;
             for (char c : output_sub) {

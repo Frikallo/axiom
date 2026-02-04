@@ -1,5 +1,11 @@
 # Tests for Axiom tensor library
 
+# Keep assertions enabled in tests even for Release builds
+# This prevents "unused variable" warnings for variables only used in assert()
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(-UNDEBUG)
+endif()
+
 # Basic tensor functionality test
 add_executable(test_tensor_basic
     test_tensor_basic.cpp

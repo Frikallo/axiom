@@ -286,7 +286,7 @@ void test_non_contiguous_sum_gpu() {
 //
 // ==================================
 
-int main(int argc, char **argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     axiom::ops::OperationRegistry::initialize_builtin_operations();
 
     std::cout << "--- RUNNING CPU TESTS ---\n";

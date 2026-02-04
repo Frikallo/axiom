@@ -173,7 +173,7 @@ void test_tan(axiom::Device device) {
 //
 // ==================================
 
-int main(int argc, char **argv) {
+int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
     axiom::ops::OperationRegistry::initialize_builtin_operations();
 
     RUN_TEST(test_negate, axiom::Device::CPU);

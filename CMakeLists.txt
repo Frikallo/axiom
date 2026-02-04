@@ -260,6 +260,12 @@ if(AXIOM_HAS_ACCELERATE)
         src/backends/cpu/blas/blas_accelerate.cpp
         src/backends/cpu/lapack/lapack_accelerate.cpp
     )
+    set_source_files_properties(
+        src/backends/cpu/vdsp.cpp
+        src/backends/cpu/blas/blas_accelerate.cpp
+        src/backends/cpu/lapack/lapack_accelerate.cpp
+        PROPERTIES COMPILE_DEFINITIONS "ACCELERATE_NEW_LAPACK"
+    )
 endif()
 
 if(AXIOM_HAS_OPENBLAS)
@@ -375,16 +381,20 @@ set_target_properties(axiom PROPERTIES
 target_include_directories(axiom
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FXdiv/include>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16/include>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cpu
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cpu/lapack
+)
+
+target_include_directories(axiom SYSTEM
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FXdiv/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers/include>
 )
 
 # ============================================================================
