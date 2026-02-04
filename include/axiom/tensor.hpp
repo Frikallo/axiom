@@ -485,6 +485,30 @@ class Tensor {
     static Tensor randn(const Shape &shape, DType dtype = DType::Float32,
                         Device device = Device::CPU,
                         MemoryOrder order = MemoryOrder::RowMajor);
+
+    // Uniform random in [0, 1)
+    static Tensor rand(const Shape &shape, DType dtype = DType::Float32,
+                       Device device = Device::CPU,
+                       MemoryOrder order = MemoryOrder::RowMajor);
+
+    // Uniform random in [low, high)
+    static Tensor uniform(double low, double high, const Shape &shape,
+                          DType dtype = DType::Float32,
+                          Device device = Device::CPU,
+                          MemoryOrder order = MemoryOrder::RowMajor);
+
+    // Random integers in [low, high)
+    static Tensor randint(int64_t low, int64_t high, const Shape &shape,
+                          DType dtype = DType::Int64,
+                          Device device = Device::CPU,
+                          MemoryOrder order = MemoryOrder::RowMajor);
+
+    // Like variants - create random tensors with same shape/dtype as prototype
+    static Tensor rand_like(const Tensor &prototype);
+    static Tensor randn_like(const Tensor &prototype);
+    static Tensor randint_like(const Tensor &prototype, int64_t low,
+                               int64_t high);
+
     static void manual_seed(uint64_t seed);
     static Tensor arange(int64_t start, int64_t end, int64_t step = 1,
                          DType dtype = DType::Int32,

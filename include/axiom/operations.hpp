@@ -32,6 +32,14 @@ BroadcastInfo compute_broadcast_info(const Shape &lhs_shape,
                                      const Shape &rhs_shape);
 bool are_broadcastable(const Shape &lhs_shape, const Shape &rhs_shape);
 
+// Broadcast multiple shapes together
+// Returns the shape that all inputs can be broadcast to
+Shape broadcast_shapes(const std::vector<Shape> &shapes);
+
+// Broadcast multiple tensors to a common shape
+// Uses expand() for zero-copy broadcasting where possible
+std::vector<Tensor> broadcast_tensors(const std::vector<Tensor> &tensors);
+
 // ============================================================================
 // Type promotion utilities
 // ============================================================================
@@ -146,6 +154,8 @@ enum class OpType {
     Gather,
     Scatter,
     IndexSelect,
+    Take,
+    TakeAlongAxis,
 
     // Normalization operations
     LayerNorm,
@@ -155,7 +165,17 @@ enum class OpType {
     Dropout,
 
     // Type conversion
-    Cast
+    Cast,
+
+    // Pooling operations
+    MaxPool1D,
+    MaxPool2D,
+    MaxPool3D,
+    AvgPool1D,
+    AvgPool2D,
+    AvgPool3D,
+    AdaptiveMaxPool2D,
+    AdaptiveAvgPool2D
 };
 
 class Operation {
@@ -414,6 +434,22 @@ Tensor scatter(const Tensor &input, int dim, const Tensor &indices,
 // More efficient than gather when selecting whole slices
 Tensor index_select(const Tensor &input, int dim, const Tensor &indices);
 
+// take: Take elements from tensor along a flattened axis
+// Like NumPy's np.take(arr, indices, axis)
+// If axis is -1, takes from flattened tensor
+Tensor take(const Tensor &input, const Tensor &indices, int axis = -1);
+
+// take_along_axis: Take values along an axis using indices of same shape
+// Like NumPy's np.take_along_axis(arr, indices, axis)
+// indices must broadcast with input except along axis
+Tensor take_along_axis(const Tensor &input, const Tensor &indices, int axis);
+
+// put_along_axis: Put values along an axis using indices
+// Like NumPy's np.put_along_axis(arr, indices, values, axis)
+// Returns new tensor with values placed at indices
+Tensor put_along_axis(const Tensor &input, const Tensor &indices,
+                      const Tensor &values, int axis);
+
 // Normalization operations
 // layer_norm: (x - mean) / sqrt(var + eps) * weight + bias
 Tensor layer_norm(const Tensor &input, const Tensor &weight, const Tensor &bias,
@@ -435,6 +471,86 @@ void multiply_inplace(Tensor &lhs, const Tensor &rhs);
 void divide_inplace(Tensor &lhs, const Tensor &rhs);
 
 void execute_binary_inplace(OpType op_type, Tensor &lhs, const Tensor &rhs);
+
+// ============================================================================
+// Shape manipulation operations
+// ============================================================================
+
+// Create coordinate matrices from coordinate vectors
+// indexing: "xy" (default, Cartesian) or "ij" (matrix indexing)
+std::vector<Tensor> meshgrid(const std::vector<Tensor> &tensors,
+                             const std::string &indexing = "xy");
+
+// Pad a tensor with constant values
+// pad_width: vector of (before, after) pairs for each dimension
+// mode: "constant" (default), "reflect", "replicate", "circular"
+Tensor pad(const Tensor &input,
+           const std::vector<std::pair<size_t, size_t>> &pad_width,
+           const std::string &mode = "constant", double value = 0.0);
+
+// Ensure tensors have at least N dimensions
+Tensor atleast_1d(const Tensor &tensor);
+Tensor atleast_2d(const Tensor &tensor);
+Tensor atleast_3d(const Tensor &tensor);
+
+// Vector variants for multiple tensors
+std::vector<Tensor> atleast_1d(const std::vector<Tensor> &tensors);
+std::vector<Tensor> atleast_2d(const std::vector<Tensor> &tensors);
+std::vector<Tensor> atleast_3d(const std::vector<Tensor> &tensors);
+
+// ============================================================================
+// Pooling operations
+// ============================================================================
+
+// 1D Pooling
+// Input shape: (N, C, L) or (C, L)
+// Output shape: (N, C, L_out) or (C, L_out)
+// L_out = (L + 2*padding - kernel_size) / stride + 1
+
+Tensor max_pool1d(const Tensor &input, int kernel_size, int stride = 1,
+                  int padding = 0);
+
+Tensor avg_pool1d(const Tensor &input, int kernel_size, int stride = 1,
+                  int padding = 0, bool count_include_pad = true);
+
+// 2D Pooling
+// Input shape: (N, C, H, W) or (C, H, W)
+// Output shape: (N, C, H_out, W_out) or (C, H_out, W_out)
+// H_out = (H + 2*padding[0] - kernel_size[0]) / stride[0] + 1
+
+Tensor max_pool2d(const Tensor &input, const std::vector<int> &kernel_size,
+                  const std::vector<int> &stride = {},
+                  const std::vector<int> &padding = {});
+
+Tensor avg_pool2d(const Tensor &input, const std::vector<int> &kernel_size,
+                  const std::vector<int> &stride = {},
+                  const std::vector<int> &padding = {},
+                  bool count_include_pad = true);
+
+// 3D Pooling
+// Input shape: (N, C, D, H, W) or (C, D, H, W)
+
+Tensor max_pool3d(const Tensor &input, const std::vector<int> &kernel_size,
+                  const std::vector<int> &stride = {},
+                  const std::vector<int> &padding = {});
+
+Tensor avg_pool3d(const Tensor &input, const std::vector<int> &kernel_size,
+                  const std::vector<int> &stride = {},
+                  const std::vector<int> &padding = {},
+                  bool count_include_pad = true);
+
+// Adaptive Pooling
+// Output has specified spatial dimensions regardless of input size
+
+Tensor adaptive_max_pool2d(const Tensor &input,
+                           const std::vector<int> &output_size);
+
+Tensor adaptive_avg_pool2d(const Tensor &input,
+                           const std::vector<int> &output_size);
+
+Tensor adaptive_max_pool1d(const Tensor &input, int output_size);
+
+Tensor adaptive_avg_pool1d(const Tensor &input, int output_size);
 
 } // namespace ops
 } // namespace axiom

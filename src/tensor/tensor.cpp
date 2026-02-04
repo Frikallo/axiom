@@ -1754,6 +1754,150 @@ Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
     return tensor;
 }
 
+Tensor Tensor::rand(const Shape &shape, DType dtype, Device device,
+                    MemoryOrder order) {
+    return uniform(0.0, 1.0, shape, dtype, device, order);
+}
+
+Tensor Tensor::uniform(double low, double high, const Shape &shape, DType dtype,
+                       Device device, MemoryOrder order) {
+    if (low >= high) {
+        throw ValueError("uniform: low must be less than high");
+    }
+
+    // Always create and initialize on CPU first, then transfer to target device
+    auto tensor = Tensor(shape, dtype, Device::CPU, order);
+    auto &rng = RandomGenerator::instance();
+
+    switch (dtype) {
+    case DType::Float32: {
+        float *data = tensor.typed_data<float>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = rng.uniform<float>(static_cast<float>(low),
+                                         static_cast<float>(high));
+        }
+        break;
+    }
+    case DType::Float64: {
+        double *data = tensor.typed_data<double>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = rng.uniform<double>(low, high);
+        }
+        break;
+    }
+    case DType::Float16: {
+        float16_t *data = tensor.typed_data<float16_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = float16_t(rng.uniform<float>(static_cast<float>(low),
+                                                   static_cast<float>(high)));
+        }
+        break;
+    }
+    default:
+        throw TypeError("uniform only supports floating point types, got " +
+                        axiom::dtype_name(dtype));
+    }
+
+    if (device == Device::GPU) {
+        return tensor.to(device, order);
+    }
+    return tensor;
+}
+
+Tensor Tensor::randint(int64_t low, int64_t high, const Shape &shape,
+                       DType dtype, Device device, MemoryOrder order) {
+    if (low >= high) {
+        throw ValueError("randint: low must be less than high");
+    }
+
+    // Always create and initialize on CPU first, then transfer to target device
+    auto tensor = Tensor(shape, dtype, Device::CPU, order);
+    auto &rng = RandomGenerator::instance();
+
+    switch (dtype) {
+    case DType::Int8: {
+        int8_t *data = tensor.typed_data<int8_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = static_cast<int8_t>(rng.randint(low, high));
+        }
+        break;
+    }
+    case DType::Int16: {
+        int16_t *data = tensor.typed_data<int16_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = static_cast<int16_t>(rng.randint(low, high));
+        }
+        break;
+    }
+    case DType::Int32: {
+        int32_t *data = tensor.typed_data<int32_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = static_cast<int32_t>(rng.randint(low, high));
+        }
+        break;
+    }
+    case DType::Int64: {
+        int64_t *data = tensor.typed_data<int64_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = rng.randint(low, high);
+        }
+        break;
+    }
+    case DType::UInt8: {
+        uint8_t *data = tensor.typed_data<uint8_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = static_cast<uint8_t>(rng.randint(low, high));
+        }
+        break;
+    }
+    case DType::UInt16: {
+        uint16_t *data = tensor.typed_data<uint16_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = static_cast<uint16_t>(rng.randint(low, high));
+        }
+        break;
+    }
+    case DType::UInt32: {
+        uint32_t *data = tensor.typed_data<uint32_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = static_cast<uint32_t>(rng.randint(low, high));
+        }
+        break;
+    }
+    case DType::UInt64: {
+        uint64_t *data = tensor.typed_data<uint64_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = static_cast<uint64_t>(rng.randint(low, high));
+        }
+        break;
+    }
+    default:
+        throw TypeError("randint only supports integer types, got " +
+                        axiom::dtype_name(dtype));
+    }
+
+    if (device == Device::GPU) {
+        return tensor.to(device, order);
+    }
+    return tensor;
+}
+
+Tensor Tensor::rand_like(const Tensor &prototype) {
+    return rand(prototype.shape(), prototype.dtype(), prototype.device(),
+                prototype.memory_order());
+}
+
+Tensor Tensor::randn_like(const Tensor &prototype) {
+    return randn(prototype.shape(), prototype.dtype(), prototype.device(),
+                 prototype.memory_order());
+}
+
+Tensor Tensor::randint_like(const Tensor &prototype, int64_t low,
+                            int64_t high) {
+    return randint(low, high, prototype.shape(), prototype.dtype(),
+                   prototype.device(), prototype.memory_order());
+}
+
 Tensor Tensor::linspace(double start, double stop, size_t num, bool endpoint,
                         DType dtype, Device device) {
     if (num == 0) {

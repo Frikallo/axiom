@@ -676,3 +676,178 @@ set_tests_properties(simd_dispatch
     PROPERTIES
         TIMEOUT 30
 )
+
+# Broadcast utilities tests
+add_executable(test_broadcast
+    test_broadcast.cpp
+)
+
+target_link_libraries(test_broadcast
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_broadcast
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME broadcast
+    COMMAND test_broadcast
+)
+
+set_tests_properties(broadcast
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Extended random module tests
+add_executable(test_random_extended
+    test_random_extended.cpp
+)
+
+target_link_libraries(test_random_extended
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_random_extended
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME random_extended
+    COMMAND test_random_extended
+)
+
+set_tests_properties(random_extended
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Extended shape operations tests
+add_executable(test_shape_ops_extended
+    test_shape_ops_extended.cpp
+)
+
+target_link_libraries(test_shape_ops_extended
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_shape_ops_extended
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME shape_ops_extended
+    COMMAND test_shape_ops_extended
+)
+
+set_tests_properties(shape_ops_extended
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Advanced indexing tests
+add_executable(test_advanced_indexing
+    test_advanced_indexing.cpp
+)
+
+target_link_libraries(test_advanced_indexing
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_advanced_indexing
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME advanced_indexing
+    COMMAND test_advanced_indexing
+)
+
+set_tests_properties(advanced_indexing
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Einsum tests
+add_executable(test_einsum
+    test_einsum.cpp
+)
+
+target_link_libraries(test_einsum
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_einsum
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME einsum
+    COMMAND test_einsum
+)
+
+set_tests_properties(einsum
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# FFT tests
+add_executable(test_fft
+    test_fft.cpp
+)
+
+target_link_libraries(test_fft
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_fft
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME fft
+    COMMAND test_fft
+)
+
+set_tests_properties(fft
+    PROPERTIES
+        TIMEOUT 30
+)
+
+# Pooling operations tests
+add_executable(test_pooling
+    test_pooling.cpp
+)
+
+target_link_libraries(test_pooling
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_pooling
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME pooling
+    COMMAND test_pooling
+)
+
+set_tests_properties(pooling
+    PROPERTIES
+        TIMEOUT 30
+)

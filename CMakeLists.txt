@@ -230,6 +230,7 @@ set(AXIOM_SOURCES
     src/tensor/einops.cpp
     src/tensor/operations.cpp
     src/tensor/random.cpp
+    src/tensor/fft.cpp
     src/tensor/system.cpp
     src/tensor/indexing.cpp
 

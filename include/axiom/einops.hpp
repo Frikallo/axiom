@@ -132,6 +132,23 @@ Tensor reduce(const Tensor &tensor, const std::string &pattern,
               const std::string &reduction,
               const std::map<std::string, size_t> &axis_sizes = {});
 
+/**
+ * Einstein summation convention
+ * @param equation Einsum equation like "ij,jk->ik" for matrix multiply
+ * @param operands Vector of input tensors
+ * @return Result tensor
+ *
+ * Supported patterns:
+ *   einsum("ij,jk->ik", {A, B})     // matrix multiply
+ *   einsum("ii->", {A})             // trace
+ *   einsum("ij->ji", {A})           // transpose
+ *   einsum("ij,ij->ij", {A, B})     // element-wise multiply
+ *   einsum("bij,bjk->bik", {A, B})  // batched matmul
+ *   einsum("ijk->", {A})            // sum all elements
+ *   einsum("ij->j", {A})            // sum over rows
+ */
+Tensor einsum(const std::string &equation, const std::vector<Tensor> &operands);
+
 // ============================================================================
 // Exception types for einops operations
 // ============================================================================
