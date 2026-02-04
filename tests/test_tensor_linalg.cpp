@@ -450,7 +450,7 @@ void test_matrix_power_zero() {
 }
 
 // ============================================================================
-// Test: NumPy Parity - Phase 1: Core Products
+// Test: Core Products
 // ============================================================================
 
 void test_dot_1d_1d() {
@@ -616,7 +616,7 @@ void test_vecdot() {
 }
 
 // ============================================================================
-// Test: NumPy Parity - Phase 2: Complex Products
+// Test: Complex Products
 // ============================================================================
 
 void test_tensordot_simple() {
@@ -687,7 +687,7 @@ void test_cross_simple() {
 }
 
 // ============================================================================
-// Test: NumPy Parity - Phase 3: Decomposition Variants
+// Test: Decomposition Variants
 // ============================================================================
 
 void test_svdvals() {
@@ -854,7 +854,7 @@ int main() {
     RUN_TEST(test_matrix_power_negative);
     RUN_TEST(test_matrix_power_zero);
 
-    // New NumPy parity tests - Phase 1: Core Products
+    // Core Products
     RUN_TEST(test_dot_1d_1d);
     RUN_TEST(test_dot_2d_2d);
     RUN_TEST(test_dot_1d_2d);

@@ -160,6 +160,26 @@ static std::string op_type_name(OpType op) {
         return "scatter";
     case OpType::IndexSelect:
         return "index_select";
+    case OpType::Take:
+        return "take";
+    case OpType::TakeAlongAxis:
+        return "take_along_axis";
+    case OpType::MaxPool1D:
+        return "max_pool1d";
+    case OpType::MaxPool2D:
+        return "max_pool2d";
+    case OpType::MaxPool3D:
+        return "max_pool3d";
+    case OpType::AvgPool1D:
+        return "avg_pool1d";
+    case OpType::AvgPool2D:
+        return "avg_pool2d";
+    case OpType::AvgPool3D:
+        return "avg_pool3d";
+    case OpType::AdaptiveMaxPool2D:
+        return "adaptive_max_pool2d";
+    case OpType::AdaptiveAvgPool2D:
+        return "adaptive_avg_pool2d";
     default:
         return "unknown";
     }
@@ -244,6 +264,50 @@ bool are_broadcastable(const Shape &lhs_shape, const Shape &rhs_shape) {
     } catch (const std::runtime_error &) {
         return false;
     }
+}
+
+Shape broadcast_shapes(const std::vector<Shape> &shapes) {
+    if (shapes.empty()) {
+        return {};
+    }
+    if (shapes.size() == 1) {
+        return shapes[0];
+    }
+
+    // Pairwise broadcast: result = broadcast(broadcast(s1, s2), s3)...
+    Shape result = shapes[0];
+    for (size_t i = 1; i < shapes.size(); ++i) {
+        result = ShapeUtils::broadcast_shape(result, shapes[i]);
+    }
+    return result;
+}
+
+std::vector<Tensor> broadcast_tensors(const std::vector<Tensor> &tensors) {
+    if (tensors.empty()) {
+        return {};
+    }
+    if (tensors.size() == 1) {
+        return tensors;
+    }
+
+    // Collect all shapes
+    std::vector<Shape> shapes;
+    shapes.reserve(tensors.size());
+    for (const auto &t : tensors) {
+        shapes.push_back(t.shape());
+    }
+
+    // Compute broadcast shape
+    Shape target_shape = broadcast_shapes(shapes);
+
+    // Expand each tensor to target shape (zero-copy via strides)
+    std::vector<Tensor> result;
+    result.reserve(tensors.size());
+    for (const auto &t : tensors) {
+        result.push_back(t.expand(target_shape));
+    }
+
+    return result;
 }
 
 // ============================================================================
@@ -1686,6 +1750,1189 @@ std::pair<Tensor, Tensor> dropout(const Tensor &input, float p, bool training) {
     auto scaled = multiply(masked, scale_tensor);
 
     return {scaled, mask};
+}
+
+// ============================================================================
+// Advanced indexing operations
+// ============================================================================
+
+Tensor take(const Tensor &input, const Tensor &indices, int axis) {
+    // Validate indices dtype
+    if (!is_integer_dtype(indices.dtype())) {
+        throw TypeError("take: indices must be integer type, got " +
+                        dtype_name(indices.dtype()));
+    }
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor indices_cpu =
+        indices.device() == Device::CPU ? indices : indices.cpu();
+
+    // Convert indices to Int64 for uniform handling
+    if (indices_cpu.dtype() != DType::Int64) {
+        indices_cpu = indices_cpu.astype(DType::Int64);
+    }
+
+    if (axis == -1) {
+        // Take from flattened tensor
+        Tensor flat = input_cpu.flatten();
+        size_t n = flat.size();
+
+        // Output shape is same as indices shape
+        Tensor result(indices.shape(), input.dtype(), Device::CPU);
+
+        const int64_t *idx_data = indices_cpu.typed_data<int64_t>();
+        size_t out_size = indices_cpu.size();
+
+        switch (input.dtype()) {
+#define TAKE_CASE(DTYPE, CTYPE)                                                \
+    case DTYPE: {                                                              \
+        const CTYPE *src = flat.typed_data<CTYPE>();                           \
+        CTYPE *dst = result.typed_data<CTYPE>();                               \
+        for (size_t i = 0; i < out_size; ++i) {                                \
+            int64_t idx = idx_data[i];                                         \
+            if (idx < 0)                                                       \
+                idx += static_cast<int64_t>(n);                                \
+            if (idx < 0 || idx >= static_cast<int64_t>(n)) {                   \
+                throw IndexError(                                              \
+                    "take: index " + std::to_string(idx_data[i]) +             \
+                    " out of bounds for size " + std::to_string(n));           \
+            }                                                                  \
+            dst[i] = src[idx];                                                 \
+        }                                                                      \
+        break;                                                                 \
+    }
+            TAKE_CASE(DType::Float32, float)
+            TAKE_CASE(DType::Float64, double)
+            TAKE_CASE(DType::Int32, int32_t)
+            TAKE_CASE(DType::Int64, int64_t)
+            TAKE_CASE(DType::Int8, int8_t)
+            TAKE_CASE(DType::Int16, int16_t)
+#undef TAKE_CASE
+        default:
+            throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                               "take");
+        }
+
+        return input.device() == Device::GPU ? result.gpu() : result;
+    }
+
+    // Take along specific axis
+    int ndim = static_cast<int>(input.ndim());
+    if (axis < 0)
+        axis += ndim;
+    if (axis < 0 || axis >= ndim) {
+        throw ShapeError::invalid_axis(axis, ndim);
+    }
+
+    // Use index_select for axis-based take
+    return index_select(input, axis, indices.flatten());
+}
+
+Tensor take_along_axis(const Tensor &input, const Tensor &indices, int axis) {
+    // Validate indices dtype
+    if (!is_integer_dtype(indices.dtype())) {
+        throw TypeError("take_along_axis: indices must be integer type, got " +
+                        dtype_name(indices.dtype()));
+    }
+
+    int ndim = static_cast<int>(input.ndim());
+    if (axis < 0)
+        axis += ndim;
+    if (axis < 0 || axis >= ndim) {
+        throw ShapeError::invalid_axis(axis, ndim);
+    }
+
+    // indices and input must have same number of dimensions
+    if (indices.ndim() != input.ndim()) {
+        throw ShapeError(
+            "take_along_axis: indices must have same ndim as input, got " +
+            std::to_string(indices.ndim()) + " vs " + std::to_string(ndim));
+    }
+
+    // Check shapes are compatible (same except possibly along axis)
+    for (int d = 0; d < ndim; ++d) {
+        if (d != axis && indices.shape()[d] != input.shape()[d]) {
+            throw ShapeError(
+                "take_along_axis: indices shape must match input shape except "
+                "along axis");
+        }
+    }
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor indices_cpu =
+        indices.device() == Device::CPU ? indices : indices.cpu();
+
+    if (indices_cpu.dtype() != DType::Int64) {
+        indices_cpu = indices_cpu.astype(DType::Int64);
+    }
+
+    // Output has same shape as indices
+    Tensor result(indices.shape(), input.dtype(), Device::CPU);
+
+    const int64_t *idx_data = indices_cpu.typed_data<int64_t>();
+    size_t axis_size = input.shape()[axis];
+
+    // Iterate over all positions in indices
+    size_t total = indices_cpu.size();
+    std::vector<size_t> coords(ndim, 0);
+
+    switch (input.dtype()) {
+#define TAKE_ALONG_CASE(DTYPE, CTYPE)                                          \
+    case DTYPE: {                                                              \
+        for (size_t i = 0; i < total; ++i) {                                   \
+            int64_t idx = idx_data[i];                                         \
+            if (idx < 0)                                                       \
+                idx += static_cast<int64_t>(axis_size);                        \
+            if (idx < 0 || idx >= static_cast<int64_t>(axis_size)) {           \
+                throw IndexError("take_along_axis: index out of bounds");      \
+            }                                                                  \
+            std::vector<size_t> src_coords = coords;                           \
+            src_coords[axis] = static_cast<size_t>(idx);                       \
+            result.set_item<CTYPE>(coords, input_cpu.item<CTYPE>(src_coords)); \
+            for (int d = ndim - 1; d >= 0; --d) {                              \
+                if (++coords[d] < indices.shape()[d])                          \
+                    break;                                                     \
+                coords[d] = 0;                                                 \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        TAKE_ALONG_CASE(DType::Float32, float)
+        TAKE_ALONG_CASE(DType::Float64, double)
+        TAKE_ALONG_CASE(DType::Int32, int32_t)
+        TAKE_ALONG_CASE(DType::Int64, int64_t)
+#undef TAKE_ALONG_CASE
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "take_along_axis");
+    }
+
+    return input.device() == Device::GPU ? result.gpu() : result;
+}
+
+Tensor put_along_axis(const Tensor &input, const Tensor &indices,
+                      const Tensor &values, int axis) {
+    // Validate indices dtype
+    if (!is_integer_dtype(indices.dtype())) {
+        throw TypeError("put_along_axis: indices must be integer type, got " +
+                        dtype_name(indices.dtype()));
+    }
+
+    int ndim = static_cast<int>(input.ndim());
+    if (axis < 0)
+        axis += ndim;
+    if (axis < 0 || axis >= ndim) {
+        throw ShapeError::invalid_axis(axis, ndim);
+    }
+
+    // indices and values must have same shape
+    if (indices.shape() != values.shape()) {
+        throw ShapeError(
+            "put_along_axis: indices and values must have same shape");
+    }
+
+    // indices must have same ndim as input
+    if (indices.ndim() != input.ndim()) {
+        throw ShapeError(
+            "put_along_axis: indices must have same ndim as input");
+    }
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor indices_cpu =
+        indices.device() == Device::CPU ? indices : indices.cpu();
+    Tensor values_cpu = values.device() == Device::CPU ? values : values.cpu();
+
+    if (indices_cpu.dtype() != DType::Int64) {
+        indices_cpu = indices_cpu.astype(DType::Int64);
+    }
+
+    // Create copy of input to modify
+    Tensor result = input_cpu.clone();
+
+    const int64_t *idx_data = indices_cpu.typed_data<int64_t>();
+    size_t axis_size = input.shape()[axis];
+
+    size_t total = indices_cpu.size();
+    std::vector<size_t> coords(ndim, 0);
+
+    switch (input.dtype()) {
+#define PUT_ALONG_CASE(DTYPE, CTYPE)                                           \
+    case DTYPE: {                                                              \
+        for (size_t i = 0; i < total; ++i) {                                   \
+            int64_t idx = idx_data[i];                                         \
+            if (idx < 0)                                                       \
+                idx += static_cast<int64_t>(axis_size);                        \
+            if (idx < 0 || idx >= static_cast<int64_t>(axis_size)) {           \
+                throw IndexError("put_along_axis: index out of bounds");       \
+            }                                                                  \
+            std::vector<size_t> dst_coords = coords;                           \
+            dst_coords[axis] = static_cast<size_t>(idx);                       \
+            result.set_item<CTYPE>(dst_coords,                                 \
+                                   values_cpu.item<CTYPE>(coords));            \
+            for (int d = ndim - 1; d >= 0; --d) {                              \
+                if (++coords[d] < indices.shape()[d])                          \
+                    break;                                                     \
+                coords[d] = 0;                                                 \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        PUT_ALONG_CASE(DType::Float32, float)
+        PUT_ALONG_CASE(DType::Float64, double)
+        PUT_ALONG_CASE(DType::Int32, int32_t)
+        PUT_ALONG_CASE(DType::Int64, int64_t)
+#undef PUT_ALONG_CASE
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "put_along_axis");
+    }
+
+    return input.device() == Device::GPU ? result.gpu() : result;
+}
+
+// ============================================================================
+// Shape manipulation operations
+// ============================================================================
+
+std::vector<Tensor> meshgrid(const std::vector<Tensor> &tensors,
+                             const std::string &indexing) {
+    if (tensors.empty()) {
+        return {};
+    }
+
+    // Validate all tensors are 1D
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        if (tensors[i].ndim() != 1) {
+            throw ShapeError("meshgrid: all input tensors must be 1D, got " +
+                             std::to_string(tensors[i].ndim()) + "D at index " +
+                             std::to_string(i));
+        }
+    }
+
+    if (indexing != "xy" && indexing != "ij") {
+        throw ValueError("meshgrid: indexing must be 'xy' or 'ij', got '" +
+                         indexing + "'");
+    }
+
+    size_t ndim = tensors.size();
+
+    // Build output shape: [len(t0), len(t1), ..., len(tn)]
+    Shape output_shape;
+    for (const auto &t : tensors) {
+        output_shape.push_back(t.shape()[0]);
+    }
+
+    // For "xy" indexing (Cartesian), swap first two dimensions
+    if (indexing == "xy" && ndim >= 2) {
+        std::swap(output_shape[0], output_shape[1]);
+    }
+
+    std::vector<Tensor> result;
+    result.reserve(ndim);
+
+    for (size_t i = 0; i < ndim; ++i) {
+        // Determine which dimension this tensor expands along
+        size_t expand_dim = i;
+        if (indexing == "xy" && ndim >= 2) {
+            if (i == 0)
+                expand_dim = 1;
+            else if (i == 1)
+                expand_dim = 0;
+        }
+
+        // Reshape tensor to have 1s in all dimensions except expand_dim
+        Shape reshape_shape(ndim, 1);
+        reshape_shape[expand_dim] = tensors[i].shape()[0];
+
+        Tensor reshaped = tensors[i].reshape(reshape_shape);
+        Tensor expanded = reshaped.expand(output_shape);
+
+        result.push_back(expanded);
+    }
+
+    return result;
+}
+
+Tensor pad(const Tensor &input,
+           const std::vector<std::pair<size_t, size_t>> &pad_width,
+           const std::string &mode, double value) {
+    if (pad_width.size() != input.ndim()) {
+        throw ShapeError("pad: pad_width size (" +
+                         std::to_string(pad_width.size()) +
+                         ") must match tensor dimensions (" +
+                         std::to_string(input.ndim()) + ")");
+    }
+
+    if (mode != "constant" && mode != "reflect" && mode != "replicate" &&
+        mode != "circular") {
+        throw ValueError(
+            "pad: mode must be 'constant', 'reflect', 'replicate', or "
+            "'circular', got '" +
+            mode + "'");
+    }
+
+    // Calculate output shape
+    Shape output_shape;
+    for (size_t i = 0; i < input.ndim(); ++i) {
+        output_shape.push_back(pad_width[i].first + input.shape()[i] +
+                               pad_width[i].second);
+    }
+
+    // Create output tensor
+    Tensor result = Tensor::zeros(output_shape, input.dtype(), input.device(),
+                                  input.memory_order());
+
+    // For GPU tensors, move to CPU for padding, then back
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor result_cpu = result.device() == Device::CPU ? result : result.cpu();
+
+    // Fill with constant value if mode is constant
+    if (mode == "constant" && value != 0.0) {
+        switch (result_cpu.dtype()) {
+        case DType::Float32:
+            result_cpu.fill<float>(static_cast<float>(value));
+            break;
+        case DType::Float64:
+            result_cpu.fill<double>(value);
+            break;
+        case DType::Int32:
+            result_cpu.fill<int32_t>(static_cast<int32_t>(value));
+            break;
+        case DType::Int64:
+            result_cpu.fill<int64_t>(static_cast<int64_t>(value));
+            break;
+        default:
+            break;
+        }
+    }
+
+    // Helper to compute source index based on padding mode
+    auto get_source_idx = [&](int64_t idx, size_t dim_size,
+                              const std::string &pad_mode) -> int64_t {
+        if (idx >= 0 && idx < static_cast<int64_t>(dim_size)) {
+            return idx;
+        }
+
+        if (pad_mode == "constant") {
+            return -1; // Signal to use constant value
+        } else if (pad_mode == "reflect") {
+            // Reflect at boundaries (excluding boundary)
+            while (idx < 0 || idx >= static_cast<int64_t>(dim_size)) {
+                if (idx < 0) {
+                    idx = -idx;
+                }
+                if (idx >= static_cast<int64_t>(dim_size)) {
+                    idx = 2 * static_cast<int64_t>(dim_size) - idx - 2;
+                }
+            }
+            return idx;
+        } else if (pad_mode == "replicate") {
+            // Clamp to boundary
+            return std::max<int64_t>(
+                0, std::min<int64_t>(idx, static_cast<int64_t>(dim_size) - 1));
+        } else { // circular
+            // Wrap around
+            idx = idx % static_cast<int64_t>(dim_size);
+            if (idx < 0)
+                idx += static_cast<int64_t>(dim_size);
+            return idx;
+        }
+    };
+
+    // Copy data with padding
+    size_t total_size = ShapeUtils::size(output_shape);
+    std::vector<size_t> out_coords(input.ndim(), 0);
+
+    for (size_t i = 0; i < total_size; ++i) {
+        // Compute source coordinates
+        std::vector<size_t> src_coords(input.ndim());
+        bool use_constant = false;
+
+        for (size_t d = 0; d < input.ndim(); ++d) {
+            int64_t src_idx = static_cast<int64_t>(out_coords[d]) -
+                              static_cast<int64_t>(pad_width[d].first);
+            int64_t mapped_idx =
+                get_source_idx(src_idx, input.shape()[d], mode);
+            if (mapped_idx < 0) {
+                use_constant = true;
+                break;
+            }
+            src_coords[d] = static_cast<size_t>(mapped_idx);
+        }
+
+        if (!use_constant) {
+            // Copy value from source
+            switch (result_cpu.dtype()) {
+            case DType::Float32:
+                result_cpu.set_item<float>(out_coords,
+                                           input_cpu.item<float>(src_coords));
+                break;
+            case DType::Float64:
+                result_cpu.set_item<double>(out_coords,
+                                            input_cpu.item<double>(src_coords));
+                break;
+            case DType::Int32:
+                result_cpu.set_item<int32_t>(
+                    out_coords, input_cpu.item<int32_t>(src_coords));
+                break;
+            case DType::Int64:
+                result_cpu.set_item<int64_t>(
+                    out_coords, input_cpu.item<int64_t>(src_coords));
+                break;
+            default:
+                break;
+            }
+        }
+
+        // Increment output coordinates
+        for (int d = static_cast<int>(input.ndim()) - 1; d >= 0; --d) {
+            if (++out_coords[d] < output_shape[d])
+                break;
+            out_coords[d] = 0;
+        }
+    }
+
+    if (input.device() == Device::GPU) {
+        return result_cpu.gpu();
+    }
+    return result_cpu;
+}
+
+Tensor atleast_1d(const Tensor &tensor) {
+    if (tensor.ndim() >= 1) {
+        return tensor;
+    }
+    // 0D tensor -> 1D with shape [1]
+    return tensor.reshape({1});
+}
+
+Tensor atleast_2d(const Tensor &tensor) {
+    if (tensor.ndim() >= 2) {
+        return tensor;
+    }
+    if (tensor.ndim() == 1) {
+        // [n] -> [1, n]
+        return tensor.unsqueeze(0);
+    }
+    // 0D -> [1, 1]
+    return tensor.reshape({1, 1});
+}
+
+Tensor atleast_3d(const Tensor &tensor) {
+    if (tensor.ndim() >= 3) {
+        return tensor;
+    }
+    if (tensor.ndim() == 2) {
+        // [m, n] -> [m, n, 1]
+        return tensor.unsqueeze(2);
+    }
+    if (tensor.ndim() == 1) {
+        // [n] -> [1, n, 1]
+        return tensor.unsqueeze(0).unsqueeze(2);
+    }
+    // 0D -> [1, 1, 1]
+    return tensor.reshape({1, 1, 1});
+}
+
+std::vector<Tensor> atleast_1d(const std::vector<Tensor> &tensors) {
+    std::vector<Tensor> result;
+    result.reserve(tensors.size());
+    for (const auto &t : tensors) {
+        result.push_back(atleast_1d(t));
+    }
+    return result;
+}
+
+std::vector<Tensor> atleast_2d(const std::vector<Tensor> &tensors) {
+    std::vector<Tensor> result;
+    result.reserve(tensors.size());
+    for (const auto &t : tensors) {
+        result.push_back(atleast_2d(t));
+    }
+    return result;
+}
+
+std::vector<Tensor> atleast_3d(const std::vector<Tensor> &tensors) {
+    std::vector<Tensor> result;
+    result.reserve(tensors.size());
+    for (const auto &t : tensors) {
+        result.push_back(atleast_3d(t));
+    }
+    return result;
+}
+
+// ============================================================================
+// Pooling operations
+// ============================================================================
+
+namespace {
+
+// Helper to compute output size for pooling
+size_t pool_output_size(size_t input_size, int kernel_size, int stride,
+                        int padding) {
+    return (input_size + 2 * padding - kernel_size) / stride + 1;
+}
+
+// Helper to expand single int to vector
+std::vector<int> expand_param(int value, size_t ndim) {
+    return std::vector<int>(ndim, value);
+}
+
+} // namespace
+
+Tensor max_pool1d(const Tensor &input, int kernel_size, int stride,
+                  int padding) {
+    if (stride <= 0)
+        stride = kernel_size;
+    if (input.ndim() < 2 || input.ndim() > 3) {
+        throw ShapeError(
+            "max_pool1d: expected 2D or 3D input (C,L) or (N,C,L), got " +
+            std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 3);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t channels = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t length = has_batch ? input.shape()[2] : input.shape()[1];
+
+    size_t out_length = pool_output_size(length, kernel_size, stride, padding);
+
+    Shape out_shape = has_batch ? Shape{batch_size, channels, out_length}
+                                : Shape{channels, out_length};
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor result(out_shape, input.dtype(), Device::CPU);
+
+    // Process each channel
+    switch (input.dtype()) {
+#define MAX_POOL1D_CASE(DTYPE, CTYPE, MINVAL)                                  \
+    case DTYPE: {                                                              \
+        for (size_t b = 0; b < batch_size; ++b) {                              \
+            for (size_t c = 0; c < channels; ++c) {                            \
+                for (size_t o = 0; o < out_length; ++o) {                      \
+                    CTYPE max_val = MINVAL;                                    \
+                    int start = static_cast<int>(o) * stride - padding;        \
+                    for (int k = 0; k < kernel_size; ++k) {                    \
+                        int idx = start + k;                                   \
+                        if (idx >= 0 && idx < static_cast<int>(length)) {      \
+                            std::vector<size_t> coords =                       \
+                                has_batch                                      \
+                                    ? std::vector<size_t>{b, c,                \
+                                                          static_cast<size_t>( \
+                                                              idx)}            \
+                                    : std::vector<size_t>{                     \
+                                          c, static_cast<size_t>(idx)};        \
+                            CTYPE val = input_cpu.item<CTYPE>(coords);         \
+                            if (val > max_val)                                 \
+                                max_val = val;                                 \
+                        }                                                      \
+                    }                                                          \
+                    std::vector<size_t> out_coords =                           \
+                        has_batch ? std::vector<size_t>{b, c, o}               \
+                                  : std::vector<size_t>{c, o};                 \
+                    result.set_item<CTYPE>(out_coords, max_val);               \
+                }                                                              \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        MAX_POOL1D_CASE(DType::Float32, float,
+                        -std::numeric_limits<float>::infinity())
+        MAX_POOL1D_CASE(DType::Float64, double,
+                        -std::numeric_limits<double>::infinity())
+#undef MAX_POOL1D_CASE
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "max_pool1d");
+    }
+
+    return input.device() == Device::GPU ? result.gpu() : result;
+}
+
+Tensor avg_pool1d(const Tensor &input, int kernel_size, int stride, int padding,
+                  bool count_include_pad) {
+    if (stride <= 0)
+        stride = kernel_size;
+    if (input.ndim() < 2 || input.ndim() > 3) {
+        throw ShapeError("avg_pool1d: expected 2D or 3D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 3);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t channels = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t length = has_batch ? input.shape()[2] : input.shape()[1];
+
+    size_t out_length = pool_output_size(length, kernel_size, stride, padding);
+
+    Shape out_shape = has_batch ? Shape{batch_size, channels, out_length}
+                                : Shape{channels, out_length};
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor result(out_shape, input.dtype(), Device::CPU);
+
+    switch (input.dtype()) {
+#define AVG_POOL1D_CASE(DTYPE, CTYPE)                                          \
+    case DTYPE: {                                                              \
+        for (size_t b = 0; b < batch_size; ++b) {                              \
+            for (size_t c = 0; c < channels; ++c) {                            \
+                for (size_t o = 0; o < out_length; ++o) {                      \
+                    CTYPE sum = 0;                                             \
+                    int count = 0;                                             \
+                    int start = static_cast<int>(o) * stride - padding;        \
+                    for (int k = 0; k < kernel_size; ++k) {                    \
+                        int idx = start + k;                                   \
+                        if (idx >= 0 && idx < static_cast<int>(length)) {      \
+                            std::vector<size_t> coords =                       \
+                                has_batch                                      \
+                                    ? std::vector<size_t>{b, c,                \
+                                                          static_cast<size_t>( \
+                                                              idx)}            \
+                                    : std::vector<size_t>{                     \
+                                          c, static_cast<size_t>(idx)};        \
+                            sum += input_cpu.item<CTYPE>(coords);              \
+                            count++;                                           \
+                        } else if (count_include_pad) {                        \
+                            count++;                                           \
+                        }                                                      \
+                    }                                                          \
+                    CTYPE avg = count > 0 ? sum / count : CTYPE(0);            \
+                    std::vector<size_t> out_coords =                           \
+                        has_batch ? std::vector<size_t>{b, c, o}               \
+                                  : std::vector<size_t>{c, o};                 \
+                    result.set_item<CTYPE>(out_coords, avg);                   \
+                }                                                              \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        AVG_POOL1D_CASE(DType::Float32, float)
+        AVG_POOL1D_CASE(DType::Float64, double)
+#undef AVG_POOL1D_CASE
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "avg_pool1d");
+    }
+
+    return input.device() == Device::GPU ? result.gpu() : result;
+}
+
+Tensor max_pool2d(const Tensor &input, const std::vector<int> &kernel_size,
+                  const std::vector<int> &stride,
+                  const std::vector<int> &padding) {
+    if (kernel_size.size() != 2) {
+        throw ValueError("max_pool2d: kernel_size must have 2 elements");
+    }
+
+    std::vector<int> actual_stride = stride.empty() ? kernel_size : stride;
+    std::vector<int> actual_padding =
+        padding.empty() ? std::vector<int>{0, 0} : padding;
+
+    if (actual_stride.size() != 2 || actual_padding.size() != 2) {
+        throw ValueError("max_pool2d: stride and padding must have 2 elements");
+    }
+
+    if (input.ndim() < 3 || input.ndim() > 4) {
+        throw ShapeError(
+            "max_pool2d: expected 3D or 4D input (C,H,W) or (N,C,H,W), got " +
+            std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 4);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t channels = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t height = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t width = has_batch ? input.shape()[3] : input.shape()[2];
+
+    size_t out_h = pool_output_size(height, kernel_size[0], actual_stride[0],
+                                    actual_padding[0]);
+    size_t out_w = pool_output_size(width, kernel_size[1], actual_stride[1],
+                                    actual_padding[1]);
+
+    Shape out_shape = has_batch ? Shape{batch_size, channels, out_h, out_w}
+                                : Shape{channels, out_h, out_w};
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor result(out_shape, input.dtype(), Device::CPU);
+
+    switch (input.dtype()) {
+#define MAX_POOL2D_CASE(DTYPE, CTYPE, MINVAL)                                  \
+    case DTYPE: {                                                              \
+        for (size_t b = 0; b < batch_size; ++b) {                              \
+            for (size_t c = 0; c < channels; ++c) {                            \
+                for (size_t oh = 0; oh < out_h; ++oh) {                        \
+                    for (size_t ow = 0; ow < out_w; ++ow) {                    \
+                        CTYPE max_val = MINVAL;                                \
+                        int h_start =                                          \
+                            static_cast<int>(oh) * actual_stride[0] -          \
+                            actual_padding[0];                                 \
+                        int w_start =                                          \
+                            static_cast<int>(ow) * actual_stride[1] -          \
+                            actual_padding[1];                                 \
+                        for (int kh = 0; kh < kernel_size[0]; ++kh) {          \
+                            for (int kw = 0; kw < kernel_size[1]; ++kw) {      \
+                                int h = h_start + kh;                          \
+                                int w = w_start + kw;                          \
+                                if (h >= 0 && h < static_cast<int>(height) &&  \
+                                    w >= 0 && w < static_cast<int>(width)) {   \
+                                    std::vector<size_t> coords =               \
+                                        has_batch                              \
+                                            ? std::vector<                     \
+                                                  size_t>{b, c,                \
+                                                          static_cast<size_t>( \
+                                                              h),              \
+                                                          static_cast<size_t>( \
+                                                              w)}              \
+                                            : std::vector<size_t>{             \
+                                                  c, static_cast<size_t>(h),   \
+                                                  static_cast<size_t>(w)};     \
+                                    CTYPE val = input_cpu.item<CTYPE>(coords); \
+                                    if (val > max_val)                         \
+                                        max_val = val;                         \
+                                }                                              \
+                            }                                                  \
+                        }                                                      \
+                        std::vector<size_t> out_coords =                       \
+                            has_batch ? std::vector<size_t>{b, c, oh, ow}      \
+                                      : std::vector<size_t>{c, oh, ow};        \
+                        result.set_item<CTYPE>(out_coords, max_val);           \
+                    }                                                          \
+                }                                                              \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        MAX_POOL2D_CASE(DType::Float32, float,
+                        -std::numeric_limits<float>::infinity())
+        MAX_POOL2D_CASE(DType::Float64, double,
+                        -std::numeric_limits<double>::infinity())
+#undef MAX_POOL2D_CASE
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "max_pool2d");
+    }
+
+    return input.device() == Device::GPU ? result.gpu() : result;
+}
+
+Tensor avg_pool2d(const Tensor &input, const std::vector<int> &kernel_size,
+                  const std::vector<int> &stride,
+                  const std::vector<int> &padding, bool count_include_pad) {
+    if (kernel_size.size() != 2) {
+        throw ValueError("avg_pool2d: kernel_size must have 2 elements");
+    }
+
+    std::vector<int> actual_stride = stride.empty() ? kernel_size : stride;
+    std::vector<int> actual_padding =
+        padding.empty() ? std::vector<int>{0, 0} : padding;
+
+    if (input.ndim() < 3 || input.ndim() > 4) {
+        throw ShapeError("avg_pool2d: expected 3D or 4D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 4);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t channels = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t height = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t width = has_batch ? input.shape()[3] : input.shape()[2];
+
+    size_t out_h = pool_output_size(height, kernel_size[0], actual_stride[0],
+                                    actual_padding[0]);
+    size_t out_w = pool_output_size(width, kernel_size[1], actual_stride[1],
+                                    actual_padding[1]);
+
+    Shape out_shape = has_batch ? Shape{batch_size, channels, out_h, out_w}
+                                : Shape{channels, out_h, out_w};
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor result(out_shape, input.dtype(), Device::CPU);
+
+    switch (input.dtype()) {
+#define AVG_POOL2D_CASE(DTYPE, CTYPE)                                          \
+    case DTYPE: {                                                              \
+        for (size_t b = 0; b < batch_size; ++b) {                              \
+            for (size_t c = 0; c < channels; ++c) {                            \
+                for (size_t oh = 0; oh < out_h; ++oh) {                        \
+                    for (size_t ow = 0; ow < out_w; ++ow) {                    \
+                        CTYPE sum = 0;                                         \
+                        int count = 0;                                         \
+                        int h_start =                                          \
+                            static_cast<int>(oh) * actual_stride[0] -          \
+                            actual_padding[0];                                 \
+                        int w_start =                                          \
+                            static_cast<int>(ow) * actual_stride[1] -          \
+                            actual_padding[1];                                 \
+                        for (int kh = 0; kh < kernel_size[0]; ++kh) {          \
+                            for (int kw = 0; kw < kernel_size[1]; ++kw) {      \
+                                int h = h_start + kh;                          \
+                                int w = w_start + kw;                          \
+                                if (h >= 0 && h < static_cast<int>(height) &&  \
+                                    w >= 0 && w < static_cast<int>(width)) {   \
+                                    std::vector<size_t> coords =               \
+                                        has_batch                              \
+                                            ? std::vector<                     \
+                                                  size_t>{b, c,                \
+                                                          static_cast<size_t>( \
+                                                              h),              \
+                                                          static_cast<size_t>( \
+                                                              w)}              \
+                                            : std::vector<size_t>{             \
+                                                  c, static_cast<size_t>(h),   \
+                                                  static_cast<size_t>(w)};     \
+                                    sum += input_cpu.item<CTYPE>(coords);      \
+                                    count++;                                   \
+                                } else if (count_include_pad) {                \
+                                    count++;                                   \
+                                }                                              \
+                            }                                                  \
+                        }                                                      \
+                        CTYPE avg = count > 0 ? sum / count : CTYPE(0);        \
+                        std::vector<size_t> out_coords =                       \
+                            has_batch ? std::vector<size_t>{b, c, oh, ow}      \
+                                      : std::vector<size_t>{c, oh, ow};        \
+                        result.set_item<CTYPE>(out_coords, avg);               \
+                    }                                                          \
+                }                                                              \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        AVG_POOL2D_CASE(DType::Float32, float)
+        AVG_POOL2D_CASE(DType::Float64, double)
+#undef AVG_POOL2D_CASE
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "avg_pool2d");
+    }
+
+    return input.device() == Device::GPU ? result.gpu() : result;
+}
+
+Tensor max_pool3d(const Tensor &input, const std::vector<int> &kernel_size,
+                  const std::vector<int> &stride,
+                  const std::vector<int> &padding) {
+    if (kernel_size.size() != 3) {
+        throw ValueError("max_pool3d: kernel_size must have 3 elements");
+    }
+
+    std::vector<int> actual_stride = stride.empty() ? kernel_size : stride;
+    std::vector<int> actual_padding =
+        padding.empty() ? std::vector<int>{0, 0, 0} : padding;
+
+    if (input.ndim() < 4 || input.ndim() > 5) {
+        throw ShapeError("max_pool3d: expected 4D or 5D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 5);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t channels = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t depth = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t height = has_batch ? input.shape()[3] : input.shape()[2];
+    size_t width = has_batch ? input.shape()[4] : input.shape()[3];
+
+    size_t out_d = pool_output_size(depth, kernel_size[0], actual_stride[0],
+                                    actual_padding[0]);
+    size_t out_h = pool_output_size(height, kernel_size[1], actual_stride[1],
+                                    actual_padding[1]);
+    size_t out_w = pool_output_size(width, kernel_size[2], actual_stride[2],
+                                    actual_padding[2]);
+
+    Shape out_shape = has_batch
+                          ? Shape{batch_size, channels, out_d, out_h, out_w}
+                          : Shape{channels, out_d, out_h, out_w};
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor result(out_shape, input.dtype(), Device::CPU);
+
+    switch (input.dtype()) {
+#define MAX_POOL3D_CASE(DTYPE, CTYPE, MINVAL)                                  \
+    case DTYPE: {                                                              \
+        for (size_t b = 0; b < batch_size; ++b) {                              \
+            for (size_t c = 0; c < channels; ++c) {                            \
+                for (size_t od = 0; od < out_d; ++od) {                        \
+                    for (size_t oh = 0; oh < out_h; ++oh) {                    \
+                        for (size_t ow = 0; ow < out_w; ++ow) {                \
+                            CTYPE max_val = MINVAL;                            \
+                            int d_start =                                      \
+                                static_cast<int>(od) * actual_stride[0] -      \
+                                actual_padding[0];                             \
+                            int h_start =                                      \
+                                static_cast<int>(oh) * actual_stride[1] -      \
+                                actual_padding[1];                             \
+                            int w_start =                                      \
+                                static_cast<int>(ow) * actual_stride[2] -      \
+                                actual_padding[2];                             \
+                            for (int kd = 0; kd < kernel_size[0]; ++kd) {      \
+                                for (int kh = 0; kh < kernel_size[1]; ++kh) {  \
+                                    for (int kw = 0; kw < kernel_size[2];      \
+                                         ++kw) {                               \
+                                        int d = d_start + kd;                  \
+                                        int h = h_start + kh;                  \
+                                        int w = w_start + kw;                  \
+                                        if (d >= 0 &&                          \
+                                            d < static_cast<int>(depth) &&     \
+                                            h >= 0 &&                          \
+                                            h < static_cast<int>(height) &&    \
+                                            w >= 0 &&                          \
+                                            w < static_cast<int>(width)) {     \
+                                            std::vector<size_t> coords =       \
+                                                has_batch                      \
+                                                    ? std::vector<             \
+                                                          size_t>{b, c,        \
+                                                                  static_cast< \
+                                                                      size_t>( \
+                                                                      d),      \
+                                                                  static_cast< \
+                                                                      size_t>( \
+                                                                      h),      \
+                                                                  static_cast< \
+                                                                      size_t>( \
+                                                                      w)}      \
+                                                    : std::vector<size_t>{     \
+                                                          c,                   \
+                                                          static_cast<size_t>( \
+                                                              d),              \
+                                                          static_cast<size_t>( \
+                                                              h),              \
+                                                          static_cast<size_t>( \
+                                                              w)};             \
+                                            CTYPE val =                        \
+                                                input_cpu.item<CTYPE>(coords); \
+                                            if (val > max_val)                 \
+                                                max_val = val;                 \
+                                        }                                      \
+                                    }                                          \
+                                }                                              \
+                            }                                                  \
+                            std::vector<size_t> out_coords =                   \
+                                has_batch                                      \
+                                    ? std::vector<size_t>{b, c, od, oh, ow}    \
+                                    : std::vector<size_t>{c, od, oh, ow};      \
+                            result.set_item<CTYPE>(out_coords, max_val);       \
+                        }                                                      \
+                    }                                                          \
+                }                                                              \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        MAX_POOL3D_CASE(DType::Float32, float,
+                        -std::numeric_limits<float>::infinity())
+        MAX_POOL3D_CASE(DType::Float64, double,
+                        -std::numeric_limits<double>::infinity())
+#undef MAX_POOL3D_CASE
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "max_pool3d");
+    }
+
+    return input.device() == Device::GPU ? result.gpu() : result;
+}
+
+Tensor avg_pool3d(const Tensor &input, const std::vector<int> &kernel_size,
+                  const std::vector<int> &stride,
+                  const std::vector<int> &padding, bool count_include_pad) {
+    if (kernel_size.size() != 3) {
+        throw ValueError("avg_pool3d: kernel_size must have 3 elements");
+    }
+
+    std::vector<int> actual_stride = stride.empty() ? kernel_size : stride;
+    std::vector<int> actual_padding =
+        padding.empty() ? std::vector<int>{0, 0, 0} : padding;
+
+    if (input.ndim() < 4 || input.ndim() > 5) {
+        throw ShapeError("avg_pool3d: expected 4D or 5D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 5);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t channels = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t depth = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t height = has_batch ? input.shape()[3] : input.shape()[2];
+    size_t width = has_batch ? input.shape()[4] : input.shape()[3];
+
+    size_t out_d = pool_output_size(depth, kernel_size[0], actual_stride[0],
+                                    actual_padding[0]);
+    size_t out_h = pool_output_size(height, kernel_size[1], actual_stride[1],
+                                    actual_padding[1]);
+    size_t out_w = pool_output_size(width, kernel_size[2], actual_stride[2],
+                                    actual_padding[2]);
+
+    Shape out_shape = has_batch
+                          ? Shape{batch_size, channels, out_d, out_h, out_w}
+                          : Shape{channels, out_d, out_h, out_w};
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor result(out_shape, input.dtype(), Device::CPU);
+
+    switch (input.dtype()) {
+#define AVG_POOL3D_CASE(DTYPE, CTYPE)                                          \
+    case DTYPE: {                                                              \
+        for (size_t b = 0; b < batch_size; ++b) {                              \
+            for (size_t c = 0; c < channels; ++c) {                            \
+                for (size_t od = 0; od < out_d; ++od) {                        \
+                    for (size_t oh = 0; oh < out_h; ++oh) {                    \
+                        for (size_t ow = 0; ow < out_w; ++ow) {                \
+                            CTYPE sum = 0;                                     \
+                            int count = 0;                                     \
+                            int d_start =                                      \
+                                static_cast<int>(od) * actual_stride[0] -      \
+                                actual_padding[0];                             \
+                            int h_start =                                      \
+                                static_cast<int>(oh) * actual_stride[1] -      \
+                                actual_padding[1];                             \
+                            int w_start =                                      \
+                                static_cast<int>(ow) * actual_stride[2] -      \
+                                actual_padding[2];                             \
+                            for (int kd = 0; kd < kernel_size[0]; ++kd) {      \
+                                for (int kh = 0; kh < kernel_size[1]; ++kh) {  \
+                                    for (int kw = 0; kw < kernel_size[2];      \
+                                         ++kw) {                               \
+                                        int d = d_start + kd;                  \
+                                        int h = h_start + kh;                  \
+                                        int w = w_start + kw;                  \
+                                        if (d >= 0 &&                          \
+                                            d < static_cast<int>(depth) &&     \
+                                            h >= 0 &&                          \
+                                            h < static_cast<int>(height) &&    \
+                                            w >= 0 &&                          \
+                                            w < static_cast<int>(width)) {     \
+                                            std::vector<size_t> coords =       \
+                                                has_batch                      \
+                                                    ? std::vector<             \
+                                                          size_t>{b, c,        \
+                                                                  static_cast< \
+                                                                      size_t>( \
+                                                                      d),      \
+                                                                  static_cast< \
+                                                                      size_t>( \
+                                                                      h),      \
+                                                                  static_cast< \
+                                                                      size_t>( \
+                                                                      w)}      \
+                                                    : std::vector<size_t>{     \
+                                                          c,                   \
+                                                          static_cast<size_t>( \
+                                                              d),              \
+                                                          static_cast<size_t>( \
+                                                              h),              \
+                                                          static_cast<size_t>( \
+                                                              w)};             \
+                                            sum +=                             \
+                                                input_cpu.item<CTYPE>(coords); \
+                                            count++;                           \
+                                        } else if (count_include_pad) {        \
+                                            count++;                           \
+                                        }                                      \
+                                    }                                          \
+                                }                                              \
+                            }                                                  \
+                            CTYPE avg = count > 0 ? sum / count : CTYPE(0);    \
+                            std::vector<size_t> out_coords =                   \
+                                has_batch                                      \
+                                    ? std::vector<size_t>{b, c, od, oh, ow}    \
+                                    : std::vector<size_t>{c, od, oh, ow};      \
+                            result.set_item<CTYPE>(out_coords, avg);           \
+                        }                                                      \
+                    }                                                          \
+                }                                                              \
+            }                                                                  \
+        }                                                                      \
+        break;                                                                 \
+    }
+        AVG_POOL3D_CASE(DType::Float32, float)
+        AVG_POOL3D_CASE(DType::Float64, double)
+#undef AVG_POOL3D_CASE
+    default:
+        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
+                                           "avg_pool3d");
+    }
+
+    return input.device() == Device::GPU ? result.gpu() : result;
+}
+
+Tensor adaptive_max_pool1d(const Tensor &input, int output_size) {
+    if (input.ndim() < 2 || input.ndim() > 3) {
+        throw ShapeError("adaptive_max_pool1d: expected 2D or 3D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 3);
+    size_t input_length = has_batch ? input.shape()[2] : input.shape()[1];
+
+    // Calculate effective kernel size and stride
+    int kernel_size = (input_length + output_size - 1) / output_size;
+    int stride = input_length / output_size;
+
+    return max_pool1d(input, kernel_size, stride, 0);
+}
+
+Tensor adaptive_avg_pool1d(const Tensor &input, int output_size) {
+    if (input.ndim() < 2 || input.ndim() > 3) {
+        throw ShapeError("adaptive_avg_pool1d: expected 2D or 3D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 3);
+    size_t input_length = has_batch ? input.shape()[2] : input.shape()[1];
+
+    int kernel_size = (input_length + output_size - 1) / output_size;
+    int stride = input_length / output_size;
+
+    return avg_pool1d(input, kernel_size, stride, 0, false);
+}
+
+Tensor adaptive_max_pool2d(const Tensor &input,
+                           const std::vector<int> &output_size) {
+    if (output_size.size() != 2) {
+        throw ValueError(
+            "adaptive_max_pool2d: output_size must have 2 elements");
+    }
+
+    if (input.ndim() < 3 || input.ndim() > 4) {
+        throw ShapeError("adaptive_max_pool2d: expected 3D or 4D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 4);
+    size_t input_h = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t input_w = has_batch ? input.shape()[3] : input.shape()[2];
+
+    int kernel_h = (input_h + output_size[0] - 1) / output_size[0];
+    int kernel_w = (input_w + output_size[1] - 1) / output_size[1];
+    int stride_h = input_h / output_size[0];
+    int stride_w = input_w / output_size[1];
+
+    return max_pool2d(input, {kernel_h, kernel_w}, {stride_h, stride_w},
+                      {0, 0});
+}
+
+Tensor adaptive_avg_pool2d(const Tensor &input,
+                           const std::vector<int> &output_size) {
+    if (output_size.size() != 2) {
+        throw ValueError(
+            "adaptive_avg_pool2d: output_size must have 2 elements");
+    }
+
+    if (input.ndim() < 3 || input.ndim() > 4) {
+        throw ShapeError("adaptive_avg_pool2d: expected 3D or 4D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 4);
+    size_t input_h = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t input_w = has_batch ? input.shape()[3] : input.shape()[2];
+
+    int kernel_h = (input_h + output_size[0] - 1) / output_size[0];
+    int kernel_w = (input_w + output_size[1] - 1) / output_size[1];
+    int stride_h = input_h / output_size[0];
+    int stride_w = input_w / output_size[1];
+
+    return avg_pool2d(input, {kernel_h, kernel_w}, {stride_h, stride_w}, {0, 0},
+                      false);
 }
 
 } // namespace ops

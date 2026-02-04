@@ -99,15 +99,25 @@ int OpenBlasLapackBackend::zgesv(int n, int nrhs, complex128_t *a, int lda,
 
 int OpenBlasLapackBackend::sgesdd(char jobz, int m, int n, float *a, int lda,
                                   float *s, float *u, int ldu, float *vt,
-                                  int ldvt, float *, int, int *) {
-    // LAPACKE handles workspace automatically
+                                  int ldvt, float *work, int lwork, int *) {
+    // Handle workspace query: LAPACKE handles workspace automatically,
+    // but callers may do a query with lwork=-1 expecting work[0] to be set
+    if (lwork == -1 && work != nullptr) {
+        // Return a dummy workspace size (LAPACKE doesn't need it)
+        *work = 1.0f;
+        return 0;
+    }
     return LAPACKE_sgesdd(LAPACK_COL_MAJOR, jobz, m, n, a, lda, s, u, ldu, vt,
                           ldvt);
 }
 
 int OpenBlasLapackBackend::dgesdd(char jobz, int m, int n, double *a, int lda,
                                   double *s, double *u, int ldu, double *vt,
-                                  int ldvt, double *, int, int *) {
+                                  int ldvt, double *work, int lwork, int *) {
+    if (lwork == -1 && work != nullptr) {
+        *work = 1.0;
+        return 0;
+    }
     return LAPACKE_dgesdd(LAPACK_COL_MAJOR, jobz, m, n, a, lda, s, u, ldu, vt,
                           ldvt);
 }
