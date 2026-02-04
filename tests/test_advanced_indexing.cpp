@@ -1,4 +1,4 @@
-// Tests for advanced indexing operations (Phase 4)
+// Tests for advanced indexing operations
 
 #include <axiom/axiom.hpp>
 #include <functional>

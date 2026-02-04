@@ -1,4 +1,4 @@
-// Tests for extended shape operations (Phase 3)
+// Tests for extended shape operations
 
 #include <axiom/axiom.hpp>
 #include <functional>

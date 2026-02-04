@@ -1,4 +1,4 @@
-// Tests for broadcast utilities (Phase 1)
+// Tests for broadcast utilities
 
 #include <axiom/axiom.hpp>
 #include <functional>

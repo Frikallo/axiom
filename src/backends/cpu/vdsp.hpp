@@ -284,6 +284,31 @@ void vsoftmax_f64(const double *input, double *output, size_t n);
 void vlog_softmax_f32(const float *input, float *output, size_t n);
 void vlog_softmax_f64(const double *input, double *output, size_t n);
 
+// ============================================================================
+// FFT Operations (using vDSP FFT)
+// ============================================================================
+
+// Complex-to-complex FFT (in-place)
+// Input/output are interleaved complex arrays: [re0, im0, re1, im1, ...]
+// n must be a power of 2
+// direction: 1 for forward FFT, -1 for inverse FFT
+void vfft_c2c_f32(float *data, size_t n, int direction);
+void vfft_c2c_f64(double *data, size_t n, int direction);
+
+// Real-to-complex FFT
+// Input: real array of size n
+// Output: interleaved complex array of size n (full spectrum)
+// n must be a power of 2
+void vfft_r2c_f32(const float *input, float *output, size_t n);
+void vfft_r2c_f64(const double *input, double *output, size_t n);
+
+// Complex-to-real inverse FFT
+// Input: interleaved complex array of size n
+// Output: real array of size n
+// n must be a power of 2
+void vfft_c2r_f32(const float *input, float *output, size_t n);
+void vfft_c2r_f64(const double *input, double *output, size_t n);
+
 } // namespace accelerate
 } // namespace cpu
 } // namespace backends

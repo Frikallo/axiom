@@ -7,8 +7,8 @@
 #include <complex>
 #include <vector>
 
-#ifdef __APPLE__
-#include <Accelerate/Accelerate.h>
+#ifdef AXIOM_USE_ACCELERATE
+#include "backends/cpu/vdsp.hpp"
 #endif
 
 namespace axiom {
@@ -16,7 +16,8 @@ namespace fft {
 
 namespace {
 
-// Cooley-Tukey FFT implementation for power-of-2 sizes
+#ifndef AXIOM_USE_ACCELERATE
+// Cooley-Tukey FFT implementation for power-of-2 sizes (fallback for non-Apple)
 void fft_radix2_inplace(std::complex<double> *data, size_t n, bool inverse) {
     if (n <= 1)
         return;
@@ -58,6 +59,7 @@ void fft_radix2_inplace(std::complex<double> *data, size_t n, bool inverse) {
         }
     }
 }
+#endif // AXIOM_USE_ACCELERATE
 
 // Check if n is a power of 2
 bool is_power_of_2(size_t n) { return n > 0 && (n & (n - 1)) == 0; }
@@ -169,7 +171,26 @@ Tensor fft_1d_impl(const Tensor &input, int64_t n, int axis, bool inverse,
 
         // Perform FFT
         if (is_power_of_2(fft_size)) {
+#ifdef AXIOM_USE_ACCELERATE
+            // Use vDSP accelerated FFT
+            // Convert buffer to interleaved format for vDSP
+            std::vector<double> interleaved(fft_size * 2);
+            for (size_t i = 0; i < fft_size; ++i) {
+                interleaved[2 * i] = buffer[i].real();
+                interleaved[2 * i + 1] = buffer[i].imag();
+            }
+
+            backends::cpu::accelerate::vfft_c2c_f64(interleaved.data(),
+                                                    fft_size, inverse ? -1 : 1);
+
+            // Convert back to complex buffer
+            for (size_t i = 0; i < fft_size; ++i) {
+                buffer[i] = std::complex<double>(interleaved[2 * i],
+                                                 interleaved[2 * i + 1]);
+            }
+#else
             fft_radix2_inplace(buffer.data(), fft_size, inverse);
+#endif
         } else {
             // For non-power-of-2, use DFT (slower but correct)
             std::vector<std::complex<double>> temp(fft_size);

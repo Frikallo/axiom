@@ -1,4 +1,4 @@
-// Tests for pooling operations (Phase 7)
+// Tests for pooling operations
 
 #include <axiom/axiom.hpp>
 #include <cmath>

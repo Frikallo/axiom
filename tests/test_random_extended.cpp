@@ -1,4 +1,4 @@
-// Tests for expanded random module (Phase 2)
+// Tests for expanded random module
 
 #include <axiom/axiom.hpp>
 #include <functional>

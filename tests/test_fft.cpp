@@ -1,4 +1,4 @@
-// Tests for FFT (Fast Fourier Transform) operations (Phase 6)
+// Tests for FFT (Fast Fourier Transform) operations
 
 #include <axiom/axiom.hpp>
 #include <cmath>

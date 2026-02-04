@@ -1,4 +1,4 @@
-// Tests for einsum (Einstein summation) operations (Phase 5)
+// Tests for einsum (Einstein summation) operations
 
 #include <axiom/axiom.hpp>
 #include <cmath>
