@@ -259,5 +259,152 @@ inline bool is_binary_op(ops::OpType op) {
     }
 }
 
+// ============================================================================
+// Fused Operation Representation
+// ============================================================================
+
+// Represents a chain of operations that can be executed together
+struct FusedOpChain {
+    // Sequence of operations to apply (in order)
+    std::vector<ops::OpType> ops;
+
+    // For each op, which inputs to use (index into input_nodes or previous
+    // result) -1 means use the result of the previous op in the chain
+    std::vector<std::vector<int>> input_indices;
+
+    // Input nodes (constants or other graph nodes)
+    std::vector<std::shared_ptr<GraphNode>> input_nodes;
+
+    // Output metadata
+    Shape output_shape;
+    DType output_dtype;
+    Device target_device;
+
+    // Original nodes that were fused (for debugging/analysis)
+    std::vector<GraphNode *> original_nodes;
+
+    // In-place execution support
+    // If can_execute_inplace is true, the chain can reuse the first input's
+    // storage for output (when that input has ref_count == 1)
+    bool can_execute_inplace = false;
+    int inplace_input_index = -1; // Which input can be reused (-1 = none)
+
+    // Check if this is a simple unary chain (single input, all unary ops)
+    bool is_unary_chain() const {
+        if (input_nodes.size() != 1)
+            return false;
+        for (auto op : ops) {
+            if (!is_unary_op(op))
+                return false;
+        }
+        return true;
+    }
+
+    // Check if this is a binary+unary pattern like (a+b).relu()
+    bool is_binary_then_unary() const {
+        if (ops.empty())
+            return false;
+        if (!is_binary_op(ops[0]))
+            return false;
+        for (size_t i = 1; i < ops.size(); ++i) {
+            if (!is_unary_op(ops[i]))
+                return false;
+        }
+        return true;
+    }
+};
+
+// Common fused patterns for special-case optimization
+enum class FusedPattern {
+    None,
+    // Binary + Unary (2 inputs)
+    AddReLU,    // relu(a + b)
+    SubAbs,     // |a - b|
+    AddSquare,  // (a + b)^2
+    MulReLU,    // relu(a * b)
+    SubSquare,  // (a - b)^2
+    AddSigmoid, // sigmoid(a + b)
+    MulSigmoid, // sigmoid(a * b)
+
+    // Ternary (3 inputs)
+    MulAdd,         // a * b + c (FMA)
+    MulSub,         // a * b - c
+    AddMulReLU,     // relu((a + b) * c)
+    SubMulAbs,      // |((a - b) * c)|
+    ScaleShiftReLU, // relu(a * scale + bias)
+
+    // Special patterns
+    BiasReLU, // add bias then relu (same as AddReLU)
+    ExpSum,   // exp then sum (softmax helper)
+    Softmax,  // full softmax: exp(x - max) / sum(exp(x - max))
+};
+
+// Detect known fusion patterns
+inline FusedPattern detect_pattern(const FusedOpChain &chain) {
+    // 2-op patterns (Binary + Unary)
+    if (chain.ops.size() == 2) {
+        auto op0 = chain.ops[0];
+        auto op1 = chain.ops[1];
+
+        // Add + activation
+        if (op0 == ops::OpType::Add && op1 == ops::OpType::ReLU)
+            return FusedPattern::AddReLU;
+        if (op0 == ops::OpType::Add && op1 == ops::OpType::Square)
+            return FusedPattern::AddSquare;
+        if (op0 == ops::OpType::Add && op1 == ops::OpType::Sigmoid)
+            return FusedPattern::AddSigmoid;
+
+        // Sub + activation
+        if (op0 == ops::OpType::Subtract && op1 == ops::OpType::Abs)
+            return FusedPattern::SubAbs;
+        if (op0 == ops::OpType::Subtract && op1 == ops::OpType::Square)
+            return FusedPattern::SubSquare;
+
+        // Mul + activation
+        if (op0 == ops::OpType::Multiply && op1 == ops::OpType::ReLU)
+            return FusedPattern::MulReLU;
+        if (op0 == ops::OpType::Multiply && op1 == ops::OpType::Sigmoid)
+            return FusedPattern::MulSigmoid;
+    }
+
+    // 3-op patterns (Ternary)
+    if (chain.ops.size() == 3) {
+        auto op0 = chain.ops[0];
+        auto op1 = chain.ops[1];
+        auto op2 = chain.ops[2];
+
+        // Scale-shift-activation: mul -> add -> activation
+        if (op0 == ops::OpType::Multiply && op1 == ops::OpType::Add) {
+            if (op2 == ops::OpType::ReLU)
+                return FusedPattern::ScaleShiftReLU;
+        }
+
+        // Mul -> Add/Sub (FMA patterns)
+        if (op0 == ops::OpType::Multiply && op1 == ops::OpType::Add &&
+            op2 == ops::OpType::ReLU)
+            return FusedPattern::ScaleShiftReLU;
+
+        // Add/Sub -> Mul -> activation
+        if (op0 == ops::OpType::Add && op1 == ops::OpType::Multiply &&
+            op2 == ops::OpType::ReLU)
+            return FusedPattern::AddMulReLU;
+        if (op0 == ops::OpType::Subtract && op1 == ops::OpType::Multiply &&
+            op2 == ops::OpType::Abs)
+            return FusedPattern::SubMulAbs;
+    }
+
+    // Check for MulAdd/MulSub (2 ops but ternary inputs)
+    if (chain.ops.size() == 2 && chain.input_nodes.size() >= 3) {
+        if (chain.ops[0] == ops::OpType::Multiply &&
+            chain.ops[1] == ops::OpType::Add)
+            return FusedPattern::MulAdd;
+        if (chain.ops[0] == ops::OpType::Multiply &&
+            chain.ops[1] == ops::OpType::Subtract)
+            return FusedPattern::MulSub;
+    }
+
+    return FusedPattern::None;
+}
+
 } // namespace graph
 } // namespace axiom

@@ -1049,7 +1049,8 @@ static Tensor execute_binary_operation(OpType op_type, const Tensor &lhs,
             vec_to_string(rhs.shape()));
     }
 
-    // Check for complex types - handle directly (no lazy evaluation for complex)
+    // Check for complex types - handle directly (no lazy evaluation for
+    // complex)
     DType promoted_dtype = promote_types(lhs.dtype(), rhs.dtype());
     if (is_complex_dtype(promoted_dtype)) {
         assert_complex_legal(op_type, promoted_dtype);

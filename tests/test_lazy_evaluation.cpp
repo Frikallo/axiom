@@ -12,8 +12,8 @@ static int tests_total = 0;
 #define ASSERT(cond, msg)                                                      \
     do {                                                                       \
         if (!(cond)) {                                                         \
-            throw std::runtime_error(std::string("Assertion failed: ") + #cond \
-                                     + " - " + (msg));                         \
+            throw std::runtime_error(std::string("Assertion failed: ") +       \
+                                     #cond + " - " + (msg));                   \
         }                                                                      \
     } while (0)
 
@@ -23,7 +23,8 @@ static int tests_total = 0;
         std::cout << "--- Running: " << #test_func << " ---" << std::endl;     \
         try {                                                                  \
             test_func();                                                       \
-            std::cout << "--- PASSED: " << #test_func << " ---\n" << std::endl;\
+            std::cout << "--- PASSED: " << #test_func << " ---\n"              \
+                      << std::endl;                                            \
             tests_passed++;                                                    \
         } catch (const std::exception &e) {                                    \
             std::cout << "--- FAILED: " << #test_func << " ---" << std::endl;  \
@@ -49,7 +50,8 @@ void test_lazy_deferral() {
 
     // c and d should be lazy (if lazy evaluation is enabled)
     // Note: We can check shape without materializing
-    ASSERT(d.shape() == Shape({100, 100}), "Shape should be inferred without execution");
+    ASSERT(d.shape() == Shape({100, 100}),
+           "Shape should be inferred without execution");
 
     // Now access the data - this should trigger materialization
     float first_val = d.typed_data<float>()[0];
@@ -163,7 +165,8 @@ void test_eager_mode_env_var() {
     // This test just verifies the function exists
     bool eager = graph::is_eager_mode_enabled();
     (void)eager; // Just check it compiles and runs
-    std::cout << "  AXIOM_EAGER_MODE enabled: " << (eager ? "yes" : "no") << std::endl;
+    std::cout << "  AXIOM_EAGER_MODE enabled: " << (eager ? "yes" : "no")
+              << std::endl;
 }
 
 int main() {
@@ -187,7 +190,8 @@ int main() {
 
     std::cout << "\n========================================" << std::endl;
     std::cout << "Test Suite Summary:" << std::endl;
-    std::cout << "    " << tests_passed << " / " << tests_total << " tests passed." << std::endl;
+    std::cout << "    " << tests_passed << " / " << tests_total
+              << " tests passed." << std::endl;
     std::cout << "========================================" << std::endl;
 
     return tests_passed == tests_total ? 0 : 1;

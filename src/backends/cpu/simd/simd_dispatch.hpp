@@ -192,6 +192,43 @@ template <typename T>
 void dispatch_activation_leaky_relu(const T *input, T *output, size_t n,
                                     double alpha = 0.01);
 
+// ============================================================================
+// Fused Kernels (from hwy_fused_kernels.cc)
+// ============================================================================
+
+// Binary + Unary fused patterns (float/double/int32/int64)
+template <typename T>
+void dispatch_fused_add_relu(const T *a, const T *b, T *result, size_t n);
+template <typename T>
+void dispatch_fused_sub_abs(const T *a, const T *b, T *result, size_t n);
+template <typename T>
+void dispatch_fused_add_square(const T *a, const T *b, T *result, size_t n);
+template <typename T>
+void dispatch_fused_mul_relu(const T *a, const T *b, T *result, size_t n);
+template <typename T>
+void dispatch_fused_sub_square(const T *a, const T *b, T *result, size_t n);
+template <typename T>
+void dispatch_fused_add_sigmoid(const T *a, const T *b, T *result, size_t n);
+template <typename T>
+void dispatch_fused_mul_sigmoid(const T *a, const T *b, T *result, size_t n);
+
+// Ternary fused patterns (3 inputs)
+template <typename T>
+void dispatch_fused_mul_add(const T *a, const T *b, const T *c, T *result,
+                            size_t n);
+template <typename T>
+void dispatch_fused_mul_sub(const T *a, const T *b, const T *c, T *result,
+                            size_t n);
+template <typename T>
+void dispatch_fused_scale_shift_relu(const T *a, const T *scale, const T *bias,
+                                     T *result, size_t n);
+template <typename T>
+void dispatch_fused_add_mul_relu(const T *a, const T *b, const T *c, T *result,
+                                 size_t n);
+template <typename T>
+void dispatch_fused_sub_mul_abs(const T *a, const T *b, const T *c, T *result,
+                                size_t n);
+
 } // namespace simd
 
 // Re-export in the old namespace for compatibility

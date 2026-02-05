@@ -60,8 +60,20 @@ class GraphRegistry {
     // Materialize a graph node and all its dependencies
     static void materialize(GraphNode *node);
 
-    // Optimize a subgraph before execution
+    // Optimize a subgraph before execution (fusion passes)
     static void optimize_subgraph(GraphNode *root);
+
+    // Identify fusable element-wise chains in the graph
+    static std::vector<FusedOpChain> find_fusable_chains(GraphNode *root);
+
+    // Check if two adjacent nodes can be fused
+    static bool can_fuse(GraphNode *producer, GraphNode *consumer);
+
+    // Execute a fused operation chain
+    static void execute_fused_chain(const FusedOpChain &chain,
+                                    std::shared_ptr<Storage> &output_storage,
+                                    Shape &output_shape,
+                                    Strides &output_strides);
 
     // Get statistics about pending lazy tensors (for debugging)
     static size_t pending_node_count();

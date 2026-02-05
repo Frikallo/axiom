@@ -448,3 +448,28 @@ set_tests_properties(lazy_evaluation
     PROPERTIES
         TIMEOUT 30
 )
+
+# Operator fusion tests
+add_executable(test_fusion
+    test_fusion.cpp
+)
+
+target_link_libraries(test_fusion
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_fusion
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME fusion
+    COMMAND test_fusion
+)
+
+set_tests_properties(fusion
+    PROPERTIES
+        TIMEOUT 30
+)

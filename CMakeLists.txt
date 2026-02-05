@@ -294,6 +294,7 @@ set(AXIOM_SOURCES
 
     # SIMD kernels (Highway)
     src/backends/cpu/simd/hwy_kernels.cc
+    src/backends/cpu/simd/hwy_fused_kernels.cc
 
     # BLAS backend abstraction (always included)
     src/backends/cpu/blas/blas_backend.cpp
