@@ -8,6 +8,10 @@
 #include <malloc.h>
 #endif
 
+#ifdef AXIOM_USE_MIMALLOC
+#include <mimalloc.h>
+#endif
+
 #include "axiom/error.hpp"
 
 namespace axiom {
@@ -22,7 +26,9 @@ namespace cpu {
 struct AlignedDeleter {
     void operator()(uint8_t *ptr) const {
         if (ptr) {
-#ifdef _WIN32
+#ifdef AXIOM_USE_MIMALLOC
+            mi_free(ptr);
+#elif defined(_WIN32)
             _aligned_free(ptr);
 #else
             std::free(ptr);
@@ -42,7 +48,14 @@ static std::shared_ptr<uint8_t[]> allocate_aligned(size_t size_bytes) {
 
     void *ptr = nullptr;
 
-#ifdef _WIN32
+#ifdef AXIOM_USE_MIMALLOC
+    // mimalloc provides excellent aligned allocation with low fragmentation
+    ptr = mi_malloc_aligned(size_bytes, alignment);
+    if (ptr == nullptr) {
+        throw MemoryError("Failed to allocate " + std::to_string(size_bytes) +
+                          " bytes of aligned memory (mimalloc)");
+    }
+#elif defined(_WIN32)
     ptr = _aligned_malloc(size_bytes, alignment);
     if (ptr == nullptr) {
         throw MemoryError("Failed to allocate " + std::to_string(size_bytes) +

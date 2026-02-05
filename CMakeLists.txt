@@ -213,6 +213,40 @@ if(TARGET hwy)
 endif()
 
 # ============================================================================
+# mimalloc (high-performance memory allocator)
+# ============================================================================
+option(AXIOM_USE_MIMALLOC "Use mimalloc for tensor memory allocation" ON)
+
+if(AXIOM_USE_MIMALLOC)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mimalloc/CMakeLists.txt")
+        # Configure mimalloc - static build WITHOUT global malloc override
+        # We use mimalloc explicitly only for tensor allocations to avoid
+        # conflicts with system libraries (Accelerate, Metal, etc.)
+        set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+        set(MI_BUILD_STATIC ON CACHE BOOL "" FORCE)
+        set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
+        set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        set(MI_OVERRIDE OFF CACHE BOOL "" FORCE)
+
+        add_subdirectory(third_party/mimalloc EXCLUDE_FROM_ALL)
+
+        # Suppress mimalloc warnings
+        if(TARGET mimalloc-static)
+            target_compile_options(mimalloc-static PRIVATE -w)
+        endif()
+
+        set(AXIOM_HAS_MIMALLOC ON)
+        message(STATUS "Memory allocator: mimalloc (explicit allocation)")
+    else()
+        message(STATUS "Memory allocator: system (mimalloc not found)")
+        set(AXIOM_HAS_MIMALLOC OFF)
+    endif()
+else()
+    message(STATUS "Memory allocator: system (mimalloc disabled)")
+    set(AXIOM_HAS_MIMALLOC OFF)
+endif()
+
+# ============================================================================
 # Google Benchmark (for benchmarks only)
 # ============================================================================
 if(AXIOM_BUILD_BENCHMARKS)
@@ -472,6 +506,12 @@ endif()
 # Note: We only link hwy, not hwy_contrib (math headers are header-only)
 target_link_libraries(axiom PRIVATE hwy)
 target_compile_definitions(axiom PUBLIC AXIOM_USE_HIGHWAY)
+
+# mimalloc for high-performance memory allocation
+if(AXIOM_HAS_MIMALLOC)
+    target_link_libraries(axiom PRIVATE mimalloc-static)
+    target_compile_definitions(axiom PRIVATE AXIOM_USE_MIMALLOC)
+endif()
 
 # ============================================================================
 # Floating-point optimization flags

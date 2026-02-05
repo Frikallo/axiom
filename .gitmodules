@@ -13,3 +13,6 @@
 [submodule "third_party/highway"]
 	path = third_party/highway
 	url = https://github.com/google/highway.git
+[submodule "third_party/mimalloc"]
+	path = third_party/mimalloc
+	url = https://github.com/microsoft/mimalloc.git
