@@ -8,6 +8,8 @@
 
 #include "axiom/einops.hpp"
 #include "axiom/error.hpp"
+#include "axiom/graph/graph_node.hpp"
+#include "axiom/graph/graph_registry.hpp"
 #include "axiom/io/io.hpp"
 #include "axiom/linalg.hpp"
 #include "axiom/numeric.hpp"
@@ -21,6 +23,25 @@
 #endif
 
 namespace axiom {
+
+// ============================================================================
+// Lazy Evaluation Helper Functions (used by GraphRegistry)
+// ============================================================================
+
+namespace graph {
+
+// Implementation of helper functions declared in graph_registry.cpp
+bool tensor_is_lazy_impl(const Tensor &t) { return t.is_lazy(); }
+
+std::shared_ptr<GraphNode> get_lazy_node_impl(const Tensor &t) {
+    return t.lazy_node();
+}
+
+Tensor create_tensor_from_node_impl(std::shared_ptr<GraphNode> node) {
+    return Tensor(std::move(node));
+}
+
+} // namespace graph
 
 template <typename T> std::string vec_to_string(const std::vector<T> &vec) {
     std::stringstream ss;
@@ -137,10 +158,28 @@ Tensor::Tensor(std::shared_ptr<Storage> storage, const Shape &shape,
     flags_.owndata = (offset_ == 0);
 }
 
+// Constructor for lazy tensors
+Tensor::Tensor(std::shared_ptr<graph::GraphNode> lazy_node)
+    : storage_(nullptr), offset_(0), flags_(),
+      memory_order_(MemoryOrder::RowMajor), lazy_node_(std::move(lazy_node)) {
+    if (!lazy_node_) {
+        throw MemoryError("Lazy node cannot be null");
+    }
+    // Copy metadata from node (no allocation yet)
+    shape_ = lazy_node_->output_shape;
+    dtype_ = lazy_node_->output_dtype;
+    // Calculate expected strides (will be verified on materialization)
+    strides_ = ShapeUtils::calculate_strides(shape_, dtype_size(dtype_),
+                                             MemoryOrder::RowMajor);
+    flags_.owndata = false;
+    flags_.writeable = false; // Lazy tensors are read-only until materialized
+    update_contiguity_flags();
+}
+
 Tensor::Tensor(const Tensor &other)
     : storage_(other.storage_), shape_(other.shape_), strides_(other.strides_),
       dtype_(other.dtype_), offset_(other.offset_), flags_(other.flags_),
-      memory_order_(other.memory_order_) {}
+      memory_order_(other.memory_order_), lazy_node_(other.lazy_node_) {}
 
 Tensor &Tensor::operator=(const Tensor &other) {
     if (this != &other) {
@@ -151,6 +190,7 @@ Tensor &Tensor::operator=(const Tensor &other) {
         offset_ = other.offset_;
         flags_ = other.flags_;
         memory_order_ = other.memory_order_;
+        lazy_node_ = other.lazy_node_;
     }
     return *this;
 }
@@ -159,7 +199,8 @@ Tensor::Tensor(Tensor &&other) noexcept
     : storage_(std::move(other.storage_)), shape_(std::move(other.shape_)),
       strides_(std::move(other.strides_)), dtype_(other.dtype_),
       offset_(other.offset_), flags_(other.flags_),
-      memory_order_(other.memory_order_) {}
+      memory_order_(other.memory_order_),
+      lazy_node_(std::move(other.lazy_node_)) {}
 
 Tensor &Tensor::operator=(Tensor &&other) noexcept {
     if (this != &other) {
@@ -170,11 +211,92 @@ Tensor &Tensor::operator=(Tensor &&other) noexcept {
         offset_ = other.offset_;
         flags_ = other.flags_;
         memory_order_ = other.memory_order_;
+        lazy_node_ = std::move(other.lazy_node_);
     }
     return *this;
 }
 
+// ============================================================================
+// Core attribute accessors that handle lazy tensors
+// ============================================================================
+
+const Shape &Tensor::shape() const {
+    // Shape is available from lazy node without materialization
+    if (lazy_node_) {
+        return lazy_node_->output_shape;
+    }
+    return shape_;
+}
+
+const Strides &Tensor::strides() const {
+    materialize_if_needed();
+    return strides_;
+}
+
+DType Tensor::dtype() const {
+    // Dtype is available from lazy node without materialization
+    if (lazy_node_) {
+        return lazy_node_->output_dtype;
+    }
+    return dtype_;
+}
+
+Device Tensor::device() const {
+    // Device is available from lazy node without materialization
+    if (lazy_node_) {
+        return lazy_node_->target_device;
+    }
+    if (!storage_) {
+        return Device::CPU;
+    }
+    return storage_->device();
+}
+
+// ============================================================================
+// Lazy Evaluation - Materialization
+// ============================================================================
+
+void Tensor::materialize_if_needed() const {
+    if (!lazy_node_ || lazy_node_->is_materialized_) {
+        // Already materialized or not lazy
+        if (lazy_node_ && lazy_node_->is_materialized_) {
+            // Need to copy result from node to tensor
+            Tensor *mutable_this = const_cast<Tensor *>(this);
+            mutable_this->storage_ = lazy_node_->cached_result_;
+            mutable_this->shape_ = lazy_node_->cached_shape_;
+            mutable_this->strides_ = lazy_node_->cached_strides_;
+            mutable_this->dtype_ = lazy_node_->output_dtype;
+            mutable_this->offset_ = 0;
+            mutable_this->flags_.owndata = true;
+            mutable_this->flags_.writeable = true;
+            mutable_this->lazy_node_ = nullptr;
+            mutable_this->update_contiguity_flags();
+        }
+        return;
+    }
+
+    // Materialize the computation graph
+    graph::GraphRegistry::materialize(lazy_node_.get());
+
+    // Copy result from node to tensor
+    Tensor *mutable_this = const_cast<Tensor *>(this);
+    mutable_this->storage_ = lazy_node_->cached_result_;
+    mutable_this->shape_ = lazy_node_->cached_shape_;
+    mutable_this->strides_ = lazy_node_->cached_strides_;
+    mutable_this->dtype_ = lazy_node_->output_dtype;
+    mutable_this->offset_ = 0;
+    mutable_this->flags_.owndata = true;
+    mutable_this->flags_.writeable = true;
+    mutable_this->lazy_node_ = nullptr;
+    mutable_this->update_contiguity_flags();
+}
+
+// ============================================================================
+// Data Access
+// ============================================================================
+
 void *Tensor::data() {
+    materialize_if_needed();
     if (!storage_) {
         return nullptr;
     }
@@ -190,6 +312,7 @@ void *Tensor::data() {
 }
 
 const void *Tensor::data() const {
+    materialize_if_needed();
     if (!storage_) {
         return nullptr;
     }
@@ -206,6 +329,9 @@ const void *Tensor::data() const {
 }
 
 Tensor Tensor::slice(const std::vector<Slice> &slice_args) const {
+    // Materialize lazy tensors before slicing
+    materialize_if_needed();
+
     if (slice_args.size() > ndim()) {
         throw IndexError("Too many indices for tensor: got " +
                          std::to_string(slice_args.size()) +
@@ -266,6 +392,9 @@ Tensor Tensor::slice(const std::vector<Slice> &slice_args) const {
 }
 
 Tensor Tensor::operator[](std::initializer_list<Index> indices) const {
+    // Materialize lazy tensors before indexing
+    materialize_if_needed();
+
     if (indices.size() > ndim()) {
         throw IndexError("Too many indices for tensor: got " +
                          std::to_string(indices.size()) + " but tensor has " +
@@ -353,6 +482,9 @@ void recursive_copy(uint8_t *dst, const uint8_t *src, const Shape &shape,
 }
 
 Tensor Tensor::ascontiguousarray() const {
+    // Materialize lazy tensors before making contiguous
+    materialize_if_needed();
+
     if (is_c_contiguous()) {
         return *this;
     }
@@ -371,6 +503,9 @@ Tensor Tensor::ascontiguousarray() const {
 }
 
 Tensor Tensor::asfortranarray() const {
+    // Materialize lazy tensors before making contiguous
+    materialize_if_needed();
+
     if (is_f_contiguous()) {
         return *this;
     }
@@ -389,6 +524,9 @@ Tensor Tensor::asfortranarray() const {
 }
 
 Tensor Tensor::reshape(const Shape &new_shape, MemoryOrder order) const {
+    // Materialize lazy tensors before reshape
+    materialize_if_needed();
+
     Shape validated_shape = reshape_shape(shape_, new_shape);
 
     bool can_view = false;
@@ -447,6 +585,9 @@ Tensor Tensor::reduce(const std::string &pattern, const std::string &reduction,
 }
 
 Tensor Tensor::transpose() const {
+    // Materialize lazy tensors before transpose
+    materialize_if_needed();
+
     if (ndim() < 2) {
         return *this;
     }
@@ -461,6 +602,9 @@ Tensor Tensor::transpose() const {
 }
 
 Tensor Tensor::transpose(const std::vector<int> &axes) const {
+    // Materialize lazy tensors before transpose
+    materialize_if_needed();
+
     if (axes.size() != ndim()) {
         throw ShapeError("Number of axes (" + std::to_string(axes.size()) +
                          ") must match tensor dimensions (" +
@@ -486,6 +630,9 @@ Tensor Tensor::transpose(const std::vector<int> &axes) const {
 }
 
 Tensor Tensor::squeeze(int axis) const {
+    // Materialize lazy tensors before squeeze
+    materialize_if_needed();
+
     Shape new_shape;
     Strides new_strides;
 
@@ -522,6 +669,9 @@ Tensor Tensor::squeeze(int axis) const {
 }
 
 Tensor Tensor::unsqueeze(int axis) const {
+    // Materialize lazy tensors before unsqueeze
+    materialize_if_needed();
+
     Shape new_shape = unsqueeze_shape(shape_, axis);
 
     Strides new_strides = strides_;
@@ -533,6 +683,9 @@ Tensor Tensor::unsqueeze(int axis) const {
 }
 
 Tensor Tensor::view(const Shape &new_shape) const {
+    // Materialize lazy tensors before view
+    materialize_if_needed();
+
     if (ShapeUtils::size(new_shape) != size()) {
         throw ShapeError::invalid_reshape(size(), ShapeUtils::size(new_shape));
     }
@@ -547,6 +700,9 @@ Tensor Tensor::view(const Shape &new_shape) const {
 }
 
 Tensor Tensor::flatten(int start_dim, int end_dim) const {
+    // Materialize lazy tensors before flatten
+    materialize_if_needed();
+
     // Normalize negative indices
     int ndims = static_cast<int>(ndim());
     if (start_dim < 0)
@@ -721,6 +877,9 @@ Tensor Tensor::moveaxis(int source, int destination) const {
 Tensor Tensor::flip(int axis) const { return flip(std::vector<int>{axis}); }
 
 Tensor Tensor::flip(const std::vector<int> &axes) const {
+    // Materialize lazy tensors before flip
+    materialize_if_needed();
+
     int ndims = static_cast<int>(ndim());
 
     // Normalize and validate axes
@@ -777,6 +936,9 @@ Tensor Tensor::rot90(int k, const std::vector<int> &axes) const {
 }
 
 Tensor Tensor::roll(int64_t shift, int axis) const {
+    // Materialize lazy tensors before roll
+    materialize_if_needed();
+
     if (axis == -1) {
         // Roll over flattened tensor, then reshape back
         auto flat = flatten();
@@ -947,6 +1109,9 @@ Tensor Tensor::trace(int offset, int axis1, int axis2) const {
 }
 
 Tensor Tensor::expand(const Shape &new_shape) const {
+    // Materialize lazy tensors before expand
+    materialize_if_needed();
+
     // expand creates a view by setting stride to 0 for expanded dimensions
     // Only dimensions of size 1 can be expanded
 
@@ -996,6 +1161,9 @@ Tensor Tensor::expand(const Shape &new_shape) const {
 }
 
 Tensor Tensor::repeat(const std::vector<size_t> &repeats) const {
+    // Materialize lazy tensors before repeat
+    materialize_if_needed();
+
     // repeat actually copies data
     // Each dimension is repeated by the corresponding factor
 
@@ -1352,6 +1520,9 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
         return *this;
     }
 
+    // Materialize lazy tensors before device transfer
+    materialize_if_needed();
+
     auto new_tensor = Tensor(shape_, dtype_, target_device, order);
 
     if (order != memory_order_ && device() == Device::CPU &&
@@ -1389,6 +1560,9 @@ Tensor Tensor::cpu() const {
 Tensor Tensor::gpu() const { return to(Device::GPU, memory_order_); }
 
 Tensor Tensor::astype(DType new_dtype) const {
+    // Materialize lazy tensors before type conversion
+    materialize_if_needed();
+
     if (new_dtype == dtype_) {
         return *this;
     }

@@ -19,6 +19,14 @@ namespace axiom {
 namespace io {}
 } // namespace axiom
 
+// Forward declaration for lazy evaluation
+namespace axiom {
+namespace graph {
+struct GraphNode;
+class GraphRegistry;
+} // namespace graph
+} // namespace axiom
+
 namespace axiom {
 
 struct TensorFlags {
@@ -39,9 +47,18 @@ class Tensor {
     TensorFlags flags_;
     MemoryOrder memory_order_;
 
+    // Lazy evaluation support: optional graph node for deferred computation
+    // If non-null, this tensor represents a lazy computation that hasn't
+    // been executed yet. When data is accessed, materialize_if_needed()
+    // executes the computation graph and populates storage_.
+    std::shared_ptr<graph::GraphNode> lazy_node_;
+
     size_t calculate_storage_size() const;
     void validate_indices(const std::vector<size_t> &indices) const;
     void update_contiguity_flags();
+
+    // Ensure tensor is materialized before data access
+    void materialize_if_needed() const;
 
   public:
     // Constructors
@@ -56,29 +73,39 @@ class Tensor {
            const Strides &strides, DType dtype, size_t offset = 0,
            MemoryOrder order = MemoryOrder::RowMajor);
 
+    // Constructor for lazy tensors (internal use)
+    explicit Tensor(std::shared_ptr<graph::GraphNode> lazy_node);
+
     Tensor(const Tensor &other);
     Tensor &operator=(const Tensor &other);
     Tensor(Tensor &&other) noexcept;
     Tensor &operator=(Tensor &&other) noexcept;
 
-    // Core attributes
-    const Shape &shape() const { return shape_; }
-    size_t ndim() const { return shape_.size(); }
-    size_t size() const { return ShapeUtils::size(shape_); }
-    const Strides &strides() const { return strides_; }
-    size_t itemsize() const { return dtype_size(dtype_); }
+    // Core attributes (shape/dtype available without materialization)
+    const Shape &shape() const;
+    size_t ndim() const { return shape().size(); }
+    size_t size() const { return ShapeUtils::size(shape()); }
+    const Strides &strides() const;
+    size_t itemsize() const { return dtype_size(dtype()); }
     size_t nbytes() const { return size() * itemsize(); }
     MemoryOrder memory_order() const { return memory_order_; }
-    DType dtype() const { return dtype_; }
-    std::string dtype_name() const { return axiom::dtype_name(dtype_); }
-    Device device() const { return storage_->device(); }
+    DType dtype() const;
+    std::string dtype_name() const { return axiom::dtype_name(dtype()); }
+    Device device() const;
     const TensorFlags &flags() const { return flags_; }
     bool is_contiguous() const { return flags_.c_contiguous; }
     bool is_c_contiguous() const { return flags_.c_contiguous; }
     bool is_f_contiguous() const { return flags_.f_contiguous; }
-    std::shared_ptr<Storage> storage() const { return storage_; }
+    std::shared_ptr<Storage> storage() const {
+        materialize_if_needed();
+        return storage_;
+    }
     size_t offset() const { return offset_; }
     bool empty() const { return size() == 0; }
+
+    // Lazy evaluation introspection
+    bool is_lazy() const { return lazy_node_ != nullptr; }
+    std::shared_ptr<graph::GraphNode> lazy_node() const { return lazy_node_; }
 
     // View/materialization introspection
     bool is_view() const { return !flags_.owndata || offset_ > 0; }
@@ -86,6 +113,8 @@ class Tensor {
     bool has_zero_stride() const; // True if any stride is 0 (broadcast view)
     bool has_negative_stride() const; // True if any stride < 0 (flipped view)
     bool shares_storage(const Tensor &other) const {
+        materialize_if_needed();
+        other.materialize_if_needed();
         return storage_.get() == other.storage_.get();
     }
 
@@ -93,7 +122,7 @@ class Tensor {
     bool would_materialize_on_reshape(const Shape &new_shape) const;
     bool would_materialize_on_transpose() const { return !is_contiguous(); }
 
-    // Data access
+    // Data access (triggers materialization for lazy tensors)
     void *data();
     const void *data() const;
 
@@ -116,14 +145,16 @@ class Tensor {
     }
 
     template <typename T> T item(const std::vector<size_t> &indices) const {
+        materialize_if_needed();
         validate_indices(indices);
         if (device() != Device::CPU) {
             throw DeviceError::cpu_only("item()");
         }
         // Compute byte offset with signed arithmetic for negative strides
+        const Strides &s = strides();
         int64_t byte_offset = 0;
         for (size_t i = 0; i < indices.size(); ++i) {
-            byte_offset += static_cast<int64_t>(indices[i]) * strides_[i];
+            byte_offset += static_cast<int64_t>(indices[i]) * s[i];
         }
         const T *data_ptr = reinterpret_cast<const T *>(
             static_cast<const uint8_t *>(data()) + byte_offset);
@@ -132,6 +163,7 @@ class Tensor {
 
     template <typename T>
     void set_item(const std::vector<size_t> &indices, const T &value) {
+        materialize_if_needed();
         validate_indices(indices);
         if (device() != Device::CPU) {
             throw DeviceError::cpu_only("set_item()");
@@ -140,9 +172,10 @@ class Tensor {
             throw MemoryError("Tensor is not writeable");
         }
         // Compute byte offset with signed arithmetic for negative strides
+        const Strides &s = strides();
         int64_t byte_offset = 0;
         for (size_t i = 0; i < indices.size(); ++i) {
-            byte_offset += static_cast<int64_t>(indices[i]) * strides_[i];
+            byte_offset += static_cast<int64_t>(indices[i]) * s[i];
         }
         T *data_ptr =
             reinterpret_cast<T *>(static_cast<uint8_t *>(data()) + byte_offset);
@@ -150,6 +183,7 @@ class Tensor {
     }
 
     template <typename T> void fill(const T &value) {
+        materialize_if_needed();
         if (device() != Device::CPU) {
             throw DeviceError::cpu_only("fill()");
         }
@@ -162,13 +196,14 @@ class Tensor {
             std::fill(data_ptr, data_ptr + size(), value);
         } else {
             // Fallback for non-contiguous tensors
+            const Shape &s = shape();
             std::vector<size_t> indices(ndim(), 0);
             for (size_t i = 0; i < size(); ++i) {
                 set_item(indices, value);
 
                 // Increment indices
                 for (int j = ndim() - 1; j >= 0; --j) {
-                    if (++indices[j] < shape_[j]) {
+                    if (++indices[j] < s[j]) {
                         break;
                     }
                     indices[j] = 0;

@@ -1021,7 +1021,7 @@ static Tensor executeReduction(const Tensor& input_raw, const std::vector<int>& 
                 }
             }
             if (output_shape.empty()) {
-                output_shape = {1};  // Scalar result (Axiom convention)
+                output_shape = {1};  // Scalar result
             }
         }
 

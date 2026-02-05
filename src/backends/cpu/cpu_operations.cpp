@@ -1153,6 +1153,7 @@ namespace { // Anonymous namespace for helpers
 Shape calculate_reduction_shape(const Shape &input_shape,
                                 const std::vector<int> &axes, bool keep_dims) {
     if (axes.empty()) {
+        // Scalar result - use {1} for consistency with rest of codebase
         return keep_dims ? Shape(input_shape.size(), 1) : Shape{1};
     }
 

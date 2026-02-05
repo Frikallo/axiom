@@ -285,6 +285,9 @@ set(AXIOM_SOURCES
     src/tensor/system.cpp
     src/tensor/indexing.cpp
 
+    # Lazy evaluation and operator fusion
+    src/graph/graph_registry.cpp
+
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
     src/backends/cpu/cpu_operations.cpp

@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "axiom/error.hpp"
+#include "axiom/graph/graph_registry.hpp"
 #include "axiom/system.hpp"
 #include "axiom/tensor.hpp"
 #include "backends/cpu/cpu_operations.hpp"
@@ -629,12 +630,19 @@ static Tensor execute_complex_unary(OpType op_type, const Tensor &input) {
 // ============================================================================
 
 static Tensor execute_unary_operation(OpType op_type, const Tensor &input) {
-    // Handle complex types directly
+    // Handle complex types directly (no lazy evaluation for complex)
     if (is_complex_dtype(input.dtype())) {
         assert_complex_legal(op_type, input.dtype());
         return execute_complex_unary(op_type, input);
     }
 
+    // Use lazy evaluation for non-complex types
+    return graph::GraphRegistry::create_lazy_unary(op_type, input);
+}
+
+// Eager execution path for unary operations (used by lazy evaluation)
+static Tensor execute_unary_operation_eager(OpType op_type,
+                                            const Tensor &input) {
     Device target_device = input.device();
 
     const Operation *op =
@@ -821,12 +829,22 @@ static Tensor execute_complex_reduction(OpType op_type, const Tensor &input,
 static Tensor execute_reduction_operation(OpType op_type, const Tensor &input,
                                           const std::vector<int> &axis,
                                           bool keep_dims) {
-    // Handle complex types directly
+    // Handle complex types directly (no lazy evaluation for complex)
     if (is_complex_dtype(input.dtype())) {
         assert_complex_legal(op_type, input.dtype());
         return execute_complex_reduction(op_type, input, axis, keep_dims);
     }
 
+    // Use lazy evaluation for non-complex types
+    return graph::GraphRegistry::create_lazy_reduction(op_type, input, axis,
+                                                       keep_dims);
+}
+
+// Eager execution path for reduction operations (used by lazy evaluation)
+static Tensor execute_reduction_operation_eager(OpType op_type,
+                                                const Tensor &input,
+                                                const std::vector<int> &axis,
+                                                bool keep_dims) {
     Device target_device = input.device();
 
     const auto *op = OperationRegistry::get_operation(op_type, target_device);
@@ -845,8 +863,11 @@ static Tensor execute_reduction_operation(OpType op_type, const Tensor &input,
 // ============================================================================
 // Helper function for executing matmul operations
 // ============================================================================
-static Tensor execute_matmul_operation(const Tensor &a, const Tensor &b,
-                                       bool transpose_a, bool transpose_b) {
+
+// Eager execution path for matmul operations (used by lazy evaluation)
+static Tensor execute_matmul_operation_eager(const Tensor &a, const Tensor &b,
+                                             bool transpose_a,
+                                             bool transpose_b) {
     // Determine target device (prefer GPU if available)
     Device target_device =
         (a.device() == Device::GPU || b.device() == Device::GPU) ? Device::GPU
@@ -876,6 +897,20 @@ static Tensor execute_matmul_operation(const Tensor &a, const Tensor &b,
     Tensor b_target = (b.device() == target_device) ? b : b.to(target_device);
 
     return op->execute_matmul(a_target, b_target, transpose_a, transpose_b);
+}
+
+static Tensor execute_matmul_operation(const Tensor &a, const Tensor &b,
+                                       bool transpose_a, bool transpose_b) {
+    // Force CPU for complex types (GPU complex support is limited/unstable)
+    DType promoted_dtype = promote_types(a.dtype(), b.dtype());
+    if (is_complex_dtype(promoted_dtype)) {
+        // Execute eagerly for complex types
+        return execute_matmul_operation_eager(a, b, transpose_a, transpose_b);
+    }
+
+    // Use lazy evaluation for non-complex types
+    return graph::GraphRegistry::create_lazy_matmul(a, b, transpose_a,
+                                                    transpose_b);
 }
 
 // ============================================================================
@@ -1014,13 +1049,20 @@ static Tensor execute_binary_operation(OpType op_type, const Tensor &lhs,
             vec_to_string(rhs.shape()));
     }
 
-    // Check for complex types - handle directly
+    // Check for complex types - handle directly (no lazy evaluation for complex)
     DType promoted_dtype = promote_types(lhs.dtype(), rhs.dtype());
     if (is_complex_dtype(promoted_dtype)) {
         assert_complex_legal(op_type, promoted_dtype);
         return execute_complex_binary(op_type, lhs, rhs);
     }
 
+    // Use lazy evaluation for non-complex types
+    return graph::GraphRegistry::create_lazy_binary(op_type, lhs, rhs);
+}
+
+// Eager execution path for binary operations (used by lazy evaluation)
+static Tensor execute_binary_operation_eager(OpType op_type, const Tensor &lhs,
+                                             const Tensor &rhs) {
     // Determine the target device (prefer GPU if available)
     Device target_device =
         (lhs.device() == Device::GPU || rhs.device() == Device::GPU)
