@@ -9,13 +9,9 @@
 // via HWY_BEFORE_NAMESPACE/HWY_AFTER_NAMESPACE macros.
 
 // clang-format off
-// NOLINTBEGIN(clang-diagnostic-pp_including_mainfile_in_preamble)
-#if !defined(HWY_IDE_MODE)
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "backends/cpu/simd/hwy_math_ext-inl.h"
 #include "hwy/foreach_target.h"  // IWYU pragma: keep
-#endif
-// NOLINTEND(clang-diagnostic-pp_including_mainfile_in_preamble)
 // clang-format on
 
 #include "hwy/contrib/math/math-inl.h"

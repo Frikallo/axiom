@@ -888,6 +888,83 @@ void dispatch_unary_neg<int64_t>(const int64_t* input, int64_t* output, size_t n
     }
 }
 
+// Reductions for integers
+template <>
+int32_t dispatch_reduce_sum<int32_t>(const int32_t* data, size_t n) {
+    int32_t result = 0;
+    for (size_t i = 0; i < n; ++i) {
+        result += data[i];
+    }
+    return result;
+}
+
+template <>
+int64_t dispatch_reduce_sum<int64_t>(const int64_t* data, size_t n) {
+    int64_t result = 0;
+    for (size_t i = 0; i < n; ++i) {
+        result += data[i];
+    }
+    return result;
+}
+
+template <>
+int32_t dispatch_reduce_max<int32_t>(const int32_t* data, size_t n) {
+    if (n == 0) return 0;
+    int32_t result = data[0];
+    for (size_t i = 1; i < n; ++i) {
+        if (data[i] > result) result = data[i];
+    }
+    return result;
+}
+
+template <>
+int64_t dispatch_reduce_max<int64_t>(const int64_t* data, size_t n) {
+    if (n == 0) return 0;
+    int64_t result = data[0];
+    for (size_t i = 1; i < n; ++i) {
+        if (data[i] > result) result = data[i];
+    }
+    return result;
+}
+
+template <>
+int32_t dispatch_reduce_min<int32_t>(const int32_t* data, size_t n) {
+    if (n == 0) return 0;
+    int32_t result = data[0];
+    for (size_t i = 1; i < n; ++i) {
+        if (data[i] < result) result = data[i];
+    }
+    return result;
+}
+
+template <>
+int64_t dispatch_reduce_min<int64_t>(const int64_t* data, size_t n) {
+    if (n == 0) return 0;
+    int64_t result = data[0];
+    for (size_t i = 1; i < n; ++i) {
+        if (data[i] < result) result = data[i];
+    }
+    return result;
+}
+
+template <>
+int32_t dispatch_reduce_prod<int32_t>(const int32_t* data, size_t n) {
+    int32_t result = 1;
+    for (size_t i = 0; i < n; ++i) {
+        result *= data[i];
+    }
+    return result;
+}
+
+template <>
+int64_t dispatch_reduce_prod<int64_t>(const int64_t* data, size_t n) {
+    int64_t result = 1;
+    for (size_t i = 0; i < n; ++i) {
+        result *= data[i];
+    }
+    return result;
+}
+
 }  // namespace simd
 }  // namespace axiom
 
