@@ -76,12 +76,12 @@ void Tensor::update_contiguity_flags() {
 }
 
 Tensor::Tensor()
-    : storage_(nullptr), shape_(), strides_(), dtype_(DType::Float32),
-      offset_(0), flags_(), memory_order_(MemoryOrder::RowMajor) {
+    : storage_(nullptr), shape_(), strides_(), dtype_(Float32()), offset_(0),
+      flags_(), memory_order_(MemoryOrder::RowMajor) {
     flags_.owndata = false;
 }
 
-Tensor::Tensor(const Shape &shape, DType dtype, Device device,
+Tensor::Tensor(const Shape &shape, DTypes dtype, Device device,
                MemoryOrder order)
     : shape_(shape), dtype_(dtype), offset_(0), flags_(), memory_order_(order) {
     if (!ShapeUtils::is_valid_shape(shape_)) {
@@ -95,12 +95,12 @@ Tensor::Tensor(const Shape &shape, DType dtype, Device device,
     flags_.owndata = true;
 }
 
-Tensor::Tensor(std::initializer_list<size_t> shape, DType dtype, Device device,
+Tensor::Tensor(std::initializer_list<size_t> shape, DTypes dtype, Device device,
                MemoryOrder order)
     : Tensor(Shape(shape), dtype, device, order) {}
 
 Tensor::Tensor(std::shared_ptr<Storage> storage, const Shape &shape,
-               const Strides &strides, DType dtype, size_t offset,
+               const Strides &strides, DTypes dtype, size_t offset,
                MemoryOrder order)
     : storage_(storage), shape_(shape), strides_(strides), dtype_(dtype),
       offset_(offset), flags_(), memory_order_(order) {
@@ -279,7 +279,7 @@ Tensor Tensor::operator[](std::initializer_list<Index> indices) const {
             const auto &tensor_idx = std::get<TensorIndex>(index);
             if (tensor_idx.indices) {
                 // Check if it's a boolean mask or integer indices
-                if (tensor_idx.indices->dtype() == DType::Bool) {
+                if (std::holds_alternative<Bool>(tensor_idx.indices->dtype())) {
                     // Boolean masking - return selected elements
                     return masked_select(*tensor_idx.indices);
                 } else {
@@ -1393,7 +1393,7 @@ Tensor Tensor::cpu() const {
 
 Tensor Tensor::gpu() const { return to(Device::GPU, memory_order_); }
 
-Tensor Tensor::astype(DType new_dtype) const {
+Tensor Tensor::astype(DTypes new_dtype) const {
     if (new_dtype == dtype_) {
         return *this;
     }
@@ -1438,7 +1438,7 @@ Tensor Tensor::astype(DType new_dtype) const {
     return cpu_target.gpu();
 }
 
-Tensor Tensor::astype_safe(DType new_dtype) const {
+Tensor Tensor::astype_safe(DTypes new_dtype) const {
     if (type_conversion::conversion_may_lose_precision(dtype_, new_dtype)) {
         throw TypeError::conversion_not_safe(dtype_name(),
                                              axiom::dtype_name(new_dtype));
@@ -1509,7 +1509,7 @@ bool Tensor::array_equal(const Tensor &other) const {
     return all_result.item<bool>();
 }
 
-Tensor Tensor::zeros(const Shape &shape, DType dtype, Device device,
+Tensor Tensor::zeros(const Shape &shape, DTypes dtype, Device device,
                      MemoryOrder order) {
     // Always create and initialize on CPU first, then transfer to target device
     auto tensor = Tensor(shape, dtype, Device::CPU, order);
@@ -1520,81 +1520,42 @@ Tensor Tensor::zeros(const Shape &shape, DType dtype, Device device,
     return tensor;
 }
 
-Tensor Tensor::zeros(std::initializer_list<size_t> shape, DType dtype,
+Tensor Tensor::zeros(std::initializer_list<size_t> shape, DTypes dtype,
                      Device device, MemoryOrder order) {
     return zeros(Shape(shape), dtype, device, order);
 }
 
-Tensor Tensor::ones(const Shape &shape, DType dtype, Device device,
+Tensor Tensor::ones(const Shape &shape, DTypes dtype, Device device,
                     MemoryOrder order) {
     // Always create and initialize on CPU first, then transfer to target device
     auto tensor = Tensor(shape, dtype, Device::CPU, order);
-    switch (dtype) {
-    case DType::Bool:
-        tensor.fill<bool>(true);
-        break;
-    case DType::Int8:
-        tensor.fill<int8_t>(1);
-        break;
-    case DType::Int16:
-        tensor.fill<int16_t>(1);
-        break;
-    case DType::Int32:
-        tensor.fill<int32_t>(1);
-        break;
-    case DType::Int64:
-        tensor.fill<int64_t>(1);
-        break;
-    case DType::UInt8:
-        tensor.fill<uint8_t>(1);
-        break;
-    case DType::UInt16:
-        tensor.fill<uint16_t>(1);
-        break;
-    case DType::UInt32:
-        tensor.fill<uint32_t>(1);
-        break;
-    case DType::UInt64:
-        tensor.fill<uint64_t>(1);
-        break;
-    case DType::Float16:
-        tensor.fill<float16_t>(float16_t(1.0f));
-        break;
-    case DType::Float32:
-        tensor.fill<float>(1.0f);
-        break;
-    case DType::Float64:
-        tensor.fill<double>(1.0);
-        break;
-    case DType::Complex64:
-        tensor.fill<complex64_t>(complex64_t(1.0f, 0.0f));
-        break;
-    case DType::Complex128:
-        tensor.fill<complex128_t>(complex128_t(1.0, 0.0));
-        break;
-    }
-    if (device == Device::GPU) {
-        return tensor.to(device, order);
-    }
+    auto func = [&]<typename Tag, typename T>(Tag &&, T &&fill) {
+        tensor.fill<typename std::decay_t<Tag>::value_type>(
+            std::forward<T>(fill));
+    };
+    std::visit(overload{[&]<class T>(T t) {
+                   tensor.fill<typename T::value_type>(t.one());
+               }},
+               dtype);
     return tensor;
 }
 
-Tensor Tensor::ones(std::initializer_list<size_t> shape, DType dtype,
+Tensor Tensor::ones(std::initializer_list<size_t> shape, DTypes dtype,
                     Device device, MemoryOrder order) {
     return ones(Shape(shape), dtype, device, order);
 }
 
-Tensor Tensor::empty(const Shape &shape, DType dtype, Device device,
+Tensor Tensor::empty(const Shape &shape, DTypes dtype, Device device,
                      MemoryOrder order) {
     return Tensor(shape, dtype, device, order);
 }
 
-Tensor Tensor::empty(std::initializer_list<size_t> shape, DType dtype,
+Tensor Tensor::empty(std::initializer_list<size_t> shape, DTypes dtype,
                      Device device, MemoryOrder order) {
     return empty(Shape(shape), dtype, device, order);
 }
 
-Tensor Tensor::eye(size_t n, DType dtype, Device device, MemoryOrder order) {
+Tensor Tensor::eye(size_t n, DTypes dtype, Device device, MemoryOrder order) {
     auto tensor = zeros({n, n}, dtype, device, order);
 
     if (device == Device::CPU) {
@@ -1661,12 +1622,12 @@ Tensor Tensor::eye(size_t n, DType dtype, Device device, MemoryOrder order) {
     return tensor;
 }
 
-Tensor Tensor::identity(size_t n, DType dtype, Device device,
+Tensor Tensor::identity(size_t n, DTypes dtype, Device device,
                         MemoryOrder order) {
     return eye(n, dtype, device, order);
 }
 
-Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
+Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DTypes dtype,
                       Device device) {
     if (step == 0) {
         throw ValueError("Step cannot be zero");
@@ -1709,13 +1670,13 @@ Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
     return t;
 }
 
-Tensor Tensor::arange(int64_t end, DType dtype, Device device) {
+Tensor Tensor::arange(int64_t end, DTypes dtype, Device device) {
     return arange(0, end, 1, dtype, device);
 }
 
 void Tensor::manual_seed(uint64_t seed) { axiom::manual_seed(seed); }
 
-Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
+Tensor Tensor::randn(const Shape &shape, DTypes dtype, Device device,
                      MemoryOrder order) {
     // Always create and initialize on CPU first, then transfer to target device
     auto tensor = Tensor(shape, dtype, Device::CPU, order);
@@ -1754,152 +1715,8 @@ Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
     return tensor;
 }
 
-Tensor Tensor::rand(const Shape &shape, DType dtype, Device device,
-                    MemoryOrder order) {
-    return uniform(0.0, 1.0, shape, dtype, device, order);
-}
-
-Tensor Tensor::uniform(double low, double high, const Shape &shape, DType dtype,
-                       Device device, MemoryOrder order) {
-    if (low >= high) {
-        throw ValueError("uniform: low must be less than high");
-    }
-
-    // Always create and initialize on CPU first, then transfer to target device
-    auto tensor = Tensor(shape, dtype, Device::CPU, order);
-    auto &rng = RandomGenerator::instance();
-
-    switch (dtype) {
-    case DType::Float32: {
-        float *data = tensor.typed_data<float>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = rng.uniform<float>(static_cast<float>(low),
-                                         static_cast<float>(high));
-        }
-        break;
-    }
-    case DType::Float64: {
-        double *data = tensor.typed_data<double>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = rng.uniform<double>(low, high);
-        }
-        break;
-    }
-    case DType::Float16: {
-        float16_t *data = tensor.typed_data<float16_t>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = float16_t(rng.uniform<float>(static_cast<float>(low),
-                                                   static_cast<float>(high)));
-        }
-        break;
-    }
-    default:
-        throw TypeError("uniform only supports floating point types, got " +
-                        axiom::dtype_name(dtype));
-    }
-
-    if (device == Device::GPU) {
-        return tensor.to(device, order);
-    }
-    return tensor;
-}
-
-Tensor Tensor::randint(int64_t low, int64_t high, const Shape &shape,
-                       DType dtype, Device device, MemoryOrder order) {
-    if (low >= high) {
-        throw ValueError("randint: low must be less than high");
-    }
-
-    // Always create and initialize on CPU first, then transfer to target device
-    auto tensor = Tensor(shape, dtype, Device::CPU, order);
-    auto &rng = RandomGenerator::instance();
-
-    switch (dtype) {
-    case DType::Int8: {
-        int8_t *data = tensor.typed_data<int8_t>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = static_cast<int8_t>(rng.randint(low, high));
-        }
-        break;
-    }
-    case DType::Int16: {
-        int16_t *data = tensor.typed_data<int16_t>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = static_cast<int16_t>(rng.randint(low, high));
-        }
-        break;
-    }
-    case DType::Int32: {
-        int32_t *data = tensor.typed_data<int32_t>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = static_cast<int32_t>(rng.randint(low, high));
-        }
-        break;
-    }
-    case DType::Int64: {
-        int64_t *data = tensor.typed_data<int64_t>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = rng.randint(low, high);
-        }
-        break;
-    }
-    case DType::UInt8: {
-        uint8_t *data = tensor.typed_data<uint8_t>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = static_cast<uint8_t>(rng.randint(low, high));
-        }
-        break;
-    }
-    case DType::UInt16: {
-        uint16_t *data = tensor.typed_data<uint16_t>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = static_cast<uint16_t>(rng.randint(low, high));
-        }
-        break;
-    }
-    case DType::UInt32: {
-        uint32_t *data = tensor.typed_data<uint32_t>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = static_cast<uint32_t>(rng.randint(low, high));
-        }
-        break;
-    }
-    case DType::UInt64: {
-        uint64_t *data = tensor.typed_data<uint64_t>();
-        for (size_t i = 0; i < tensor.size(); ++i) {
-            data[i] = static_cast<uint64_t>(rng.randint(low, high));
-        }
-        break;
-    }
-    default:
-        throw TypeError("randint only supports integer types, got " +
-                        axiom::dtype_name(dtype));
-    }
-
-    if (device == Device::GPU) {
-        return tensor.to(device, order);
-    }
-    return tensor;
-}
-
-Tensor Tensor::rand_like(const Tensor &prototype) {
-    return rand(prototype.shape(), prototype.dtype(), prototype.device(),
-                prototype.memory_order());
-}
-
-Tensor Tensor::randn_like(const Tensor &prototype) {
-    return randn(prototype.shape(), prototype.dtype(), prototype.device(),
-                 prototype.memory_order());
-}
-
-Tensor Tensor::randint_like(const Tensor &prototype, int64_t low,
-                            int64_t high) {
-    return randint(low, high, prototype.shape(), prototype.dtype(),
-                   prototype.device(), prototype.memory_order());
-}
-
 Tensor Tensor::linspace(double start, double stop, size_t num, bool endpoint,
-                        DType dtype, Device device) {
+                        DTypes dtype, Device device) {
     if (num == 0) {
         return Tensor::empty({0}, dtype, device);
     }
@@ -1952,7 +1769,7 @@ Tensor Tensor::linspace(double start, double stop, size_t num, bool endpoint,
 }
 
 Tensor Tensor::logspace(double start, double stop, size_t num, bool endpoint,
-                        double base, DType dtype, Device device) {
+                        double base, DTypes dtype, Device device) {
     // logspace(start, stop) = base^linspace(start, stop)
     auto linear = linspace(start, stop, num, endpoint, dtype, Device::CPU);
 
@@ -1980,7 +1797,7 @@ Tensor Tensor::logspace(double start, double stop, size_t num, bool endpoint,
 }
 
 Tensor Tensor::geomspace(double start, double stop, size_t num, bool endpoint,
-                         DType dtype, Device device) {
+                         DTypes dtype, Device device) {
     if (start == 0 || stop == 0) {
         throw ValueError("Geometric sequence cannot include zero");
     }
@@ -2328,7 +2145,7 @@ bool Tensor::has_nan() const {
     }
 
     // Check floating point types for NaN
-    if (!is_floating_dtype(dtype_) && !is_complex_dtype(dtype_))
+    if (!is_floating_dtype(dtype_) && !is_complex(dtype_))
         return false;
 
     auto check_nan = [this]<typename T>() {
@@ -2372,7 +2189,7 @@ bool Tensor::has_inf() const {
     }
 
     // Check floating point types for Inf
-    if (!is_floating_dtype(dtype_) && !is_complex_dtype(dtype_))
+    if (!is_floating_dtype(dtype_) && !is_complex(dtype_))
         return false;
 
     auto check_inf = [this]<typename T>() {
@@ -2481,7 +2298,7 @@ std::string Tensor::debug_info() const {
     oss << "  Has negative stride: " << (has_negative_stride() ? "yes" : "no")
         << "\n";
     oss << "  Storage offset: " << offset_ << " bytes\n";
-    if (is_floating_dtype(dtype_) && device() == Device::CPU && size() > 0) {
+    if (is_float(dtype_) && device() == Device::CPU && size() > 0) {
         oss << "  Has NaN: " << (has_nan() ? "yes" : "no") << "\n";
         oss << "  Has Inf: " << (has_inf() ? "yes" : "no") << "\n";
     }
@@ -2493,14 +2310,14 @@ std::string Tensor::debug_info() const {
 // ============================================================================
 
 Tensor Tensor::real() const {
-    if (!is_complex_dtype(dtype_)) {
+    if (!is_complex(dtype_)) {
         throw TypeError("real() requires complex tensor, got " + dtype_name());
     }
 
     // Complex64 (8 bytes) -> Float32 (4 bytes)
     // Complex128 (16 bytes) -> Float64 (8 bytes)
-    DType base_dtype =
-        (dtype_ == DType::Complex64) ? DType::Float32 : DType::Float64;
+    DTypes base_dtype =
+        (std::contains_alternative<Complex64>(dtype_)) ? Float32 : Float64;
 
     // Strides stay the same - we still step between complex elements,
     // just interpreting the real part (first half) of each
@@ -2511,14 +2328,15 @@ Tensor Tensor::real() const {
 }
 
 Tensor Tensor::imag() const {
-    if (!is_complex_dtype(dtype_)) {
+    if (!is_complex(dtype_)) {
         throw TypeError("imag() requires complex tensor, got " + dtype_name());
     }
 
     // Complex64 (8 bytes) -> Float32 (4 bytes)
     // Complex128 (16 bytes) -> Float64 (8 bytes)
-    DType base_dtype =
-        (dtype_ == DType::Complex64) ? DType::Float32 : DType::Float64;
+    DTypes base_dtype = (std::contains_alternative<Complex64>(dtype_))
+                            ? Float32
+                            : DType::Float64;
     size_t base_size = dtype_size(base_dtype);
 
     // Strides stay the same - we still step between complex elements,
@@ -2530,7 +2348,7 @@ Tensor Tensor::imag() const {
 }
 
 Tensor Tensor::conj() const {
-    if (!is_complex_dtype(dtype_)) {
+    if (!is_complex(dtype_)) {
         throw TypeError("conj() requires complex tensor, got " + dtype_name());
     }
 
@@ -2558,7 +2376,7 @@ Tensor Tensor::concatenate(const std::vector<Tensor> &tensors, int axis) {
     }
 
     // Validate all tensors have compatible shapes
-    DType result_dtype = first.dtype();
+    DTypes result_dtype = first.dtype();
     Device result_device = first.device();
 
     for (size_t i = 1; i < tensors.size(); ++i) {

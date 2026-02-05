@@ -143,6 +143,21 @@ class MPSGraphTernaryOperation : public MPSGraphOperation {
 };
 
 // ============================================================================
+// MPSGraph MatMul Operation
+// ============================================================================
+
+// Note: MPSGraphMatMulOperation is defined in the .mm file since it's a simple
+// wrapper that delegates to the executeMatMul function. Unlike binary/unary
+// ops, it doesn't need a block-based approach.
+
+// ============================================================================
+// MPSGraph ArgMax/ArgMin Operations
+// ============================================================================
+
+// Note: MPSGraphArgMaxMinOperation is defined in the .mm file since it's a
+// simple wrapper for the reduction operations.
+
+// ============================================================================
 // MPSGraph Masking Operations
 // ============================================================================
 

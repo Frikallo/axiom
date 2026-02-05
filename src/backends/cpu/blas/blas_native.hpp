@@ -1,7 +1,7 @@
 #pragma once
 
 // Native C++ BLAS backend implementation
-// Uses cache-blocked algorithms with SIMD via Highway for vectorization
+// Uses cache-blocked algorithms with SIMD via xsimd for vectorization
 // This is a portable, pure C++ implementation that works on all platforms
 
 #include "blas_backend.hpp"

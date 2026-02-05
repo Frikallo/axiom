@@ -5,9 +5,7 @@
 
 #include "axiom/debug.hpp"
 #include "axiom/dtype.hpp"
-#include "axiom/einops.hpp"
 #include "axiom/error.hpp"
-#include "axiom/fft.hpp"
 #include "axiom/io/io.hpp"
 #include "axiom/linalg.hpp"
 #include "axiom/numeric.hpp"

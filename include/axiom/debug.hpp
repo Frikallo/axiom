@@ -115,7 +115,7 @@ inline const OpProfile &last_op() { return Profiler::instance().last_op(); }
 
 namespace cpu_info {
 
-// Print CPU SIMD architecture info (Highway-detected) to stdout
+// Print CPU SIMD architecture info (xsimd-detected) to stdout
 void print_simd_info();
 
 // Get SIMD architecture name (e.g., "neon64", "avx2", "sse4.2")

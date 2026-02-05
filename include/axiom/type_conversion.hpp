@@ -17,58 +17,6 @@ using complex64_t = std::complex<float>;
 using complex128_t = std::complex<double>;
 
 // ============================================================================
-// Type mapping from DType enum to C++ types
-// ============================================================================
-
-template <DType dtype> struct dtype_to_type;
-
-template <> struct dtype_to_type<DType::Bool> {
-    using type = bool;
-};
-template <> struct dtype_to_type<DType::Int8> {
-    using type = int8_t;
-};
-template <> struct dtype_to_type<DType::Int16> {
-    using type = int16_t;
-};
-template <> struct dtype_to_type<DType::Int32> {
-    using type = int32_t;
-};
-template <> struct dtype_to_type<DType::Int64> {
-    using type = int64_t;
-};
-template <> struct dtype_to_type<DType::UInt8> {
-    using type = uint8_t;
-};
-template <> struct dtype_to_type<DType::UInt16> {
-    using type = uint16_t;
-};
-template <> struct dtype_to_type<DType::UInt32> {
-    using type = uint32_t;
-};
-template <> struct dtype_to_type<DType::UInt64> {
-    using type = uint64_t;
-};
-template <> struct dtype_to_type<DType::Float16> {
-    using type = float16_t;
-};
-template <> struct dtype_to_type<DType::Float32> {
-    using type = float;
-};
-template <> struct dtype_to_type<DType::Float64> {
-    using type = double;
-};
-template <> struct dtype_to_type<DType::Complex64> {
-    using type = complex64_t;
-};
-template <> struct dtype_to_type<DType::Complex128> {
-    using type = complex128_t;
-};
-
-template <DType dtype>
-using dtype_to_type_t = typename dtype_to_type<dtype>::type;
-
-// ============================================================================
 // Safe numeric conversion with overflow/underflow checking
 // ============================================================================
 
@@ -183,7 +131,7 @@ template <typename To, typename From>
 void convert_array_typed(void *dst, const void *src, size_t count);
 
 template <typename To>
-void convert_array(void *dst, const void *src, size_t count, DType src_dtype);
+void convert_array(void *dst, const void *src, size_t count, DTypes src_dtype);
 
 // ============================================================================
 // Type-specific conversion implementation
@@ -204,51 +152,13 @@ void convert_array_typed(void *dst, const void *src, size_t count) {
 // ============================================================================
 
 template <typename To>
-void convert_array(void *dst, const void *src, size_t count, DType src_dtype) {
-    switch (src_dtype) {
-    case DType::Bool:
-        convert_array_typed<To, bool>(dst, src, count);
-        break;
-    case DType::Int8:
-        convert_array_typed<To, int8_t>(dst, src, count);
-        break;
-    case DType::Int16:
-        convert_array_typed<To, int16_t>(dst, src, count);
-        break;
-    case DType::Int32:
-        convert_array_typed<To, int32_t>(dst, src, count);
-        break;
-    case DType::Int64:
-        convert_array_typed<To, int64_t>(dst, src, count);
-        break;
-    case DType::UInt8:
-        convert_array_typed<To, uint8_t>(dst, src, count);
-        break;
-    case DType::UInt16:
-        convert_array_typed<To, uint16_t>(dst, src, count);
-        break;
-    case DType::UInt32:
-        convert_array_typed<To, uint32_t>(dst, src, count);
-        break;
-    case DType::UInt64:
-        convert_array_typed<To, uint64_t>(dst, src, count);
-        break;
-    case DType::Float16:
-        convert_array_typed<To, float16_t>(dst, src, count);
-        break;
-    case DType::Float32:
-        convert_array_typed<To, float>(dst, src, count);
-        break;
-    case DType::Float64:
-        convert_array_typed<To, double>(dst, src, count);
-        break;
-    case DType::Complex64:
-        convert_array_typed<To, complex64_t>(dst, src, count);
-        break;
-    case DType::Complex128:
-        convert_array_typed<To, complex128_t>(dst, src, count);
-        break;
-    }
+void convert_array(void *dst, const void *src, size_t count, DTypes src_dtype) {
+    std::visit(
+        overload{[&]<class T>(T &&) {
+            convert_array_typed<To, typename std::decay_t<T>::value_type>(
+                dst, src, count);
+        }},
+        src_dtype);
 }
 
 // ============================================================================
@@ -256,57 +166,18 @@ void convert_array(void *dst, const void *src, size_t count, DType src_dtype) {
 // ============================================================================
 
 inline void convert_dtype(void *dst, const void *src, size_t count,
-                          DType dst_dtype, DType src_dtype) {
-    if (dst_dtype == src_dtype) {
+                          DTypes dst_dtype, DTypes src_dtype) {
+    if (dst_dtype.index() == src_dtype.index()) {
         // No conversion needed, just copy
         std::memcpy(dst, src, count * dtype_size(src_dtype));
         return;
     }
 
-    switch (dst_dtype) {
-    case DType::Bool:
-        convert_array<bool>(dst, src, count, src_dtype);
-        break;
-    case DType::Int8:
-        convert_array<int8_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Int16:
-        convert_array<int16_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Int32:
-        convert_array<int32_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Int64:
-        convert_array<int64_t>(dst, src, count, src_dtype);
-        break;
-    case DType::UInt8:
-        convert_array<uint8_t>(dst, src, count, src_dtype);
-        break;
-    case DType::UInt16:
-        convert_array<uint16_t>(dst, src, count, src_dtype);
-        break;
-    case DType::UInt32:
-        convert_array<uint32_t>(dst, src, count, src_dtype);
-        break;
-    case DType::UInt64:
-        convert_array<uint64_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Float16:
-        convert_array<float16_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Float32:
-        convert_array<float>(dst, src, count, src_dtype);
-        break;
-    case DType::Float64:
-        convert_array<double>(dst, src, count, src_dtype);
-        break;
-    case DType::Complex64:
-        convert_array<complex64_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Complex128:
-        convert_array<complex128_t>(dst, src, count, src_dtype);
-        break;
-    }
+    std::visit(overload{[&]<class T>(T &&) {
+                   convert_array<typename std::decay_t<T>::value_type>(
+                       dst, src, count, src_dtype);
+               }},
+               dst_dtype);
 }
 
 // ============================================================================
@@ -316,8 +187,8 @@ inline void convert_dtype(void *dst, const void *src, size_t count,
 inline void convert_dtype_strided(void *dst, const void *src,
                                   const Shape &shape,
                                   const Strides &dst_strides,
-                                  const Strides &src_strides, DType dst_dtype,
-                                  DType src_dtype, size_t dst_offset = 0,
+                                  const Strides &src_strides, DTypes dst_dtype,
+                                  DTypes src_dtype, size_t dst_offset = 0,
                                   size_t src_offset = 0) {
     if (shape.empty())
         return;
@@ -343,13 +214,13 @@ inline void convert_dtype_strided(void *dst, const void *src,
 // Safe casting with loss detection
 // ============================================================================
 
-bool conversion_may_lose_precision(DType from_dtype, DType to_dtype);
+bool conversion_may_lose_precision(DTypes from_dtype, DTypes to_dtype);
 
 // ============================================================================
 // NumPy-compatible dtype promotion rules
 // ============================================================================
 
-DType promote_dtypes(DType dtype1, DType dtype2);
+DTypes promote_dtypes(DTypes dtype1, DTypes dtype2);
 
 } // namespace type_conversion
 } // namespace axiom

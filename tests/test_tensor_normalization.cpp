@@ -95,7 +95,7 @@ void test_layer_norm_with_weight_bias() {
     auto result = ops::layer_norm(t, weight, bias, -1, 1e-5f);
 
     auto result_cpu = result.cpu();
-    [[maybe_unused]] const float *out = result_cpu.typed_data<float>();
+    const float *out = result_cpu.typed_data<float>();
 
     // After weight*normalized+bias, all values should be shifted by 1
     // The center values should be: 2*0 + 1 = 1

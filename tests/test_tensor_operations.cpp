@@ -442,7 +442,7 @@ void test_type_promotion_grid() {
     }
 }
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
+int main(int argc, char **argv) {
     axiom::ops::OperationRegistry::initialize_builtin_operations();
 
     std::cout << "========================================" << std::endl;

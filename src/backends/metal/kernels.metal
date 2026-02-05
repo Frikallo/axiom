@@ -11,6 +11,20 @@ using namespace metal;
 #define MAX_DIMS 8
 
 // ============================================================================
+// All operations migrated to MPSGraph
+// ============================================================================
+// Binary arithmetic, unary operations, reductions, and matrix multiplication
+// have all been migrated to MPSGraph for:
+// - Automatic kernel fusion
+// - Apple Silicon optimizations
+// - Reduced code complexity
+// - Better maintainability
+//
+// The only remaining kernel is gather_strided for copying non-contiguous
+// tensor data to contiguous buffers (required for MPSGraph compatibility).
+// ============================================================================
+
+// ============================================================================
 // Gather Strided Kernel
 // ============================================================================
 // Copies non-contiguous (strided) tensor data to a contiguous buffer.

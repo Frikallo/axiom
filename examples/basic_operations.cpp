@@ -5,8 +5,8 @@ using namespace axiom;
 
 int main() {
     // Create tensors with NumPy-like syntax
-    auto x = Tensor::randn({64, 128, 256}, DType::Float32, Device::GPU);
-    auto y = Tensor::ones({256, 512}, DType::Float32, Device::GPU);
+    auto x = Tensor::randn({64, 128, 256}, Float32(), Device::CPU);
+    auto y = Tensor::ones({256, 512}, Float32(), Device::CPU);
 
     // Matrix operations
     auto result = x.matmul(y);
@@ -20,8 +20,8 @@ int main() {
     std::cout << result << std::endl;
 
     // Benchmark matmul of huge tensors on GPU
-    auto a = Tensor::randn({1000, 1000}, DType::Float32, Device::GPU);
-    auto b = Tensor::randn({1000, 1000}, DType::Float32, Device::GPU);
+    auto a = Tensor::randn({1000, 1000}, Float32(), Device::CPU);
+    auto b = Tensor::randn({1000, 1000}, Float32(), Device::CPU);
     auto start = std::chrono::high_resolution_clock::now();
     auto c = a.matmul(b);
     auto end = std::chrono::high_resolution_clock::now();
@@ -32,8 +32,8 @@ int main() {
               << "ms" << std::endl;
 
     // Benchmark matmul of huge tensors on CPU with proper warmup
-    auto a_cpu = Tensor::randn({1000, 1000}, DType::Float32, Device::CPU);
-    auto b_cpu = Tensor::randn({1000, 1000}, DType::Float32, Device::CPU);
+    auto a_cpu = Tensor::randn({1000, 1000}, Float32(), Device::CPU);
+    auto b_cpu = Tensor::randn({1000, 1000}, Float32(), Device::CPU);
 
     // Warmup runs
     for (int i = 0; i < 3; ++i) {

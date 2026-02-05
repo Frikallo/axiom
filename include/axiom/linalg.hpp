@@ -44,7 +44,7 @@ struct EigResult {
 };
 
 // ============================================================================
-// Core Operations (det, inv, solve)
+// Phase 1: Core Operations (det, inv, solve)
 // ============================================================================
 
 // Matrix determinant
@@ -64,7 +64,7 @@ Tensor inv(const Tensor &a);
 Tensor solve(const Tensor &a, const Tensor &b);
 
 // ============================================================================
-// Matrix Decompositions
+// Phase 2: Matrix Decompositions
 // ============================================================================
 
 // Singular Value Decomposition
@@ -91,7 +91,7 @@ Tensor cholesky(const Tensor &a, bool upper = false);
 LUResult lu(const Tensor &a);
 
 // ============================================================================
-// Eigendecomposition & Advanced Operations
+// Phase 3: Eigendecomposition & Advanced Operations
 // ============================================================================
 
 // General eigenvalue decomposition

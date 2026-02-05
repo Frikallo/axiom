@@ -539,7 +539,7 @@ void test_rot90(axiom::Device device) {
 //
 // ==================================
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
+int main(int argc, char **argv) {
     axiom::ops::OperationRegistry::initialize_builtin_operations();
 
     std::cout << "\n=== NumPy-like Math Operations ===\n" << std::endl;

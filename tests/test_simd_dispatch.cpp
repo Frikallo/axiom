@@ -1,4 +1,5 @@
-// Test for runtime SIMD dispatch functionality (Highway backend)
+// Test for runtime SIMD dispatch functionality
+#include "../src/backends/cpu/simd/simd_arch_list.hpp"
 #include "../src/backends/cpu/simd/simd_dispatch.hpp"
 #include <cmath>
 #include <cstdio>
@@ -35,14 +36,12 @@ bool nearly_equal(double a, double b, double eps = 1e-10) {
 }
 
 int test_runtime_arch_detection() {
-    auto info = get_simd_info();
-    printf("[detected: %s] ", info.arch_name);
+    const char *arch = get_runtime_arch_name();
+    printf("[detected: %s] ", arch);
 
     // Should return something valid
-    ASSERT(info.arch_name != nullptr);
-    ASSERT(info.arch_name[0] != '\0');
-    ASSERT(info.alignment > 0);
-    ASSERT(info.float32_width > 0);
+    ASSERT(arch != nullptr);
+    ASSERT(arch[0] != '\0');
 
     return 0;
 }
@@ -188,11 +187,12 @@ int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
 
-    printf("=== SIMD Runtime Dispatch Tests (Highway) ===\n");
-#ifdef AXIOM_USE_HIGHWAY
-    printf("Backend: Google Highway\n");
+    printf("=== SIMD Runtime Dispatch Tests ===\n");
+    printf("Build type: ");
+#ifdef AXIOM_SIMD_MULTI_ARCH
+    printf("Multi-arch runtime dispatch\n");
 #else
-    printf("Backend: Scalar fallback\n");
+    printf("Compile-time architecture\n");
 #endif
     printf("\n");
 

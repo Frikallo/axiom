@@ -112,22 +112,12 @@ std::vector<size_t> ShapeUtils::unravel_index(size_t linear_idx,
                                               const Shape &shape) {
     std::vector<size_t> indices(shape.size());
 
-    // Use FXdiv for faster division when shape has multiple dimensions
-    // The overhead of fxdiv_init is amortized across dimensions
-    for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
-        auto divisor = fxdiv_init_size_t(shape[i]);
-        auto result = fxdiv_divide_size_t(linear_idx, divisor);
-        indices[i] = result.remainder;
-        linear_idx = result.quotient;
+    for (int i = shape.size() - 1; i >= 0; --i) {
+        indices[i] = linear_idx % shape[i];
+        linear_idx /= shape[i];
     }
 
     return indices;
-}
-
-void ShapeUtils::unravel_index_fast(size_t linear_idx,
-                                    const ShapeDivisors &divisors,
-                                    std::vector<size_t> &indices) {
-    divisors.unravel_into(linear_idx, indices);
 }
 
 // Shape manipulation utilities

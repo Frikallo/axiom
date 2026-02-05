@@ -160,34 +160,12 @@ std::string half_element_to_string(const void *data, size_t index) {
 
 std::string dispatch_element_to_string(const Tensor &t, size_t index) {
     const void *data = t.data();
-    switch (t.dtype()) {
-    case DType::Float32:
-        return element_to_string<float>(data, index);
-    case DType::Float64:
-        return element_to_string<double>(data, index);
-    case DType::Float16:
-        return half_element_to_string(data, index);
-    case DType::Int8:
-        return element_to_string<int8_t>(data, index);
-    case DType::Int16:
-        return element_to_string<int16_t>(data, index);
-    case DType::Int32:
-        return element_to_string<int32_t>(data, index);
-    case DType::Int64:
-        return element_to_string<int64_t>(data, index);
-    case DType::UInt8:
-        return element_to_string<uint8_t>(data, index);
-    case DType::UInt16:
-        return element_to_string<uint16_t>(data, index);
-    case DType::UInt32:
-        return element_to_string<uint32_t>(data, index);
-    case DType::UInt64:
-        return element_to_string<uint64_t>(data, index);
-    case DType::Bool:
-        return element_to_string<bool>(data, index);
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(t.dtype()), "printing");
-    }
+    return std::visit(
+        [&]<typename T>(T &&) {
+            return element_to_string<typename std::decay_t<T>::value_type>(
+                data, index);
+        },
+        t.dtype());
 }
 
 void print_recursive(std::stringstream &ss, const Tensor &t,

@@ -180,8 +180,8 @@ inline Tensor operator!=(T scalar, const Tensor &tensor) {
 // Logical NOT for boolean tensors
 inline Tensor operator!(const Tensor &tensor) {
     // Create a tensor of ones and XOR with it
-    Tensor ones = Tensor::ones(tensor.shape(), DType::Bool, tensor.device());
-    return ops::logical_xor(tensor.astype(DType::Bool), ones);
+    Tensor ones = Tensor::ones(tensor.shape(), Bool(), tensor.device());
+    return ops::logical_xor(tensor.astype(Bool()), ones);
 }
 
 // ============================================================================
