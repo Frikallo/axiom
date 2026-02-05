@@ -223,7 +223,7 @@ Axiom automatically selects the fastest available backend:
 OpenMP parallelization with intelligent thresholds ensures overhead is only incurred when beneficial.
 
 <details>
-<summary><b>Full SIMD Support Matrix</b> (via xsimd)</summary>
+<summary><b>Full SIMD Support Matrix</b> (via Highway)</summary>
 
 | Architecture | Instruction Set Extensions |
 |--------------|---------------------------|
@@ -235,7 +235,7 @@ OpenMP parallelization with intelligent thresholds ensures overhead is only incu
 | **RISC-V** | Vector ISA (RVV) |
 | **PowerPC** | VSX |
 
-Axiom uses [xsimd](https://github.com/xtensor-stack/xsimd) for portable SIMD abstraction, automatically dispatching to the optimal instruction set at compile time with runtime fallback to scalar operations.
+Axiom uses [Highway](https://github.com/google/highway) for portable SIMD abstraction, automatically dispatching to the optimal instruction set at compile time with runtime fallback to scalar operations.
 
 </details>
 

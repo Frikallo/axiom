@@ -236,7 +236,7 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
         }
 #endif // AXIOM_USE_ACCELERATE
 
-        // Tier 2: XSIMD for vectorizable types (all platforms)
+        // Tier 2: Highway for vectorizable types (all platforms)
         // Uses runtime dispatch for optimal SIMD on each CPU
         if constexpr (simd::has_support<T>) {
             // Basic arithmetic - runtime dispatched for best performance
@@ -1029,7 +1029,7 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
     }
 #endif // AXIOM_USE_ACCELERATE
 
-    // Tier 2: XSIMD for vectorizable types (all platforms)
+    // Tier 2: Highway for vectorizable types (all platforms)
     // Uses runtime dispatch for optimal SIMD on each CPU
     if constexpr (simd::has_support<T>) {
         if (input.is_contiguous()) {
@@ -1393,7 +1393,7 @@ fallback_path:
 #endif // AXIOM_USE_ACCELERATE
 
 #ifndef AXIOM_USE_ACCELERATE
-    // XSIMD fast path for full contiguous reductions
+    // Highway fast path for full contiguous reductions
     if (is_full_reduction && input.is_contiguous()) {
         if constexpr (simd::has_support<AccumT>) {
             const AccumT *data;
