@@ -321,18 +321,79 @@ loc:  ## Count lines of code
 # ============================================================================
 
 .PHONY: benchmarks
-benchmarks:  ## Build benchmarks
+benchmarks:  ## Build all benchmarks
 	@echo "$(CYAN)Configuring with benchmarks enabled...$(RESET)"
 	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release -DAXIOM_BUILD_BENCHMARKS=ON
 	@echo "$(CYAN)Building benchmarks...$(RESET)"
 	@$(CMAKE) --build $(BUILD_DIR) -j$(NPROC)
 	@echo "$(GREEN)✓ Benchmarks built$(RESET)"
 
-.PHONY: run-benchmarks
-run-benchmarks: benchmarks  ## Run GEMM benchmarks
+.PHONY: benchmark-all
+benchmark-all: benchmarks  ## Build and run all benchmarks
+	@echo "$(CYAN)Running all benchmarks...$(RESET)"
+	@$(MAKE) benchmark-matmul
+	@$(MAKE) benchmark-simd
+	@$(MAKE) benchmark-fusion
+	@echo "$(GREEN)✓ All benchmarks complete$(RESET)"
+
+.PHONY: benchmark-matmul
+benchmark-matmul: benchmarks  ## Run GEMM/matmul benchmarks
 	@echo "$(CYAN)Running GEMM benchmarks...$(RESET)"
 	@./$(BUILD_DIR)/benchmarks/bench_gemm --benchmark_format=console
-	@echo "$(GREEN)✓ Benchmarks complete$(RESET)"
+	@if [ -f ./$(BUILD_DIR)/benchmarks/bench_gemm_gpu ]; then \
+		echo "$(CYAN)Running GPU overhead benchmarks...$(RESET)"; \
+		./$(BUILD_DIR)/benchmarks/bench_gemm_gpu --benchmark_format=console; \
+	fi
+	@echo "$(GREEN)✓ Matmul benchmarks complete$(RESET)"
+
+.PHONY: benchmark-simd
+benchmark-simd: benchmarks  ## Run SIMD kernel benchmarks
+	@echo "$(CYAN)Running SIMD kernel benchmarks...$(RESET)"
+	@./$(BUILD_DIR)/benchmarks/bench_simd_kernels --benchmark_format=console
+	@echo "$(GREEN)✓ SIMD benchmarks complete$(RESET)"
+
+.PHONY: benchmark-fusion
+benchmark-fusion: benchmarks  ## Run fusion/lazy evaluation benchmarks
+	@echo "$(CYAN)Running fusion benchmarks...$(RESET)"
+	@./$(BUILD_DIR)/benchmarks/bench_fusion
+	@./$(BUILD_DIR)/benchmarks/bench_lazy_vs_eager
+	@echo "$(GREEN)✓ Fusion benchmarks complete$(RESET)"
+
+# Python executable - override with: make benchmark-compare PYTHON=python3.11
+PYTHON ?= python3
+
+.PHONY: benchmark-compare
+benchmark-compare: benchmarks  ## Run comparison benchmarks and generate plots
+	@echo "$(CYAN)Running library comparison benchmarks...$(RESET)"
+	@echo "$(CYAN)Using Python: $$(which $(PYTHON))$(RESET)"
+	@mkdir -p benchmarks/results/plots
+	@cd benchmarks && $(PYTHON) tools/runner.py --compare --sizes 32,48,64,96,128,192,256,384,512,768,1024,1536,2048,3072,4096 --output results
+	@echo "$(CYAN)Generating plots...$(RESET)"
+	@if $(PYTHON) -c "import matplotlib" 2>/dev/null; then \
+		cd benchmarks && $(PYTHON) tools/plotter.py --all --output results/plots; \
+		echo "$(GREEN)✓ Comparison complete. Plots in benchmarks/results/plots/$(RESET)"; \
+	else \
+		echo "$(YELLOW)⚠ matplotlib not installed for $$($(PYTHON) --version).$(RESET)"; \
+		echo "$(YELLOW)  Install with: $(PYTHON) -m pip install matplotlib$(RESET)"; \
+		echo "$(YELLOW)  Or specify Python: make benchmark-compare PYTHON=/path/to/python$(RESET)"; \
+		echo "$(GREEN)✓ Comparison data saved to benchmarks/results/$(RESET)"; \
+	fi
+
+.PHONY: benchmark-report
+benchmark-report:  ## Generate docs/BENCHMARKS.md from results
+	@echo "$(CYAN)Generating benchmark report...$(RESET)"
+	@cd benchmarks && $(PYTHON) tools/report.py --output ../docs/BENCHMARKS.md
+	@echo "$(GREEN)✓ Report generated: docs/BENCHMARKS.md$(RESET)"
+
+.PHONY: benchmark-clean
+benchmark-clean:  ## Clean benchmark results
+	@echo "$(CYAN)Cleaning benchmark results...$(RESET)"
+	@rm -rf benchmarks/results/*.json benchmarks/results/plots/*
+	@echo "$(GREEN)✓ Benchmark results cleaned$(RESET)"
+
+# Legacy targets for backwards compatibility
+.PHONY: run-benchmarks
+run-benchmarks: benchmark-matmul  ## (Legacy) Run GEMM benchmarks
 
 .PHONY: run-benchmarks-gpu
 run-benchmarks-gpu: benchmarks  ## Run GPU-specific benchmarks
@@ -346,32 +407,16 @@ run-benchmarks-gpu: benchmarks  ## Run GPU-specific benchmarks
 .PHONY: run-benchmarks-json
 run-benchmarks-json: benchmarks  ## Run benchmarks with JSON output
 	@echo "$(CYAN)Running benchmarks with JSON output...$(RESET)"
-	@mkdir -p benchmark_results
+	@mkdir -p benchmarks/results
 	@./$(BUILD_DIR)/benchmarks/bench_gemm \
-		--benchmark_out=benchmark_results/gemm_results.json \
+		--benchmark_out=benchmarks/results/gemm_results.json \
 		--benchmark_out_format=json
 	@if [ -f ./$(BUILD_DIR)/benchmarks/bench_gemm_gpu ]; then \
 		./$(BUILD_DIR)/benchmarks/bench_gemm_gpu \
-			--benchmark_out=benchmark_results/gemm_gpu_results.json \
+			--benchmark_out=benchmarks/results/gemm_gpu_results.json \
 			--benchmark_out_format=json; \
 	fi
-	@echo "$(GREEN)✓ Results saved to benchmark_results/$(RESET)"
-
-.PHONY: benchmark-compare
-benchmark-compare:  ## Compare Axiom with PyTorch baseline
-	@echo "$(CYAN)Running PyTorch baseline benchmarks...$(RESET)"
-	@python3 benchmarks/common/pytorch_baseline.py
-	@echo ""
-	@echo "$(CYAN)Run 'make run-benchmarks' to compare with Axiom results$(RESET)"
-
-.PHONY: benchmark-compare-json
-benchmark-compare-json:  ## Compare with JSON output for analysis
-	@echo "$(CYAN)Running comparison benchmarks with JSON output...$(RESET)"
-	@mkdir -p benchmark_results
-	@python3 benchmarks/common/pytorch_baseline.py --json benchmark_results/pytorch_baseline.json
-	@$(MAKE) run-benchmarks-json
-	@echo "$(GREEN)✓ Results saved to benchmark_results/$(RESET)"
-	@echo "Compare: benchmark_results/gemm_results.json vs benchmark_results/pytorch_baseline.json"
+	@echo "$(GREEN)✓ Results saved to benchmarks/results/$(RESET)"
 
 # ============================================================================
 # Distribution Builds

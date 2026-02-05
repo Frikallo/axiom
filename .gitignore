@@ -4,3 +4,5 @@ build/
 ggml/
 pytorch-ref/
 *.npy
+__pycache__/
+venv/

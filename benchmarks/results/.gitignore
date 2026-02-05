@@ -1,0 +1,4 @@
+# Ignore benchmark results (regenerate with make benchmark-*)
+*.json
+plots/*.svg
+!.gitkeep
