@@ -198,7 +198,7 @@ include(FetchContent)
 
 set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(HWY_ENABLE_CONTRIB ON CACHE BOOL "" FORCE)
+set(HWY_ENABLE_CONTRIB OFF CACHE BOOL "" FORCE)  # Math headers are header-only, no need to build contrib
 set(HWY_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/highway EXCLUDE_FROM_ALL)
 set(highway_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/highway)
@@ -210,9 +210,6 @@ if(TARGET hwy)
     if(HWY_INCLUDE_DIRS)
         set_target_properties(hwy PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${HWY_INCLUDE_DIRS}")
     endif()
-endif()
-if(TARGET hwy_contrib)
-    target_compile_options(hwy_contrib PRIVATE -w)
 endif()
 
 # ============================================================================
@@ -472,7 +469,8 @@ endif()
 
 # Google Highway for cross-platform SIMD operations (always enabled)
 # Link privately since Highway is fetched and not installed
-target_link_libraries(axiom PRIVATE hwy hwy_contrib)
+# Note: We only link hwy, not hwy_contrib (math headers are header-only)
+target_link_libraries(axiom PRIVATE hwy)
 target_compile_definitions(axiom PUBLIC AXIOM_USE_HIGHWAY)
 
 # ============================================================================
