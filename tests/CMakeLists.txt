@@ -659,19 +659,15 @@ add_executable(test_simd_dispatch
 target_link_libraries(test_simd_dispatch
     PRIVATE
         axiom
+        hwy
 )
 
 target_include_directories(test_simd_dispatch
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/third_party/xsimd/include
         ${CMAKE_SOURCE_DIR}/third_party/FXdiv/include
+        ${highway_SOURCE_DIR}
 )
-
-# Pass through SIMD multi-arch flag if enabled
-if(AXIOM_SIMD_MULTI_ARCH)
-    target_compile_definitions(test_simd_dispatch PRIVATE AXIOM_SIMD_MULTI_ARCH)
-endif()
 
 add_test(
     NAME simd_dispatch

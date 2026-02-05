@@ -1,6 +1,3 @@
-[submodule "third_party/xsimd"]
-	path = third_party/xsimd
-	url = https://github.com/xtensor-stack/xsimd
 [submodule "third_party/FXdiv"]
 	path = third_party/FXdiv
 	url = https://github.com/Maratyszcza/FXdiv.git
@@ -13,3 +10,6 @@
 [submodule "third_party/benchmark"]
 	path = third_party/benchmark
 	url = https://github.com/google/benchmark.git
+[submodule "third_party/highway"]
+	path = third_party/highway
+	url = https://github.com/google/highway.git

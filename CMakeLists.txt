@@ -15,9 +15,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Add cmake modules path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# Include SIMD multi-architecture build support
-include(SimdMultiArch)
-
 # ============================================================================
 # Platform Detection
 # ============================================================================
@@ -196,6 +193,29 @@ endif()
 include(FetchContent)
 
 # ============================================================================
+# Google Highway (SIMD library) - via submodule
+# ============================================================================
+
+set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(HWY_ENABLE_CONTRIB ON CACHE BOOL "" FORCE)
+set(HWY_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/highway EXCLUDE_FROM_ALL)
+set(highway_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/highway)
+
+# Suppress warnings from Highway (third-party code)
+if(TARGET hwy)
+    target_compile_options(hwy PRIVATE -w)
+    get_target_property(HWY_INCLUDE_DIRS hwy INTERFACE_INCLUDE_DIRECTORIES)
+    if(HWY_INCLUDE_DIRS)
+        set_target_properties(hwy PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${HWY_INCLUDE_DIRS}")
+    endif()
+endif()
+if(TARGET hwy_contrib)
+    target_compile_options(hwy_contrib PRIVATE -w)
+endif()
+
+# ============================================================================
 # Google Benchmark (for benchmarks only)
 # ============================================================================
 if(AXIOM_BUILD_BENCHMARKS)
@@ -237,6 +257,9 @@ set(AXIOM_SOURCES
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
     src/backends/cpu/cpu_operations.cpp
+
+    # SIMD kernels (Highway)
+    src/backends/cpu/simd/hwy_kernels.cc
 
     # BLAS backend abstraction (always included)
     src/backends/cpu/blas/blas_backend.cpp
@@ -303,14 +326,7 @@ endif()
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 add_library(axiom SHARED ${AXIOM_SOURCES})
 
-# Add SIMD multi-arch object libraries if enabled
-if(AXIOM_SIMD_MULTI_ARCH AND AXIOM_SIMD_OBJECTS)
-    target_sources(axiom PRIVATE ${AXIOM_SIMD_OBJECTS})
-    target_compile_definitions(axiom PUBLIC AXIOM_SIMD_MULTI_ARCH)
-    if(AXIOM_SIMD_AVX512)
-        target_compile_definitions(axiom PUBLIC AXIOM_SIMD_AVX512)
-    endif()
-endif()
+# Highway handles SIMD multi-arch internally via runtime dispatch
 
 # ============================================================================
 # Metal Library Embedding (macOS only)
@@ -391,7 +407,7 @@ target_include_directories(axiom
 
 target_include_directories(axiom SYSTEM
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include>
+        $<BUILD_INTERFACE:${highway_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FXdiv/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers/include>
@@ -454,14 +470,16 @@ if(AXIOM_HAS_OPENMP)
     target_compile_definitions(axiom PUBLIC AXIOM_USE_OPENMP)
 endif()
 
-# XSIMD for cross-platform SIMD operations (always enabled)
-target_compile_definitions(axiom PUBLIC AXIOM_USE_XSIMD)
+# Google Highway for cross-platform SIMD operations (always enabled)
+# Link privately since Highway is fetched and not installed
+target_link_libraries(axiom PRIVATE hwy hwy_contrib)
+target_compile_definitions(axiom PUBLIC AXIOM_USE_HIGHWAY)
 
 # ============================================================================
 # Floating-point optimization flags
 # ============================================================================
-# Note: -ffast-math and -fassociative-math break XSIMD transcendental functions
-# (exp, log, sin, etc.) on ARM NEON. Use safer flags that preserve math correctness.
+# Note: -ffast-math and -fassociative-math can break transcendental functions
+# (exp, log, sin, etc.) on some platforms. Use safer flags that preserve math correctness.
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(axiom PRIVATE
@@ -469,7 +487,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
             -fno-trapping-math     # Assume no FP exceptions
             -fno-signed-zeros      # Allow optimizations ignoring sign of zero
             -freciprocal-math      # Allow x/y -> x * (1/y)
-            # Note: -fassociative-math breaks XSIMD exp/log on ARM, do not use
+            # Note: -fassociative-math can break exp/log on ARM, do not use
         )
     endif()
 endif()
@@ -588,22 +606,7 @@ else()
     message(STATUS "  Metal support: NO (not on Apple platform)")
 endif()
 message(STATUS "  Target architecture: ${CMAKE_SYSTEM_PROCESSOR}")
-if(AXIOM_SIMD_MULTI_ARCH)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|x86")
-        message(STATUS "  SIMD: Runtime dispatch enabled (portable binary)")
-        if(AXIOM_SIMD_AVX512)
-            message(STATUS "        Targets: SSE2, AVX2+FMA, AVX-512")
-        else()
-            message(STATUS "        Targets: SSE2, AVX2+FMA")
-        endif()
-    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
-        message(STATUS "  SIMD: NEON64 (ARM64 always has NEON, no runtime dispatch needed)")
-    else()
-        message(STATUS "  SIMD: Using default architecture")
-    endif()
-else()
-    message(STATUS "  SIMD: Compile-time detection (use -DAXIOM_SIMD_MULTI_ARCH=ON for portable)")
-endif()
+message(STATUS "  SIMD: Google Highway (runtime dispatch)")
 if(AXIOM_DIST_BUILD)
     message(STATUS "  Distribution build: YES")
 endif()

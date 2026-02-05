@@ -1,5 +1,5 @@
 #include "axiom/debug.hpp"
-#include "backends/cpu/simd/simd_kernels.hpp"
+#include "backends/cpu/simd/simd_dispatch.hpp"
 
 namespace axiom {
 namespace trace {
