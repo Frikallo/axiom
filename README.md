@@ -19,7 +19,7 @@ The **Axiom** library offers ...
   * ... **complete dtype coverage** including Float16/32/64, Int8-64, Bool, and Complex64/128
   * ... **portable distribution** with dynamically linked BLAS backends for cross-platform deployment
 
-Get an impression of the familiar syntax in the [Quick Start](#quick-start) section and the impressive performance in the [Benchmarks](#benchmarks) section.
+Get an impression of the familiar syntax in the [Quick Start](#quick-start) section and the impressive performance in the [Benchmarks](docs/BENCHMARKS.md) section.
 
 ----
 
@@ -48,6 +48,7 @@ If you know NumPy or PyTorch, you already know Axiom.
 <img src="assets/matmul_benchmark.svg" alt="Matmul Benchmark" width="100%">
 
 **3500+ GFLOPS** on M4 Pro. Beats Eigen & PyTorch.
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for full results.
 
 </td>
 </tr>
