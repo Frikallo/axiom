@@ -24,7 +24,6 @@
 #include "hwy/foreach_target.h"  // IWYU pragma: keep
 // clang-format on
 
-#include "backends/cpu/simd/hwy_math_ext-inl.h"
 #include "hwy/contrib/math/math-inl.h"
 #include "hwy/highway.h"
 
@@ -38,6 +37,9 @@ namespace simd {
 namespace HWY_NAMESPACE {
 
 namespace hn = hwy::HWY_NAMESPACE;
+
+// Include custom math extensions (Erf, Cbrt) - must be after namespace opens
+#include "backends/cpu/simd/hwy_math_ext-inl.h"
 
 // ============================================================================
 // Binary Operations (templated implementations)

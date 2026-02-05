@@ -5,24 +5,8 @@
 //   - erf(x): error function (Abramowitz-Stegun approximation)
 //   - cbrt(x): cube root (Newton-Raphson with exp/log initial guess)
 //
-// This file follows Highway's foreach_target pattern and should be included
-// via HWY_BEFORE_NAMESPACE/HWY_AFTER_NAMESPACE macros.
-
-// clang-format off
-#undef HWY_TARGET_INCLUDE
-#define HWY_TARGET_INCLUDE "backends/cpu/simd/hwy_math_ext-inl.h"
-#include "hwy/foreach_target.h"  // IWYU pragma: keep
-// clang-format on
-
-#include "hwy/contrib/math/math-inl.h"
-#include "hwy/highway.h"
-
-HWY_BEFORE_NAMESPACE();
-namespace axiom {
-namespace simd {
-namespace HWY_NAMESPACE {
-
-namespace hn = hwy::HWY_NAMESPACE;
+// This file is included from hwy_kernels-inl.h INSIDE the HWY_NAMESPACE.
+// Do NOT add namespace declarations here - they are already set up.
 
 // ============================================================================
 // erf(x) - Error Function
@@ -124,8 +108,3 @@ HWY_API V Cbrt(D d, V x) {
     const V result = hn::Mul(sign, y);
     return hn::IfThenElse(is_zero, zero, result);
 }
-
-} // namespace HWY_NAMESPACE
-} // namespace simd
-} // namespace axiom
-HWY_AFTER_NAMESPACE();
