@@ -363,21 +363,52 @@ benchmark-fusion: benchmarks  ## Run fusion/lazy evaluation benchmarks
 PYTHON ?= python3
 
 .PHONY: benchmark-compare
-benchmark-compare: benchmarks  ## Run comparison benchmarks and generate plots
-	@echo "$(CYAN)Running library comparison benchmarks...$(RESET)"
+benchmark-compare: benchmarks  ## Run comprehensive comparison benchmarks and generate plots
+	@echo "$(CYAN)Running comprehensive library comparison benchmarks...$(RESET)"
+	@echo "$(CYAN)Categories: matmul, elementwise, unary, linalg, fft$(RESET)"
 	@echo "$(CYAN)Using Python: $$(which $(PYTHON))$(RESET)"
 	@mkdir -p benchmarks/results/plots
-	@cd benchmarks && $(PYTHON) tools/runner.py --compare --sizes 32,48,64,96,128,192,256,384,512,768,1024,1536,2048,3072,4096 --output results
+	@cd benchmarks && $(PYTHON) tools/runner.py --compare \
+		--categories matmul,elementwise,unary,linalg,fft \
+		--sizes 32,64,128,256,512,1024,2048,4096 \
+		--output results
 	@echo "$(CYAN)Generating plots...$(RESET)"
 	@if $(PYTHON) -c "import matplotlib" 2>/dev/null; then \
 		cd benchmarks && $(PYTHON) tools/plotter.py --all --output results/plots; \
-		echo "$(GREEN)✓ Comparison complete. Plots in benchmarks/results/plots/$(RESET)"; \
+		echo "$(GREEN)✓ Comprehensive comparison complete.$(RESET)"; \
+		echo "$(GREEN)  Results: benchmarks/results/comprehensive_comparison.json$(RESET)"; \
+		echo "$(GREEN)  Plots:   benchmarks/results/plots/$(RESET)"; \
 	else \
 		echo "$(YELLOW)⚠ matplotlib not installed for $$($(PYTHON) --version).$(RESET)"; \
 		echo "$(YELLOW)  Install with: $(PYTHON) -m pip install matplotlib$(RESET)"; \
-		echo "$(YELLOW)  Or specify Python: make benchmark-compare PYTHON=/path/to/python$(RESET)"; \
 		echo "$(GREEN)✓ Comparison data saved to benchmarks/results/$(RESET)"; \
 	fi
+
+# Run specific category benchmarks
+.PHONY: benchmark-compare-matmul
+benchmark-compare-matmul: benchmarks  ## Run matmul comparison only
+	@cd benchmarks && $(PYTHON) tools/runner.py --compare --categories matmul \
+		--sizes 32,64,128,256,512,1024,2048,4096 --output results
+
+.PHONY: benchmark-compare-elementwise
+benchmark-compare-elementwise: benchmarks  ## Run element-wise ops comparison
+	@cd benchmarks && $(PYTHON) tools/runner.py --compare --categories elementwise \
+		--sizes 64,128,256,512,1024,2048,4096 --output results
+
+.PHONY: benchmark-compare-unary
+benchmark-compare-unary: benchmarks  ## Run unary ops comparison
+	@cd benchmarks && $(PYTHON) tools/runner.py --compare --categories unary \
+		--sizes 64,128,256,512,1024,2048,4096 --output results
+
+.PHONY: benchmark-compare-linalg
+benchmark-compare-linalg: benchmarks  ## Run linear algebra comparison
+	@cd benchmarks && $(PYTHON) tools/runner.py --compare --categories linalg \
+		--sizes 64,128,256,512,1024 --output results
+
+.PHONY: benchmark-compare-fft
+benchmark-compare-fft: benchmarks  ## Run FFT comparison
+	@cd benchmarks && $(PYTHON) tools/runner.py --compare --categories fft \
+		--sizes 64,128,256,512,1024,2048 --output results
 
 .PHONY: benchmark-report
 benchmark-report:  ## Generate docs/BENCHMARKS.md from results

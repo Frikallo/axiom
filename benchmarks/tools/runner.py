@@ -2,7 +2,15 @@
 """
 Unified Benchmark Runner
 
-Runs Axiom benchmarks and comparison benchmarks, outputting JSON results.
+Runs Axiom benchmarks and comparison benchmarks across multiple categories,
+outputting JSON results for plotting.
+
+Categories:
+- matmul: Matrix multiplication
+- elementwise: Binary operations (add, sub, mul, div)
+- unary: Unary operations (exp, log, sqrt, sin, cos, tanh, etc.)
+- linalg: Linear algebra (svd, qr, solve, cholesky, eig, inv, det)
+- fft: FFT operations (fft, ifft, fft2, ifft2, rfft, rfft2)
 """
 
 import argparse
@@ -87,11 +95,9 @@ def run_axiom_benchmark(binary: str, args: List[str] = None) -> List[BenchmarkRe
         results = []
         for bench in data.get("benchmarks", []):
             name = bench.get("name", "unknown")
-            # Google Benchmark reports real_time in nanoseconds by default
             time_ns = bench.get("real_time", 0)
             time_unit = bench.get("time_unit", "ns")
 
-            # Convert to milliseconds
             if time_unit == "ns":
                 time_ms = time_ns / 1e6
             elif time_unit == "us":
@@ -120,54 +126,44 @@ def run_axiom_benchmark(binary: str, args: List[str] = None) -> List[BenchmarkRe
         return []
 
 
-def run_comparison_benchmarks(sizes: List[int], output_dir: Path) -> Dict[str, List[float]]:
-    """Run comparison benchmarks across all libraries."""
+# ============================================================================
+# Matmul Comparison Benchmarks
+# ============================================================================
+
+def run_matmul_comparison(sizes: List[int], output_dir: Path) -> Dict[str, Any]:
+    """Run matmul comparison benchmarks across all libraries (CPU only)."""
     results = {
+        "category": "matmul",
+        "metric": "GFLOPS",
         "sizes": sizes,
-        "axiom_cpu": [],
-        "axiom_gpu": [],
+        "axiom": [],
         "eigen": [],
         "armadillo": [],
         "numpy": [],
-        "pytorch_cpu": [],
-        "pytorch_mps": [],
+        "pytorch": [],
     }
 
-    compare_dir = BENCHMARK_DIR / "compare"
-    build_compare = BUILD_DIR / "benchmarks" / "compare"
-
-    # Check for numpy baseline
-    numpy_baseline = BENCHMARK_DIR / "tools" / "baselines" / "numpy_baseline.py"
+    compare_dir = BUILD_DIR / "benchmarks" / "compare"
+    baseline_script = BENCHMARK_DIR / "tools" / "baselines" / "numpy_baseline.py"
 
     for size in sizes:
-        print(f"  Size {size}x{size}...")
+        print(f"  Matmul {size}x{size}...")
 
         # Axiom CPU
-        axiom_cpu = build_compare / "matmul_axiom"
-        if axiom_cpu.exists():
-            success, stdout, _ = run_command([str(axiom_cpu), str(size)])
+        binary = compare_dir / "matmul_axiom"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), str(size)])
             try:
-                results["axiom_cpu"].append(float(stdout) if success else None)
+                results["axiom"].append(float(stdout) if success else None)
             except ValueError:
-                results["axiom_cpu"].append(None)
+                results["axiom"].append(None)
         else:
-            results["axiom_cpu"].append(None)
-
-        # Axiom GPU
-        axiom_gpu = build_compare / "matmul_axiom_gpu"
-        if axiom_gpu.exists():
-            success, stdout, _ = run_command([str(axiom_gpu), str(size)])
-            try:
-                results["axiom_gpu"].append(float(stdout) if success else None)
-            except ValueError:
-                results["axiom_gpu"].append(None)
-        else:
-            results["axiom_gpu"].append(None)
+            results["axiom"].append(None)
 
         # Eigen
-        eigen_bin = build_compare / "matmul_eigen"
-        if eigen_bin.exists():
-            success, stdout, _ = run_command([str(eigen_bin), str(size)])
+        binary = compare_dir / "matmul_eigen"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), str(size)])
             try:
                 results["eigen"].append(float(stdout) if success else None)
             except ValueError:
@@ -176,9 +172,9 @@ def run_comparison_benchmarks(sizes: List[int], output_dir: Path) -> Dict[str, L
             results["eigen"].append(None)
 
         # Armadillo
-        arma_bin = build_compare / "matmul_armadillo"
-        if arma_bin.exists():
-            success, stdout, _ = run_command([str(arma_bin), str(size)])
+        binary = compare_dir / "matmul_armadillo"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), str(size)])
             try:
                 results["armadillo"].append(float(stdout) if success else None)
             except ValueError:
@@ -187,9 +183,9 @@ def run_comparison_benchmarks(sizes: List[int], output_dir: Path) -> Dict[str, L
             results["armadillo"].append(None)
 
         # NumPy
-        if numpy_baseline.exists():
+        if baseline_script.exists():
             success, stdout, _ = run_command(
-                ["python3", str(numpy_baseline), "numpy", str(size)]
+                [sys.executable, str(baseline_script), "numpy", str(size)]
             )
             try:
                 results["numpy"].append(float(stdout) if success else None)
@@ -199,30 +195,399 @@ def run_comparison_benchmarks(sizes: List[int], output_dir: Path) -> Dict[str, L
             results["numpy"].append(None)
 
         # PyTorch CPU
-        if numpy_baseline.exists():
+        if baseline_script.exists():
             success, stdout, _ = run_command(
-                ["python3", str(numpy_baseline), "pytorch", str(size)]
+                [sys.executable, str(baseline_script), "pytorch", str(size)]
             )
             try:
                 val = float(stdout) if success else None
-                results["pytorch_cpu"].append(val if val and val > 0 else None)
+                results["pytorch"].append(val if val and val > 0 else None)
             except ValueError:
-                results["pytorch_cpu"].append(None)
+                results["pytorch"].append(None)
         else:
-            results["pytorch_cpu"].append(None)
+            results["pytorch"].append(None)
 
-        # PyTorch MPS
-        if numpy_baseline.exists():
-            success, stdout, _ = run_command(
-                ["python3", str(numpy_baseline), "pytorch_mps", str(size)]
-            )
-            try:
-                val = float(stdout) if success else None
-                results["pytorch_mps"].append(val if val and val > 0 else None)
-            except ValueError:
-                results["pytorch_mps"].append(None)
+    return results
+
+
+# ============================================================================
+# Element-wise Comparison Benchmarks
+# ============================================================================
+
+def run_elementwise_comparison(sizes: List[int], output_dir: Path) -> Dict[str, Any]:
+    """Run element-wise binary op comparison benchmarks."""
+    ops = ["add", "sub", "mul", "div"]
+    results = {
+        "category": "elementwise",
+        "metric": "GB/s",
+        "sizes": sizes,
+        "ops": ops,
+    }
+
+    # Initialize result arrays for each library (CPU only)
+    for lib in ["axiom", "eigen", "numpy", "pytorch"]:
+        results[lib] = {op: [] for op in ops}
+
+    compare_dir = BUILD_DIR / "benchmarks" / "compare"
+    baseline_script = BENCHMARK_DIR / "tools" / "baselines" / "comprehensive_baseline.py"
+
+    for size in sizes:
+        print(f"  Elementwise {size}x{size}...")
+
+        # Axiom
+        binary = compare_dir / "elementwise_axiom"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), "all", str(size)])
+            if success:
+                try:
+                    data = json.loads(stdout)
+                    for op in ops:
+                        results["axiom"][op].append(data.get(op))
+                except (json.JSONDecodeError, KeyError):
+                    for op in ops:
+                        results["axiom"][op].append(None)
+            else:
+                for op in ops:
+                    results["axiom"][op].append(None)
         else:
-            results["pytorch_mps"].append(None)
+            for op in ops:
+                results["axiom"][op].append(None)
+
+        # Eigen
+        binary = compare_dir / "elementwise_eigen"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), "all", str(size)])
+            if success:
+                try:
+                    data = json.loads(stdout)
+                    for op in ops:
+                        results["eigen"][op].append(data.get(op))
+                except (json.JSONDecodeError, KeyError):
+                    for op in ops:
+                        results["eigen"][op].append(None)
+            else:
+                for op in ops:
+                    results["eigen"][op].append(None)
+        else:
+            for op in ops:
+                results["eigen"][op].append(None)
+
+        # Python baselines (CPU only)
+        if baseline_script.exists():
+            for lib, py_lib in [("numpy", "numpy"), ("pytorch", "pytorch")]:
+                success, stdout, _ = run_command(
+                    [sys.executable, str(baseline_script), "elementwise", py_lib, str(size)]
+                )
+                if success:
+                    try:
+                        data = json.loads(stdout)
+                        for op in ops:
+                            val = data.get(op)
+                            results[lib][op].append(val if val and val > 0 else None)
+                    except (json.JSONDecodeError, KeyError):
+                        for op in ops:
+                            results[lib][op].append(None)
+                else:
+                    for op in ops:
+                        results[lib][op].append(None)
+        else:
+            for lib in ["numpy", "pytorch"]:
+                for op in ops:
+                    results[lib][op].append(None)
+
+    return results
+
+
+# ============================================================================
+# Unary Operation Comparison Benchmarks
+# ============================================================================
+
+def run_unary_comparison(sizes: List[int], output_dir: Path) -> Dict[str, Any]:
+    """Run unary operation comparison benchmarks."""
+    ops = ["exp", "log", "sqrt", "sin", "cos", "tanh", "abs", "neg", "relu", "sigmoid"]
+    results = {
+        "category": "unary",
+        "metric": "GB/s",
+        "sizes": sizes,
+        "ops": ops,
+    }
+
+    # CPU only
+    for lib in ["axiom", "eigen", "numpy", "pytorch"]:
+        results[lib] = {op: [] for op in ops}
+
+    compare_dir = BUILD_DIR / "benchmarks" / "compare"
+    baseline_script = BENCHMARK_DIR / "tools" / "baselines" / "comprehensive_baseline.py"
+
+    for size in sizes:
+        print(f"  Unary {size}x{size}...")
+
+        # Axiom
+        binary = compare_dir / "unary_axiom"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), "all", str(size)])
+            if success:
+                try:
+                    data = json.loads(stdout)
+                    for op in ops:
+                        results["axiom"][op].append(data.get(op))
+                except (json.JSONDecodeError, KeyError):
+                    for op in ops:
+                        results["axiom"][op].append(None)
+            else:
+                for op in ops:
+                    results["axiom"][op].append(None)
+        else:
+            for op in ops:
+                results["axiom"][op].append(None)
+
+        # Eigen
+        binary = compare_dir / "unary_eigen"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), "all", str(size)])
+            if success:
+                try:
+                    data = json.loads(stdout)
+                    for op in ops:
+                        results["eigen"][op].append(data.get(op))
+                except (json.JSONDecodeError, KeyError):
+                    for op in ops:
+                        results["eigen"][op].append(None)
+            else:
+                for op in ops:
+                    results["eigen"][op].append(None)
+        else:
+            for op in ops:
+                results["eigen"][op].append(None)
+
+        # Python baselines (CPU only)
+        if baseline_script.exists():
+            for lib, py_lib in [("numpy", "numpy"), ("pytorch", "pytorch")]:
+                success, stdout, _ = run_command(
+                    [sys.executable, str(baseline_script), "unary", py_lib, str(size)]
+                )
+                if success:
+                    try:
+                        data = json.loads(stdout)
+                        for op in ops:
+                            val = data.get(op)
+                            results[lib][op].append(val if val and val > 0 else None)
+                    except (json.JSONDecodeError, KeyError):
+                        for op in ops:
+                            results[lib][op].append(None)
+                else:
+                    for op in ops:
+                        results[lib][op].append(None)
+        else:
+            for lib in ["numpy", "pytorch"]:
+                for op in ops:
+                    results[lib][op].append(None)
+
+    return results
+
+
+# ============================================================================
+# Linear Algebra Comparison Benchmarks
+# ============================================================================
+
+def run_linalg_comparison(sizes: List[int], output_dir: Path) -> Dict[str, Any]:
+    """Run linear algebra comparison benchmarks."""
+    ops = ["svd", "qr", "solve", "cholesky", "eig", "inv", "det"]
+    results = {
+        "category": "linalg",
+        "metric": "time_ms",
+        "sizes": sizes,
+        "ops": ops,
+    }
+
+    # CPU only
+    for lib in ["axiom", "eigen", "numpy", "pytorch"]:
+        results[lib] = {op: [] for op in ops}
+
+    compare_dir = BUILD_DIR / "benchmarks" / "compare"
+    baseline_script = BENCHMARK_DIR / "tools" / "baselines" / "comprehensive_baseline.py"
+
+    for size in sizes:
+        print(f"  Linalg {size}x{size}...")
+
+        # Axiom
+        binary = compare_dir / "linalg_axiom"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), "all", str(size)], timeout=600)
+            if success:
+                try:
+                    data = json.loads(stdout)
+                    for op in ops:
+                        if op in data and isinstance(data[op], dict):
+                            results["axiom"][op].append(data[op].get("time_ms"))
+                        else:
+                            results["axiom"][op].append(None)
+                except (json.JSONDecodeError, KeyError):
+                    for op in ops:
+                        results["axiom"][op].append(None)
+            else:
+                for op in ops:
+                    results["axiom"][op].append(None)
+        else:
+            for op in ops:
+                results["axiom"][op].append(None)
+
+        # Eigen
+        binary = compare_dir / "linalg_eigen"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), "all", str(size)], timeout=600)
+            if success:
+                try:
+                    data = json.loads(stdout)
+                    for op in ops:
+                        if op in data and isinstance(data[op], dict):
+                            results["eigen"][op].append(data[op].get("time_ms"))
+                        else:
+                            results["eigen"][op].append(None)
+                except (json.JSONDecodeError, KeyError):
+                    for op in ops:
+                        results["eigen"][op].append(None)
+            else:
+                for op in ops:
+                    results["eigen"][op].append(None)
+        else:
+            for op in ops:
+                results["eigen"][op].append(None)
+
+        # Python baselines (CPU only)
+        if baseline_script.exists():
+            for lib, py_lib in [("numpy", "numpy"), ("pytorch", "pytorch")]:
+                success, stdout, _ = run_command(
+                    [sys.executable, str(baseline_script), "linalg", py_lib, str(size)],
+                    timeout=600
+                )
+                if success:
+                    try:
+                        data = json.loads(stdout)
+                        for op in ops:
+                            val = data.get(op)
+                            results[lib][op].append(val if val and val > 0 else None)
+                    except (json.JSONDecodeError, KeyError):
+                        for op in ops:
+                            results[lib][op].append(None)
+                else:
+                    for op in ops:
+                        results[lib][op].append(None)
+        else:
+            for lib in ["numpy", "pytorch"]:
+                for op in ops:
+                    results[lib][op].append(None)
+
+    return results
+
+
+# ============================================================================
+# FFT Comparison Benchmarks
+# ============================================================================
+
+def run_fft_comparison(sizes: List[int], output_dir: Path) -> Dict[str, Any]:
+    """Run FFT comparison benchmarks."""
+    ops = ["fft", "ifft", "rfft", "fft2", "ifft2", "rfft2"]
+    results = {
+        "category": "fft",
+        "metric": "time_ms",
+        "sizes": sizes,
+        "ops": ops,
+    }
+
+    # CPU only
+    for lib in ["axiom", "numpy", "pytorch"]:
+        results[lib] = {op: [] for op in ops}
+
+    compare_dir = BUILD_DIR / "benchmarks" / "compare"
+    baseline_script = BENCHMARK_DIR / "tools" / "baselines" / "comprehensive_baseline.py"
+
+    for size in sizes:
+        print(f"  FFT {size}...")
+
+        # Axiom
+        binary = compare_dir / "fft_axiom"
+        if binary.exists():
+            success, stdout, _ = run_command([str(binary), "all", str(size)])
+            if success:
+                try:
+                    data = json.loads(stdout)
+                    for op in ops:
+                        if op in data and isinstance(data[op], dict):
+                            results["axiom"][op].append(data[op].get("time_ms"))
+                        else:
+                            results["axiom"][op].append(None)
+                except (json.JSONDecodeError, KeyError):
+                    for op in ops:
+                        results["axiom"][op].append(None)
+            else:
+                for op in ops:
+                    results["axiom"][op].append(None)
+        else:
+            for op in ops:
+                results["axiom"][op].append(None)
+
+        # Python baselines (CPU only)
+        if baseline_script.exists():
+            for lib, py_lib in [("numpy", "numpy"), ("pytorch", "pytorch")]:
+                success, stdout, _ = run_command(
+                    [sys.executable, str(baseline_script), "fft", py_lib, str(size)]
+                )
+                if success:
+                    try:
+                        data = json.loads(stdout)
+                        for op in ops:
+                            val = data.get(op)
+                            results[lib][op].append(val if val and val > 0 else None)
+                    except (json.JSONDecodeError, KeyError):
+                        for op in ops:
+                            results[lib][op].append(None)
+                else:
+                    for op in ops:
+                        results[lib][op].append(None)
+        else:
+            for lib in ["numpy", "pytorch"]:
+                for op in ops:
+                    results[lib][op].append(None)
+
+    return results
+
+
+# ============================================================================
+# Comprehensive Comparison (All Categories)
+# ============================================================================
+
+def run_comparison_benchmarks(sizes: List[int], output_dir: Path,
+                              categories: List[str] = None) -> Dict[str, Any]:
+    """Run comparison benchmarks across selected categories."""
+    all_categories = ["matmul", "elementwise", "unary", "linalg", "fft"]
+    if categories is None:
+        categories = all_categories
+
+    results = {
+        "timestamp": __import__("datetime").datetime.now().isoformat(),
+        "platform": get_platform_info(),
+        "sizes": sizes,
+        "categories": {},
+    }
+
+    # Different size ranges for different benchmark types
+    # Linalg is slower, so use smaller sizes
+    linalg_sizes = [s for s in sizes if s <= 512]
+    fft_sizes = [s for s in sizes if s <= 2048]
+
+    for cat in categories:
+        print(f"\nRunning {cat} benchmarks...")
+        if cat == "matmul":
+            results["categories"]["matmul"] = run_matmul_comparison(sizes, output_dir)
+        elif cat == "elementwise":
+            results["categories"]["elementwise"] = run_elementwise_comparison(sizes, output_dir)
+        elif cat == "unary":
+            results["categories"]["unary"] = run_unary_comparison(sizes, output_dir)
+        elif cat == "linalg":
+            results["categories"]["linalg"] = run_linalg_comparison(linalg_sizes, output_dir)
+        elif cat == "fft":
+            results["categories"]["fft"] = run_fft_comparison(fft_sizes, output_dir)
 
     return results
 
@@ -274,6 +639,12 @@ def main():
         help="Run library comparison benchmarks"
     )
     parser.add_argument(
+        "--categories",
+        type=str,
+        default="matmul,elementwise,unary,linalg,fft",
+        help="Comparison categories to run (comma-separated)"
+    )
+    parser.add_argument(
         "--sizes",
         type=str,
         default="32,64,128,256,512,1024,2048,4096",
@@ -292,19 +663,35 @@ def main():
 
     if args.compare:
         sizes = [int(s.strip()) for s in args.sizes.split(",")]
-        print(f"Running comparison benchmarks for sizes: {sizes}")
-        results = run_comparison_benchmarks(sizes, output_dir)
+        categories = [c.strip() for c in args.categories.split(",")]
+        print(f"Running comparison benchmarks for categories: {categories}")
+        print(f"Sizes: {sizes}")
 
-        output_file = output_dir / "comparison_results.json"
+        results = run_comparison_benchmarks(sizes, output_dir, categories)
+
+        # Save comprehensive results
+        output_file = output_dir / "comprehensive_comparison.json"
         with open(output_file, "w") as f:
             json.dump(results, f, indent=2)
-        print(f"Results saved to: {output_file}")
+        print(f"\nComprehensive results saved to: {output_file}")
+
+        # Also save individual category files for backward compatibility
+        for cat_name, cat_data in results.get("categories", {}).items():
+            cat_file = output_dir / f"{cat_name}_comparison.json"
+            with open(cat_file, "w") as f:
+                json.dump(cat_data, f, indent=2)
+            print(f"Category results saved to: {cat_file}")
+
+        # Legacy format for matmul (backward compatibility)
+        if "matmul" in results.get("categories", {}):
+            legacy_file = output_dir / "comparison_results.json"
+            with open(legacy_file, "w") as f:
+                json.dump(results["categories"]["matmul"], f, indent=2)
     else:
         suite = run_suite(args.suite, output_dir)
 
         output_file = output_dir / f"{args.suite}_results.json"
         with open(output_file, "w") as f:
-            # Convert dataclasses to dicts
             suite_dict = asdict(suite)
             json.dump(suite_dict, f, indent=2, default=str)
         print(f"Results saved to: {output_file}")

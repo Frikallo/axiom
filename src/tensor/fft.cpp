@@ -364,9 +364,9 @@ Tensor rfft2(const Tensor &input, const std::vector<int64_t> &s,
         actual_s = {-1, -1};
     }
 
-    // FFT along first axis, rfft along second
-    Tensor result = fft(input, actual_s[0], actual_axes[0], norm);
-    result = rfft(result, actual_s[1], actual_axes[1], norm);
+    // rfft along last axis first (real->complex), then fft along first axis
+    Tensor result = rfft(input, actual_s[1], actual_axes[1], norm);
+    result = fft(result, actual_s[0], actual_axes[0], norm);
     return result;
 }
 
@@ -383,9 +383,11 @@ Tensor irfft2(const Tensor &input, const std::vector<int64_t> &s,
         actual_s = {-1, -1};
     }
 
-    Tensor result = irfft(input, actual_s[1], actual_axes[1], norm);
-    result = ifft(result, actual_s[0], actual_axes[0], norm);
-    return ops::real(result);
+    // ifft along first axis first (complex->complex), then irfft along last
+    // axis
+    Tensor result = ifft(input, actual_s[0], actual_axes[0], norm);
+    result = irfft(result, actual_s[1], actual_axes[1], norm);
+    return result;
 }
 
 // ============================================================================

@@ -142,6 +142,83 @@ else()
 endif()
 
 # ============================================================================
+# Additional Comparison Benchmarks
+# ============================================================================
+
+# --- Element-wise Operations ---
+
+add_executable(elementwise_axiom compare/elementwise_axiom.cpp)
+target_link_libraries(elementwise_axiom PRIVATE axiom)
+set_target_properties(elementwise_axiom PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${COMPARE_OUTPUT_DIR}
+)
+
+if(Eigen3_FOUND)
+    add_executable(elementwise_eigen compare/elementwise_eigen.cpp)
+    target_link_libraries(elementwise_eigen PRIVATE Eigen3::Eigen)
+    set_target_properties(elementwise_eigen PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${COMPARE_OUTPUT_DIR}
+    )
+endif()
+
+# --- Unary Operations ---
+
+add_executable(unary_axiom compare/unary_axiom.cpp)
+target_link_libraries(unary_axiom PRIVATE axiom)
+set_target_properties(unary_axiom PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${COMPARE_OUTPUT_DIR}
+)
+
+if(Eigen3_FOUND)
+    add_executable(unary_eigen compare/unary_eigen.cpp)
+    target_link_libraries(unary_eigen PRIVATE Eigen3::Eigen)
+    set_target_properties(unary_eigen PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${COMPARE_OUTPUT_DIR}
+    )
+endif()
+
+# --- Linear Algebra Operations ---
+
+add_executable(linalg_axiom compare/linalg_axiom.cpp)
+target_link_libraries(linalg_axiom PRIVATE axiom)
+set_target_properties(linalg_axiom PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${COMPARE_OUTPUT_DIR}
+)
+
+if(Eigen3_FOUND)
+    add_executable(linalg_eigen compare/linalg_eigen.cpp)
+    target_link_libraries(linalg_eigen PRIVATE Eigen3::Eigen)
+    if(APPLE)
+        target_link_libraries(linalg_eigen PRIVATE "-framework Accelerate")
+    endif()
+    set_target_properties(linalg_eigen PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${COMPARE_OUTPUT_DIR}
+    )
+endif()
+
+# --- FFT Operations ---
+
+add_executable(fft_axiom compare/fft_axiom.cpp)
+target_link_libraries(fft_axiom PRIVATE axiom)
+set_target_properties(fft_axiom PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${COMPARE_OUTPUT_DIR}
+)
+
+# ============================================================================
 # Install targets for benchmark binaries (optional)
 # ============================================================================
 
