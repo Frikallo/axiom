@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "../dtype.hpp"
@@ -70,6 +71,10 @@ struct BufferSlot {
     int reuses_slot = -1; // Memory reuse from a dead slot
 };
 
+struct BufferArena {
+    std::vector<std::shared_ptr<Storage>> backing; // M allocations
+};
+
 struct CompiledGraph {
     GraphSignature signature;
     std::vector<ExecutionStep> steps;
@@ -79,6 +84,24 @@ struct CompiledGraph {
     size_t num_allocations = 0;
     std::vector<int> slot_to_allocation;
     std::vector<size_t> allocation_sizes;
+
+    // Arena pool for buffer reuse across executions
+    mutable std::mutex arena_mutex_;
+    mutable std::vector<std::unique_ptr<BufferArena>> free_arenas_;
+
+    std::unique_ptr<BufferArena> acquire_arena() const {
+        std::lock_guard<std::mutex> lock(arena_mutex_);
+        if (free_arenas_.empty())
+            return nullptr;
+        auto arena = std::move(free_arenas_.back());
+        free_arenas_.pop_back();
+        return arena;
+    }
+
+    void release_arena(std::unique_ptr<BufferArena> arena) const {
+        std::lock_guard<std::mutex> lock(arena_mutex_);
+        free_arenas_.push_back(std::move(arena));
+    }
 };
 
 } // namespace graph

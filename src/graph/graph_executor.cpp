@@ -12,6 +12,23 @@ namespace axiom {
 namespace graph {
 
 // ============================================================================
+// RAII guard to return arena to pool on scope exit
+// ============================================================================
+
+namespace {
+
+struct ArenaGuard {
+    const CompiledGraph &plan;
+    std::unique_ptr<BufferArena> arena;
+    ~ArenaGuard() {
+        if (arena)
+            plan.release_arena(std::move(arena));
+    }
+};
+
+} // namespace
+
+// ============================================================================
 // Execute the full compiled plan
 // ============================================================================
 
@@ -28,7 +45,28 @@ Tensor GraphExecutor::execute(const CompiledGraph &plan,
         }
     }
 
-    // Pre-allocate output buffers using the memory plan
+    // Acquire or create arena with M backing storages
+    auto arena = plan.acquire_arena();
+    if (!arena && plan.num_allocations > 0) {
+        // Determine device from first non-input slot
+        Device arena_device = Device::CPU;
+        for (const auto &slot : plan.buffer_slots) {
+            if (!slot.is_input) {
+                arena_device = slot.device;
+                break;
+            }
+        }
+
+        arena = std::make_unique<BufferArena>();
+        arena->backing.resize(plan.num_allocations);
+        for (size_t a = 0; a < plan.num_allocations; ++a) {
+            arena->backing[a] = std::shared_ptr<Storage>(
+                make_storage(plan.allocation_sizes[a], arena_device));
+        }
+    }
+    ArenaGuard guard{plan, std::move(arena)};
+
+    // Bind slots to arena backing via Tensor views
     for (size_t i = 0; i < plan.buffer_slots.size(); ++i) {
         if (plan.buffer_slots[i].is_input)
             continue;
@@ -36,6 +74,25 @@ Tensor GraphExecutor::execute(const CompiledGraph &plan,
             continue; // already bound
 
         const auto &slot = plan.buffer_slots[i];
+
+        // Output slot always gets fresh allocation
+        if (static_cast<int>(i) == plan.output_slot) {
+            buffers[i] = Tensor(slot.shape, slot.dtype, slot.device);
+            continue;
+        }
+
+        // Try arena-backed view for intermediates
+        if (guard.arena && i < plan.slot_to_allocation.size()) {
+            int alloc_id = plan.slot_to_allocation[i];
+            if (alloc_id >= 0 &&
+                alloc_id < static_cast<int>(guard.arena->backing.size())) {
+                buffers[i] = Tensor(guard.arena->backing[alloc_id], slot.shape,
+                                    slot.strides, slot.dtype);
+                continue;
+            }
+        }
+
+        // Fallback: fresh allocation
         buffers[i] = Tensor(slot.shape, slot.dtype, slot.device);
     }
 
