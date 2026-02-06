@@ -384,9 +384,9 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
         return;
     }
 
-    // Check inputs are contiguous
+    // Check inputs are contiguous and same size as output (no broadcast)
     for (const auto &t : inputs) {
-        if (!t.is_contiguous()) {
+        if (!t.is_contiguous() || t.size() != step.total_elements) {
             execute_fused_generic(step, plan, buffers);
             return;
         }
@@ -472,11 +472,12 @@ static bool try_tiled_fused_loop(const ExecutionStep &step,
 
     // All fn-ptrs resolved — proceed with tiled loop
 
-    // Check inputs are contiguous
+    // Check inputs are contiguous and match output size (no broadcast)
     for (const auto &per_op : step.input_slot_indices) {
         for (int s : per_op) {
             if (s >= 0 && s < static_cast<int>(buffers.size())) {
-                if (!buffers[s].is_contiguous())
+                if (!buffers[s].is_contiguous() ||
+                    buffers[s].size() != step.total_elements)
                     return false;
             }
         }

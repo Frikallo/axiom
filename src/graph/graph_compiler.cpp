@@ -29,6 +29,15 @@ GraphCompiler::topological_sort(const GraphNode *root) {
             continue;
         }
 
+        // Constant/materialized nodes are leaf boundaries — include
+        // them but don't recurse into their inputs.
+        if (node != root && (node->is_constant || node->is_materialized_)) {
+            visited.insert(node);
+            result.push_back(node);
+            stack.pop_back();
+            continue;
+        }
+
         if (idx < node->inputs.size()) {
             const GraphNode *child = node->inputs[idx].get();
             idx++;
@@ -61,6 +70,9 @@ std::vector<const GraphNode *> GraphCompiler::dead_code_elimination(
     while (!worklist.empty()) {
         const GraphNode *node = worklist.back();
         worklist.pop_back();
+        // Don't recurse past constant/materialized boundaries
+        if (node->is_constant || node->is_materialized_)
+            continue;
         for (const auto &inp : node->inputs) {
             if (reachable.insert(inp.get()).second) {
                 worklist.push_back(inp.get());

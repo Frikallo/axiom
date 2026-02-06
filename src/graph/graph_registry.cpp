@@ -603,7 +603,9 @@ Tensor GraphRegistry::create_lazy_matmul(const Tensor &a, const Tensor &b,
 // matching the order expected by the compiled plan's input_slots.
 static std::vector<Tensor>
 collect_constant_inputs(const GraphNode *root, const CompiledGraph & /*plan*/) {
-    // Walk the graph in topological order and collect constants
+    // Walk the graph in topological order and collect constants.
+    // Stop at constant/materialized boundaries (don't recurse into
+    // their inputs) to match the compiler's topological sort.
     std::vector<const GraphNode *> sorted;
     std::unordered_set<const GraphNode *> visited;
     std::vector<std::pair<const GraphNode *, size_t>> stack;
@@ -612,6 +614,13 @@ collect_constant_inputs(const GraphNode *root, const CompiledGraph & /*plan*/) {
     while (!stack.empty()) {
         auto &[n, idx] = stack.back();
         if (visited.count(n)) {
+            stack.pop_back();
+            continue;
+        }
+        // Leaf boundary: include but don't recurse
+        if (n != root && (n->is_constant || n->is_materialized_)) {
+            visited.insert(n);
+            sorted.push_back(n);
             stack.pop_back();
             continue;
         }
@@ -647,37 +656,47 @@ collect_constant_inputs(const GraphNode *root, const CompiledGraph & /*plan*/) {
     return inputs;
 }
 
-// Mark all non-constant nodes in the subgraph as materialized
-static void mark_subgraph_materialized(GraphNode *root) {
-    std::unordered_set<GraphNode *> visited;
-    std::vector<GraphNode *> stack;
-    stack.push_back(root);
-
-    while (!stack.empty()) {
-        GraphNode *n = stack.back();
-        stack.pop_back();
-        if (!visited.insert(n).second)
-            continue;
-        for (auto &inp : n->inputs) {
-            if (!inp->is_constant && !inp->is_materialized_) {
-                // Mark intermediates as fused (they don't have their
-                // own result — the fused execution skipped them)
-                inp->is_fused = true;
-                inp->is_materialized_ = true;
-                stack.push_back(inp.get());
-            }
-        }
-    }
-}
-
 void GraphRegistry::materialize(GraphNode *node) {
     if (node->is_materialized_)
         return;
 
-    // Ensure all constant inputs are available
-    for (auto &inp : node->inputs) {
-        if (!inp->is_constant && !inp->is_materialized_) {
-            materialize(inp.get());
+    // Walk the subgraph and materialize shared nodes (ref_count > 1)
+    // first so their results are preserved for other consumers.
+    // Single-consumer intermediates are left unmaterialized so the
+    // compiler can see the full chain and fuse operations.
+    {
+        std::vector<GraphNode *> shared_topo;
+        std::unordered_set<GraphNode *> visited;
+        std::vector<std::pair<GraphNode *, size_t>> stk;
+        stk.push_back({node, 0});
+
+        while (!stk.empty()) {
+            auto &[n, idx] = stk.back();
+            if (visited.count(n)) {
+                stk.pop_back();
+                continue;
+            }
+            if (idx < n->inputs.size()) {
+                GraphNode *child = n->inputs[idx].get();
+                idx++;
+                if (!visited.count(child) && !child->is_constant &&
+                    !child->is_materialized_) {
+                    stk.push_back({child, 0});
+                }
+            } else {
+                visited.insert(n);
+                if (n != node && !n->is_constant && !n->is_materialized_ &&
+                    n->ref_count > 1) {
+                    shared_topo.push_back(n);
+                }
+                stk.pop_back();
+            }
+        }
+
+        for (auto *shared : shared_topo) {
+            if (!shared->is_materialized_) {
+                materialize(shared);
+            }
         }
     }
 
@@ -698,9 +717,6 @@ void GraphRegistry::materialize(GraphNode *node) {
     node->cached_shape_ = result.shape();
     node->cached_strides_ = result.strides();
     node->is_materialized_ = true;
-
-    // Mark intermediate nodes as materialized
-    mark_subgraph_materialized(node);
 
     // Clean up pending nodes that are now materialized
     pending_nodes_.erase(std::remove_if(pending_nodes_.begin(),

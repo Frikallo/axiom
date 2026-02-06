@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 
 #include "axiom/einops.hpp"
 #include "axiom/error.hpp"
@@ -257,21 +258,21 @@ Device Tensor::device() const {
 // ============================================================================
 
 void Tensor::materialize_if_needed() const {
-    if (!lazy_node_ || lazy_node_->is_materialized_) {
-        // Already materialized or not lazy
-        if (lazy_node_ && lazy_node_->is_materialized_) {
-            // Need to copy result from node to tensor
-            Tensor *mutable_this = const_cast<Tensor *>(this);
-            mutable_this->storage_ = lazy_node_->cached_result_;
-            mutable_this->shape_ = lazy_node_->cached_shape_;
-            mutable_this->strides_ = lazy_node_->cached_strides_;
-            mutable_this->dtype_ = lazy_node_->output_dtype;
-            mutable_this->offset_ = 0;
-            mutable_this->flags_.owndata = true;
-            mutable_this->flags_.writeable = true;
-            mutable_this->lazy_node_ = nullptr;
-            mutable_this->update_contiguity_flags();
-        }
+    if (!lazy_node_)
+        return;
+
+    if (lazy_node_->is_materialized_) {
+        // Copy cached result from node to tensor
+        Tensor *mutable_this = const_cast<Tensor *>(this);
+        mutable_this->storage_ = lazy_node_->cached_result_;
+        mutable_this->shape_ = lazy_node_->cached_shape_;
+        mutable_this->strides_ = lazy_node_->cached_strides_;
+        mutable_this->dtype_ = lazy_node_->output_dtype;
+        mutable_this->offset_ = 0;
+        mutable_this->flags_.owndata = true;
+        mutable_this->flags_.writeable = true;
+        mutable_this->lazy_node_ = nullptr;
+        mutable_this->update_contiguity_flags();
         return;
     }
 
