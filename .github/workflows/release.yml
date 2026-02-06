@@ -4,16 +4,25 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.3.0)'
+        required: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   BUILD_TYPE: Release
 
 jobs:
   # ============================================================================
-  # Build Distribution Packages for All Platforms
+  # Build and Test on Each Platform
   # ============================================================================
-  build-dist:
-    name: Build (${{ matrix.os }})
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -23,11 +32,6 @@ jobs:
           - os: macos-arm64
             runner: macos-14
             arch: arm64
-
-          # macOS x86_64 (Intel)
-          - os: macos-x64
-            runner: macos-13
-            arch: x86_64
 
           # Linux x86_64
           - os: linux-x64
@@ -50,14 +54,19 @@ jobs:
       id: version
       shell: bash
       run: |
-        VERSION=${GITHUB_REF#refs/tags/v}
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.tag }}"
+          VERSION="${VERSION#v}"
+        else
+          VERSION=${GITHUB_REF#refs/tags/v}
+        fi
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-    # macOS Setup
+    # ── macOS Setup ──────────────────────────────────────────────────────
     - name: Setup macOS
       if: startsWith(matrix.os, 'macos')
       run: |
-        brew install cmake ninja libomp
+        brew install ninja libomp
 
     - name: Setup Xcode
       if: startsWith(matrix.os, 'macos')
@@ -65,18 +74,19 @@ jobs:
       with:
         xcode-version: latest-stable
 
-    # Linux Setup
+    # ── Linux Setup ──────────────────────────────────────────────────────
     - name: Setup Linux
       if: matrix.os == 'linux-x64'
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build libopenblas-dev liblapacke-dev
+        sudo apt-get install -y ninja-build libopenblas-dev liblapacke-dev
 
-    # Windows Setup
+    # ── Windows Setup ────────────────────────────────────────────────────
     - name: Setup Windows
       if: matrix.os == 'windows-x64'
+      shell: pwsh
       run: |
-        choco install cmake ninja
+        choco install ninja -y
         # Install OpenBLAS
         $OPENBLAS_VERSION = "0.3.27"
         $OPENBLAS_URL = "https://github.com/OpenMathLib/OpenBLAS/releases/download/v${OPENBLAS_VERSION}/OpenBLAS-${OPENBLAS_VERSION}-x64.zip"
@@ -85,7 +95,24 @@ jobs:
         echo "OpenBLAS_DIR=C:\OpenBLAS" >> $env:GITHUB_ENV
         echo "C:\OpenBLAS\bin" >> $env:GITHUB_PATH
 
-    # Build Distribution
+    # ── Install Python + NumPy (for test fixtures) ───────────────────────
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install NumPy
+      run: pip install numpy
+
+    # ── Generate test fixtures ───────────────────────────────────────────
+    - name: Generate Test Fixtures
+      shell: bash
+      run: |
+        if [ -f tests/fixtures/generate_npy_fixtures.py ]; then
+          python tests/fixtures/generate_npy_fixtures.py
+        fi
+
+    # ── Configure ────────────────────────────────────────────────────────
     - name: Configure (Unix)
       if: runner.os != 'Windows'
       run: |
@@ -94,29 +121,41 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
           -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install \
           -DAXIOM_DIST_BUILD=ON \
-          -DAXIOM_BUILD_TESTS=OFF \
+          -DAXIOM_BUILD_TESTS=ON \
           -DAXIOM_BUILD_EXAMPLES=OFF \
           -DAXIOM_EMBED_METAL_LIBRARY=ON
 
     - name: Configure (Windows)
       if: runner.os == 'Windows'
+      shell: pwsh
       run: |
         cmake -B build `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
           -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install `
           -DAXIOM_DIST_BUILD=ON `
-          -DAXIOM_BUILD_TESTS=OFF `
+          -DAXIOM_BUILD_TESTS=ON `
           -DAXIOM_BUILD_EXAMPLES=OFF `
           -DAXIOM_BLAS_BACKEND=openblas `
           -DOpenBLAS_DIR=$env:OpenBLAS_DIR
 
+    # ── Build ────────────────────────────────────────────────────────────
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }}
 
+    # ── Test ─────────────────────────────────────────────────────────────
+    - name: Run Tests
+      shell: bash
+      env:
+        AXIOM_SKIP_GPU_TESTS: '1'
+      run: |
+        cd build
+        ctest --output-on-failure -C ${{ env.BUILD_TYPE }}
+
+    # ── Install ──────────────────────────────────────────────────────────
     - name: Install
       run: cmake --install build --config ${{ env.BUILD_TYPE }}
 
-    # Verify bundled dependencies
+    # ── Verify Bundle ────────────────────────────────────────────────────
     - name: Verify Bundle (macOS)
       if: startsWith(matrix.os, 'macos')
       run: |
@@ -145,7 +184,7 @@ jobs:
         echo "Checking library dependencies:"
         dumpbin /dependents install/bin/axiom.dll 2>$null || echo "dumpbin not available"
 
-    # Create Package
+    # ── Package ──────────────────────────────────────────────────────────
     - name: Create Package (Unix)
       if: runner.os != 'Windows'
       run: |
@@ -169,7 +208,7 @@ jobs:
   # ============================================================================
   release:
     name: Create Release
-    needs: build-dist
+    needs: build-and-test
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -182,8 +221,14 @@ jobs:
 
     - name: Get Version
       id: version
+      shell: bash
       run: |
-        VERSION=${GITHUB_REF#refs/tags/v}
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.tag }}"
+          VERSION="${VERSION#v}"
+        else
+          VERSION=${GITHUB_REF#refs/tags/v}
+        fi
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
     - name: Download All Artifacts
@@ -211,47 +256,50 @@ jobs:
     - name: Generate Release Notes
       run: |
         PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        VERSION=${{ steps.version.outputs.version }}
 
-        cat > release_notes.md << 'EOF'
+        cat > release_notes.md <<EOF
         ## Downloads
 
         | Platform | Package |
         |----------|---------|
-        | macOS (Apple Silicon) | `axiom-${{ steps.version.outputs.version }}-macos-arm64.tar.gz` |
-        | macOS (Intel) | `axiom-${{ steps.version.outputs.version }}-macos-x64.tar.gz` |
-        | Linux (x64) | `axiom-${{ steps.version.outputs.version }}-linux-x64.tar.gz` |
-        | Windows (x64) | `axiom-${{ steps.version.outputs.version }}-windows-x64.zip` |
-        | Source | `axiom-${{ steps.version.outputs.version }}.tar.gz` |
+        | macOS (Apple Silicon) | \`axiom-${VERSION}-macos-arm64.tar.gz\` |
+        | Linux (x64) | \`axiom-${VERSION}-linux-x64.tar.gz\` |
+        | Windows (x64) | \`axiom-${VERSION}-windows-x64.zip\` |
+        | Source | \`axiom-${VERSION}.tar.gz\` |
 
         ## Bundled Dependencies
 
         Distribution packages include all required dependencies:
-        - **macOS**: `libomp.dylib` for OpenMP parallelization (Accelerate is a system framework)
+        - **macOS**: \`libomp.dylib\` for OpenMP parallelization (Accelerate is a system framework)
         - **Linux**: OpenBLAS + libgomp
         - **Windows**: OpenBLAS + OpenMP runtime (vcomp140.dll)
 
         ## Installation
 
-        ```bash
+        \`\`\`bash
         # Extract to desired location
-        tar -xzf axiom-${{ steps.version.outputs.version }}-<platform>.tar.gz -C /usr/local
+        tar -xzf axiom-${VERSION}-<platform>.tar.gz -C /usr/local
 
         # Or for local installation
-        tar -xzf axiom-${{ steps.version.outputs.version }}-<platform>.tar.gz -C ~/.local
-        ```
-
+        tar -xzf axiom-${VERSION}-<platform>.tar.gz -C ~/.local
+        \`\`\`
         EOF
+
+        # Strip leading whitespace from heredoc (GitHub Actions indentation)
+        sed -i 's/^        //' release_notes.md
 
         if [ -n "$PREV_TAG" ]; then
           echo "" >> release_notes.md
           echo "## Changes since $PREV_TAG" >> release_notes.md
           echo "" >> release_notes.md
-          git log --pretty=format:"- %s" $PREV_TAG..HEAD >> release_notes.md
+          git log --pretty=format:"- %s" "$PREV_TAG..HEAD" >> release_notes.md
         fi
 
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
+        tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
         body_path: release_notes.md
         files: |
           release/*

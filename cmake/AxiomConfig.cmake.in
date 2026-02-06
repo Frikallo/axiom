@@ -2,10 +2,14 @@
 
 include(CMakeFindDependencyMacro)
 
-# Find required dependencies
+# Find platform-specific dependencies
+# Metal/Foundation are only needed when the library was built with Metal support
 if(APPLE)
-    find_dependency(Metal REQUIRED)
-    find_dependency(Foundation REQUIRED)
+    find_library(_axiom_metal_fw Metal QUIET)
+    find_library(_axiom_foundation_fw Foundation QUIET)
+    if(NOT _axiom_metal_fw OR NOT _axiom_foundation_fw)
+        message(STATUS "Axiom: Metal/Foundation frameworks not found — GPU support unavailable")
+    endif()
 endif()
 
 # Include the targets file

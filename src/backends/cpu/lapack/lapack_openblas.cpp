@@ -147,36 +147,67 @@ int OpenBlasLapackBackend::zgesdd(char jobz, int m, int n, complex128_t *a,
 // ============================================================================
 
 int OpenBlasLapackBackend::sgeqrf(int m, int n, float *a, int lda, float *tau,
-                                  float *, int) {
+                                  float *work, int lwork) {
+    // LAPACKE handles workspace automatically; short-circuit workspace queries
+    if (lwork == -1 && work != nullptr) {
+        *work = 1.0f;
+        return 0;
+    }
     return LAPACKE_sgeqrf(LAPACK_COL_MAJOR, m, n, a, lda, tau);
 }
 
 int OpenBlasLapackBackend::sorgqr(int m, int n, int k, float *a, int lda,
-                                  const float *tau, float *, int) {
+                                  const float *tau, float *work, int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        *work = 1.0f;
+        return 0;
+    }
     return LAPACKE_sorgqr(LAPACK_COL_MAJOR, m, n, k, a, lda,
                           const_cast<float *>(tau));
 }
 
 int OpenBlasLapackBackend::dgeqrf(int m, int n, double *a, int lda, double *tau,
-                                  double *, int) {
+                                  double *work, int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        *work = 1.0;
+        return 0;
+    }
     return LAPACKE_dgeqrf(LAPACK_COL_MAJOR, m, n, a, lda, tau);
 }
 
 int OpenBlasLapackBackend::dorgqr(int m, int n, int k, double *a, int lda,
-                                  const double *tau, double *, int) {
+                                  const double *tau, double *work, int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        *work = 1.0;
+        return 0;
+    }
     return LAPACKE_dorgqr(LAPACK_COL_MAJOR, m, n, k, a, lda,
                           const_cast<double *>(tau));
 }
 
 int OpenBlasLapackBackend::cgeqrf(int m, int n, complex64_t *a, int lda,
-                                  complex64_t *tau, complex64_t *, int) {
+                                  complex64_t *tau, complex64_t *work,
+                                  int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        auto *fw = reinterpret_cast<float *>(work);
+        fw[0] = 1.0f;
+        fw[1] = 0.0f;
+        return 0;
+    }
     return LAPACKE_cgeqrf(LAPACK_COL_MAJOR, m, n,
                           reinterpret_cast<lapack_complex_float *>(a), lda,
                           reinterpret_cast<lapack_complex_float *>(tau));
 }
 
 int OpenBlasLapackBackend::cungqr(int m, int n, int k, complex64_t *a, int lda,
-                                  const complex64_t *tau, complex64_t *, int) {
+                                  const complex64_t *tau, complex64_t *work,
+                                  int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        auto *fw = reinterpret_cast<float *>(work);
+        fw[0] = 1.0f;
+        fw[1] = 0.0f;
+        return 0;
+    }
     return LAPACKE_cungqr(LAPACK_COL_MAJOR, m, n, k,
                           reinterpret_cast<lapack_complex_float *>(a), lda,
                           reinterpret_cast<lapack_complex_float *>(
@@ -184,15 +215,28 @@ int OpenBlasLapackBackend::cungqr(int m, int n, int k, complex64_t *a, int lda,
 }
 
 int OpenBlasLapackBackend::zgeqrf(int m, int n, complex128_t *a, int lda,
-                                  complex128_t *tau, complex128_t *, int) {
+                                  complex128_t *tau, complex128_t *work,
+                                  int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        auto *dw = reinterpret_cast<double *>(work);
+        dw[0] = 1.0;
+        dw[1] = 0.0;
+        return 0;
+    }
     return LAPACKE_zgeqrf(LAPACK_COL_MAJOR, m, n,
                           reinterpret_cast<lapack_complex_double *>(a), lda,
                           reinterpret_cast<lapack_complex_double *>(tau));
 }
 
 int OpenBlasLapackBackend::zungqr(int m, int n, int k, complex128_t *a, int lda,
-                                  const complex128_t *tau, complex128_t *,
-                                  int) {
+                                  const complex128_t *tau, complex128_t *work,
+                                  int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        auto *dw = reinterpret_cast<double *>(work);
+        dw[0] = 1.0;
+        dw[1] = 0.0;
+        return 0;
+    }
     return LAPACKE_zungqr(LAPACK_COL_MAJOR, m, n, k,
                           reinterpret_cast<lapack_complex_double *>(a), lda,
                           reinterpret_cast<lapack_complex_double *>(
@@ -227,15 +271,24 @@ int OpenBlasLapackBackend::zpotrf(char uplo, int n, complex128_t *a, int lda) {
 
 int OpenBlasLapackBackend::sgeev(char jobvl, char jobvr, int n, float *a,
                                  int lda, float *wr, float *wi, float *vl,
-                                 int ldvl, float *vr, int ldvr, float *, int) {
+                                 int ldvl, float *vr, int ldvr, float *work,
+                                 int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        *work = 1.0f;
+        return 0;
+    }
     return LAPACKE_sgeev(LAPACK_COL_MAJOR, jobvl, jobvr, n, a, lda, wr, wi, vl,
                          ldvl, vr, ldvr);
 }
 
 int OpenBlasLapackBackend::dgeev(char jobvl, char jobvr, int n, double *a,
                                  int lda, double *wr, double *wi, double *vl,
-                                 int ldvl, double *vr, int ldvr, double *,
-                                 int) {
+                                 int ldvl, double *vr, int ldvr, double *work,
+                                 int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        *work = 1.0;
+        return 0;
+    }
     return LAPACKE_dgeev(LAPACK_COL_MAJOR, jobvl, jobvr, n, a, lda, wr, wi, vl,
                          ldvl, vr, ldvr);
 }
@@ -243,7 +296,13 @@ int OpenBlasLapackBackend::dgeev(char jobvl, char jobvr, int n, double *a,
 int OpenBlasLapackBackend::cgeev(char jobvl, char jobvr, int n, complex64_t *a,
                                  int lda, complex64_t *w, complex64_t *vl,
                                  int ldvl, complex64_t *vr, int ldvr,
-                                 complex64_t *, int, float *) {
+                                 complex64_t *work, int lwork, float *) {
+    if (lwork == -1 && work != nullptr) {
+        auto *fw = reinterpret_cast<float *>(work);
+        fw[0] = 1.0f;
+        fw[1] = 0.0f;
+        return 0;
+    }
     return LAPACKE_cgeev(LAPACK_COL_MAJOR, jobvl, jobvr, n,
                          reinterpret_cast<lapack_complex_float *>(a), lda,
                          reinterpret_cast<lapack_complex_float *>(w),
@@ -254,7 +313,13 @@ int OpenBlasLapackBackend::cgeev(char jobvl, char jobvr, int n, complex64_t *a,
 int OpenBlasLapackBackend::zgeev(char jobvl, char jobvr, int n, complex128_t *a,
                                  int lda, complex128_t *w, complex128_t *vl,
                                  int ldvl, complex128_t *vr, int ldvr,
-                                 complex128_t *, int, double *) {
+                                 complex128_t *work, int lwork, double *) {
+    if (lwork == -1 && work != nullptr) {
+        auto *dw = reinterpret_cast<double *>(work);
+        dw[0] = 1.0;
+        dw[1] = 0.0;
+        return 0;
+    }
     return LAPACKE_zgeev(LAPACK_COL_MAJOR, jobvl, jobvr, n,
                          reinterpret_cast<lapack_complex_double *>(a), lda,
                          reinterpret_cast<lapack_complex_double *>(w),
@@ -267,25 +332,45 @@ int OpenBlasLapackBackend::zgeev(char jobvl, char jobvr, int n, complex128_t *a,
 // ============================================================================
 
 int OpenBlasLapackBackend::ssyev(char jobz, char uplo, int n, float *a, int lda,
-                                 float *w, float *, int) {
+                                 float *w, float *work, int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        *work = 1.0f;
+        return 0;
+    }
     return LAPACKE_ssyev(LAPACK_COL_MAJOR, jobz, uplo, n, a, lda, w);
 }
 
 int OpenBlasLapackBackend::dsyev(char jobz, char uplo, int n, double *a,
-                                 int lda, double *w, double *, int) {
+                                 int lda, double *w, double *work, int lwork) {
+    if (lwork == -1 && work != nullptr) {
+        *work = 1.0;
+        return 0;
+    }
     return LAPACKE_dsyev(LAPACK_COL_MAJOR, jobz, uplo, n, a, lda, w);
 }
 
 int OpenBlasLapackBackend::cheev(char jobz, char uplo, int n, complex64_t *a,
-                                 int lda, float *w, complex64_t *, int,
-                                 float *) {
+                                 int lda, float *w, complex64_t *work,
+                                 int lwork, float *) {
+    if (lwork == -1 && work != nullptr) {
+        auto *fw = reinterpret_cast<float *>(work);
+        fw[0] = 1.0f;
+        fw[1] = 0.0f;
+        return 0;
+    }
     return LAPACKE_cheev(LAPACK_COL_MAJOR, jobz, uplo, n,
                          reinterpret_cast<lapack_complex_float *>(a), lda, w);
 }
 
 int OpenBlasLapackBackend::zheev(char jobz, char uplo, int n, complex128_t *a,
-                                 int lda, double *w, complex128_t *, int,
-                                 double *) {
+                                 int lda, double *w, complex128_t *work,
+                                 int lwork, double *) {
+    if (lwork == -1 && work != nullptr) {
+        auto *dw = reinterpret_cast<double *>(work);
+        dw[0] = 1.0;
+        dw[1] = 0.0;
+        return 0;
+    }
     return LAPACKE_zheev(LAPACK_COL_MAJOR, jobz, uplo, n,
                          reinterpret_cast<lapack_complex_double *>(a), lda, w);
 }
