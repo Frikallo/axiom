@@ -355,12 +355,165 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
 }
 
 // ============================================================================
-// FusedGeneric: sequential op-by-op execution (fallback)
+// FusedGeneric: tiled fused loop with devirtualized fn-ptr dispatch
 // ============================================================================
+
+// Tile size: 16K elements = 64KB for float32, fits in Apple M-series L1
+static constexpr size_t TILE_ELEMENTS = 16384;
+
+// Stack-allocated tile buffers (2 for double-buffering)
+struct alignas(64) TileBuffer {
+    char data[TILE_ELEMENTS * sizeof(double)]; // worst case: float64
+};
+
+// Attempt the tiled fused loop. Returns false if any op in the chain
+// lacks a fn-ptr (unsupported dtype/op), in which case the caller
+// falls back to OperationRegistry dispatch.
+static bool try_tiled_fused_loop(const ExecutionStep &step,
+                                 std::vector<Tensor> &buffers) {
+    if (step.device != Device::CPU)
+        return false;
+
+    DType dtype = step.output_dtype;
+    size_t elem_size = dtype_size(dtype);
+    if (elem_size == 0)
+        return false;
+
+    // Resolve all function pointers up front
+    struct OpDesc {
+        bool is_unary;
+        UnaryFn unary_fn;
+        BinaryFn binary_fn;
+        int input_slot_a; // -1 = previous result
+        int input_slot_b; // -1 = previous result, -2 = N/A
+    };
+
+    std::vector<OpDesc> descs;
+    descs.reserve(step.op_chain.size());
+
+    for (size_t i = 0; i < step.op_chain.size(); ++i) {
+        ops::OpType op = step.op_chain[i];
+        const auto &indices = step.input_slot_indices[i];
+        OpDesc d{};
+
+        if (is_unary_op(op)) {
+            d.is_unary = true;
+            d.unary_fn = get_unary_fn(op, dtype);
+            if (!d.unary_fn)
+                return false;
+            d.input_slot_a = indices.empty() ? -1 : indices[0];
+            d.input_slot_b = -2;
+        } else if (is_binary_op(op)) {
+            d.is_unary = false;
+            d.binary_fn = get_binary_fn(op, dtype);
+            if (!d.binary_fn)
+                return false;
+            d.input_slot_a = indices.empty() ? -1 : indices[0];
+            d.input_slot_b = (indices.size() > 1) ? indices[1] : -1;
+        } else {
+            return false; // unsupported op kind in chain
+        }
+
+        descs.push_back(d);
+    }
+
+    // All fn-ptrs resolved — proceed with tiled loop
+
+    // Check inputs are contiguous
+    for (const auto &per_op : step.input_slot_indices) {
+        for (int s : per_op) {
+            if (s >= 0 && s < static_cast<int>(buffers.size())) {
+                if (!buffers[s].is_contiguous())
+                    return false;
+            }
+        }
+    }
+
+    size_t total = step.total_elements;
+    size_t tile_size = std::min(TILE_ELEMENTS, total);
+
+    // Output buffer
+    Tensor &output = buffers[step.output_slot];
+    if (!output.storage()) {
+        output = Tensor(step.output_shape, dtype, Device::CPU);
+    }
+    char *out_ptr = reinterpret_cast<char *>(output.data());
+
+    // Stack tile buffers for intermediate results (double-buffer)
+    TileBuffer tile_a_buf, tile_b_buf;
+    void *tile_a = tile_a_buf.data;
+    void *tile_b = tile_b_buf.data;
+
+    auto resolve_ptr = [&](int slot, size_t offset) -> const void * {
+        if (slot >= 0 && slot < static_cast<int>(buffers.size())) {
+            return reinterpret_cast<const char *>(buffers[slot].data()) +
+                   offset * elem_size;
+        }
+        return nullptr;
+    };
+
+    for (size_t base = 0; base < total; base += tile_size) {
+        size_t count = std::min(tile_size, total - base);
+
+        // Current intermediate result pointer alternates between tile_a
+        // and tile_b. After the last op, we copy directly to output.
+        void *prev = nullptr;
+        bool prev_is_a = true; // tracks which tile holds `prev`
+
+        for (size_t oi = 0; oi < descs.size(); ++oi) {
+            const auto &d = descs[oi];
+            bool is_last = (oi == descs.size() - 1);
+
+            // Where to write this op's result
+            void *dst;
+            if (is_last) {
+                dst = out_ptr + base * elem_size;
+            } else {
+                dst = prev_is_a ? tile_b : tile_a;
+            }
+
+            if (d.is_unary) {
+                const void *src;
+                if (d.input_slot_a == -1) {
+                    src = prev;
+                } else {
+                    src = resolve_ptr(d.input_slot_a, base);
+                }
+                d.unary_fn(src, dst, count);
+            } else {
+                const void *src_a;
+                const void *src_b;
+                if (d.input_slot_a == -1) {
+                    src_a = prev;
+                } else {
+                    src_a = resolve_ptr(d.input_slot_a, base);
+                }
+                if (d.input_slot_b == -1) {
+                    src_b = prev;
+                } else {
+                    src_b = resolve_ptr(d.input_slot_b, base);
+                }
+                d.binary_fn(src_a, src_b, dst, count);
+            }
+
+            prev = dst;
+            if (!is_last) {
+                prev_is_a = !prev_is_a;
+            }
+        }
+    }
+
+    return true;
+}
 
 void GraphExecutor::execute_fused_generic(const ExecutionStep &step,
                                           const CompiledGraph & /*plan*/,
                                           std::vector<Tensor> &buffers) {
+    // Try the fast tiled path first
+    if (try_tiled_fused_loop(step, buffers))
+        return;
+
+    // Fallback: sequential op-by-op via OperationRegistry
     Device device = step.device;
     Tensor current;
 
@@ -382,7 +535,7 @@ void GraphExecutor::execute_fused_generic(const ExecutionStep &step,
 
         auto resolve = [&](int idx) -> Tensor {
             if (idx == -1)
-                return current; // previous result
+                return current;
             if (idx >= 0 && idx < static_cast<int>(buffers.size())) {
                 Tensor t = buffers[idx];
                 if (t.device() != device)
