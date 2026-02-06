@@ -1,6 +1,7 @@
 #include "axiom/graph/graph_signature.hpp"
 #include "axiom/graph/graph_node.hpp"
 
+#include <cstring>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -28,7 +29,7 @@ static inline uint64_t fnv_hash_u64(uint64_t h, uint64_t val) {
 
 static inline uint64_t fnv_hash_i32(uint64_t h, int32_t val) {
     uint32_t u;
-    __builtin_memcpy(&u, &val, 4);
+    std::memcpy(&u, &val, 4);
     for (int i = 0; i < 4; ++i) {
         h = fnv_hash_byte(h, static_cast<uint8_t>(u & 0xFF));
         u >>= 8;
@@ -38,7 +39,7 @@ static inline uint64_t fnv_hash_i32(uint64_t h, int32_t val) {
 
 static inline uint64_t fnv_hash_float(uint64_t h, float val) {
     uint32_t u;
-    __builtin_memcpy(&u, &val, 4);
+    std::memcpy(&u, &val, 4);
     for (int i = 0; i < 4; ++i) {
         h = fnv_hash_byte(h, static_cast<uint8_t>(u & 0xFF));
         u >>= 8;
