@@ -230,6 +230,46 @@ GraphCompiler::fusion_analysis(
 
     // Reverse so groups are in topological order
     std::reverse(groups.begin(), groups.end());
+
+    // Post-process: merge matmul + unary activation into MatMulActivation
+    std::vector<FusionGroup> merged;
+    merged.reserve(groups.size());
+    for (size_t i = 0; i < groups.size(); ++i) {
+        if (i + 1 < groups.size() &&
+            groups[i].nodes.size() == 1 &&
+            !groups[i].is_fused &&
+            (groups[i].nodes[0]->op_type == ops::OpType::MatMul ||
+             groups[i].nodes[0]->op_type == ops::OpType::BatchMatMul) &&
+            groups[i + 1].nodes.size() == 1 &&
+            is_unary_op(groups[i + 1].nodes[0]->op_type) &&
+            is_elementwise_op(groups[i + 1].nodes[0]->op_type)) {
+
+            const auto *mm_node = groups[i].nodes[0];
+            const auto *act_node = groups[i + 1].nodes[0];
+
+            // Check that the activation consumes the matmul output
+            bool uses_mm = false;
+            for (const auto &inp : act_node->inputs) {
+                if (inp.get() == mm_node) {
+                    uses_mm = true;
+                    break;
+                }
+            }
+
+            if (uses_mm && mm_node->ref_count <= 1) {
+                FusionGroup mg;
+                mg.nodes = {mm_node, act_node};
+                mg.pattern = FusedPattern::None;
+                mg.is_fused = true; // marks as multi-node
+                merged.push_back(std::move(mg));
+                ++i; // skip activation group
+                continue;
+            }
+        }
+        merged.push_back(std::move(groups[i]));
+    }
+    groups = std::move(merged);
+
     return groups;
 }
 
@@ -486,7 +526,18 @@ GraphCompiler::compile(const GraphSignature &sig, const GraphNode *root) {
         step.device = last->target_device;
         step.total_elements = ShapeUtils::size(last->output_shape);
 
-        if (group.is_fused && group.pattern != FusedPattern::None) {
+        if (group.is_fused && group.nodes.size() == 2 &&
+            (group.nodes[0]->op_type == ops::OpType::MatMul ||
+             group.nodes[0]->op_type == ops::OpType::BatchMatMul) &&
+            is_unary_op(group.nodes[1]->op_type)) {
+            // MatMul + activation fusion
+            step.kind = ExecutionStep::Kind::MatMulActivation;
+            step.op_type = group.nodes[0]->op_type;
+            step.params = group.nodes[0]->params;
+            for (const auto *n : group.nodes) {
+                step.op_chain.push_back(n->op_type);
+            }
+        } else if (group.is_fused && group.pattern != FusedPattern::None) {
             // Known SIMD pattern
             step.kind = ExecutionStep::Kind::FusedKnown;
             step.pattern = group.pattern;
@@ -501,15 +552,9 @@ GraphCompiler::compile(const GraphSignature &sig, const GraphNode *root) {
                 step.op_chain.push_back(n->op_type);
             }
         } else if (group.nodes.size() == 1) {
-            const auto *n = group.nodes[0];
-            if (n->op_type == ops::OpType::MatMul ||
-                n->op_type == ops::OpType::BatchMatMul) {
-                step.kind = ExecutionStep::Kind::SingleOp;
-            } else {
-                step.kind = ExecutionStep::Kind::SingleOp;
-            }
-            step.op_type = n->op_type;
-            step.params = n->params;
+            step.kind = ExecutionStep::Kind::SingleOp;
+            step.op_type = group.nodes[0]->op_type;
+            step.params = group.nodes[0]->params;
         }
 
         // Build input slot indices for each op in the chain

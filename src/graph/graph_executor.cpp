@@ -71,8 +71,7 @@ void GraphExecutor::execute_step(const ExecutionStep &step,
         execute_fused_generic(step, plan, buffers);
         break;
     case ExecutionStep::Kind::MatMulActivation:
-        // MatMul + activation: execute matmul first, then activation
-        execute_single_op(step, buffers);
+        execute_matmul_activation(step, buffers);
         break;
     }
 }
@@ -559,6 +558,75 @@ void GraphExecutor::execute_fused_generic(const ExecutionStep &step,
     if (step.output_slot >= 0 &&
         step.output_slot < static_cast<int>(buffers.size())) {
         buffers[step.output_slot] = current;
+    }
+}
+
+// ============================================================================
+// MatMulActivation: matmul + in-place activation via devirtualized fn-ptr
+// ============================================================================
+
+void GraphExecutor::execute_matmul_activation(const ExecutionStep &step,
+                                              std::vector<Tensor> &buffers) {
+    if (step.op_chain.size() < 2) {
+        // Fallback: just execute as single matmul
+        execute_single_op(step, buffers);
+        return;
+    }
+
+    // Execute matmul
+    Device device = step.device;
+    ops::OpType mm_op = step.op_chain[0];
+
+    const ops::Operation *operation =
+        ops::OperationRegistry::get_operation(mm_op, device);
+    if (!operation) {
+        device = Device::CPU;
+        operation = ops::OperationRegistry::get_operation(mm_op, device);
+    }
+    if (!operation) {
+        throw DeviceError("MatMul operation not available");
+    }
+
+    const auto &mm_indices = step.input_slot_indices[0];
+    if (mm_indices.size() < 2) {
+        throw RuntimeError("MatMulActivation: matmul needs 2 inputs");
+    }
+
+    auto get_buf = [&](int idx) -> Tensor {
+        if (idx < 0 || idx >= static_cast<int>(buffers.size()))
+            throw RuntimeError("Invalid buffer slot in MatMulActivation");
+        Tensor t = buffers[idx];
+        if (t.device() != device)
+            t = t.to(device);
+        return t;
+    };
+
+    Tensor result = operation->execute_matmul(
+        get_buf(mm_indices[0]), get_buf(mm_indices[1]),
+        step.params.transpose_a, step.params.transpose_b);
+
+    // Apply activation in-place using devirtualized fn-ptr
+    ops::OpType act_op = step.op_chain[1];
+    DType dtype = result.dtype();
+    UnaryFn fn = get_unary_fn(act_op, dtype);
+
+    if (fn && result.is_contiguous()) {
+        fn(result.data(), result.data(), result.size());
+    } else {
+        // Fallback via OperationRegistry
+        const ops::Operation *act =
+            ops::OperationRegistry::get_operation(act_op, device);
+        if (!act) {
+            act = ops::OperationRegistry::get_operation(act_op, Device::CPU);
+        }
+        if (act) {
+            result = act->execute_unary(result);
+        }
+    }
+
+    if (step.output_slot >= 0 &&
+        step.output_slot < static_cast<int>(buffers.size())) {
+        buffers[step.output_slot] = result;
     }
 }
 
