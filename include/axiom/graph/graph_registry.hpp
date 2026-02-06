@@ -64,23 +64,9 @@ class GraphRegistry {
     static Tensor create_lazy_matmul(const Tensor &a, const Tensor &b,
                                      bool transpose_a, bool transpose_b);
 
-    // Materialize a graph node and all its dependencies
+    // Materialize a graph node and all its dependencies.
+    // Uses signature → cache → compile → execute pipeline.
     static void materialize(GraphNode *node);
-
-    // Optimize a subgraph before execution (fusion passes)
-    static void optimize_subgraph(GraphNode *root);
-
-    // Identify fusable element-wise chains in the graph
-    static std::vector<FusedOpChain> find_fusable_chains(GraphNode *root);
-
-    // Check if two adjacent nodes can be fused
-    static bool can_fuse(GraphNode *producer, GraphNode *consumer);
-
-    // Execute a fused operation chain
-    static void execute_fused_chain(const FusedOpChain &chain,
-                                    std::shared_ptr<Storage> &output_storage,
-                                    Shape &output_shape,
-                                    Strides &output_strides);
 
     // Get statistics about pending lazy tensors (for debugging)
     static size_t pending_node_count();
@@ -89,12 +75,6 @@ class GraphRegistry {
     static void materialize_all();
 
   private:
-    // Internal helper to execute a single node
-    static void execute_node(GraphNode *node);
-
-    // Topological sort of graph nodes for execution
-    static std::vector<GraphNode *> topological_sort(GraphNode *root);
-
     // Thread-local storage for pending nodes
     static thread_local std::vector<std::weak_ptr<GraphNode>> pending_nodes_;
 };
