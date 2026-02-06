@@ -634,14 +634,12 @@ collect_constant_inputs(const GraphNode *root, const CompiledGraph & /*plan*/) {
         if (n->is_constant || n->is_materialized_) {
             if (seen.insert(n).second) {
                 if (n->is_constant) {
-                    inputs.emplace_back(
-                        n->constant_storage, n->output_shape,
-                        n->constant_strides, n->output_dtype,
-                        n->constant_offset);
+                    inputs.emplace_back(n->constant_storage, n->output_shape,
+                                        n->constant_strides, n->output_dtype,
+                                        n->constant_offset);
                 } else {
-                    inputs.emplace_back(
-                        n->cached_result_, n->cached_shape_,
-                        n->cached_strides_, n->output_dtype);
+                    inputs.emplace_back(n->cached_result_, n->cached_shape_,
+                                        n->cached_strides_, n->output_dtype);
                 }
             }
         }

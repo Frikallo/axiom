@@ -49,10 +49,8 @@ GraphCompiler::topological_sort(const GraphNode *root) {
 // Dead Code Elimination
 // ============================================================================
 
-std::vector<const GraphNode *>
-GraphCompiler::dead_code_elimination(
-    const std::vector<const GraphNode *> &sorted,
-    const GraphNode *root) {
+std::vector<const GraphNode *> GraphCompiler::dead_code_elimination(
+    const std::vector<const GraphNode *> &sorted, const GraphNode *root) {
 
     // Walk backward from root to mark reachable nodes
     std::unordered_set<const GraphNode *> reachable;
@@ -105,8 +103,8 @@ static bool can_fuse_pair(const GraphNode *producer,
         if (!ShapeUtils::broadcastable(producer->output_shape,
                                        consumer->output_shape))
             return false;
-        Shape bcast = ShapeUtils::broadcast_shape(
-            producer->output_shape, consumer->output_shape);
+        Shape bcast = ShapeUtils::broadcast_shape(producer->output_shape,
+                                                  consumer->output_shape);
         if (bcast != consumer->output_shape)
             return false;
     }
@@ -119,8 +117,7 @@ static bool can_fuse_pair(const GraphNode *producer,
 }
 
 std::vector<GraphCompiler::FusionGroup>
-GraphCompiler::fusion_analysis(
-    const std::vector<const GraphNode *> &sorted) {
+GraphCompiler::fusion_analysis(const std::vector<const GraphNode *> &sorted) {
 
     std::unordered_set<const GraphNode *> assigned;
     std::vector<FusionGroup> groups;
@@ -161,8 +158,7 @@ GraphCompiler::fusion_analysis(
             const GraphNode *next = nullptr;
             if (!current->inputs.empty()) {
                 const auto *first_inp = current->inputs[0].get();
-                if (!first_inp->is_constant &&
-                    !first_inp->is_materialized_ &&
+                if (!first_inp->is_constant && !first_inp->is_materialized_ &&
                     can_fuse_pair(first_inp, current)) {
                     next = first_inp;
                 }
@@ -184,8 +180,8 @@ GraphCompiler::fusion_analysis(
                 foc.ops.push_back(n->op_type);
             }
             // Build input_nodes list for pattern detection
-            std::unordered_set<const GraphNode *> chain_set(
-                group.nodes.begin(), group.nodes.end());
+            std::unordered_set<const GraphNode *> chain_set(group.nodes.begin(),
+                                                            group.nodes.end());
             for (const auto *n : group.nodes) {
                 for (const auto &inp : n->inputs) {
                     if (!chain_set.count(inp.get())) {
@@ -235,8 +231,7 @@ GraphCompiler::fusion_analysis(
     std::vector<FusionGroup> merged;
     merged.reserve(groups.size());
     for (size_t i = 0; i < groups.size(); ++i) {
-        if (i + 1 < groups.size() &&
-            groups[i].nodes.size() == 1 &&
+        if (i + 1 < groups.size() && groups[i].nodes.size() == 1 &&
             !groups[i].is_fused &&
             (groups[i].nodes[0]->op_type == ops::OpType::MatMul ||
              groups[i].nodes[0]->op_type == ops::OpType::BatchMatMul) &&
@@ -330,8 +325,7 @@ void GraphCompiler::memory_plan(CompiledGraph &plan) {
         for (size_t i = 0; i < slots.size(); ++i) {
             if (slots[i].is_input)
                 continue;
-            if (plan.slot_to_allocation[i] >= 0 &&
-                slots[i].last_use >= 0 &&
+            if (plan.slot_to_allocation[i] >= 0 && slots[i].last_use >= 0 &&
                 slots[i].last_use < step_idx) {
                 // This slot is dead — put its allocation on the free list
                 free_list.push_back(
@@ -413,14 +407,12 @@ void GraphCompiler::compute_loop_params(CompiledGraph &plan) {
                         slot.shape,
                         static_cast<int64_t>(dtype_size(slot.dtype)));
                     if (slot.strides == expected) {
-                        step.input_access.push_back(
-                            AccessPattern::Contiguous);
+                        step.input_access.push_back(AccessPattern::Contiguous);
                     } else {
                         step.input_access.push_back(AccessPattern::Strided);
                     }
                 } else if (ShapeUtils::size(slot.shape) == 1) {
-                    step.input_access.push_back(
-                        AccessPattern::ScalarBroadcast);
+                    step.input_access.push_back(AccessPattern::ScalarBroadcast);
                 } else {
                     step.input_access.push_back(AccessPattern::Broadcast);
                 }
@@ -433,8 +425,8 @@ void GraphCompiler::compute_loop_params(CompiledGraph &plan) {
 // Main Compile Pipeline
 // ============================================================================
 
-std::shared_ptr<CompiledGraph>
-GraphCompiler::compile(const GraphSignature &sig, const GraphNode *root) {
+std::shared_ptr<CompiledGraph> GraphCompiler::compile(const GraphSignature &sig,
+                                                      const GraphNode *root) {
     auto plan = std::make_shared<CompiledGraph>();
     plan->signature = sig;
 
@@ -464,9 +456,8 @@ GraphCompiler::compile(const GraphSignature &sig, const GraphNode *root) {
                 bs.byte_size = node->byte_size();
                 bs.dtype = node->output_dtype;
                 bs.shape = node->output_shape;
-                bs.strides = node->is_constant
-                                 ? node->constant_strides
-                                 : node->cached_strides_;
+                bs.strides = node->is_constant ? node->constant_strides
+                                               : node->cached_strides_;
                 bs.device = node->target_device;
                 bs.is_input = true;
                 bs.input_index = input_idx++;
@@ -558,8 +549,8 @@ GraphCompiler::compile(const GraphSignature &sig, const GraphNode *root) {
         }
 
         // Build input slot indices for each op in the chain
-        std::unordered_set<const GraphNode *> chain_set(
-            group.nodes.begin(), group.nodes.end());
+        std::unordered_set<const GraphNode *> chain_set(group.nodes.begin(),
+                                                        group.nodes.end());
 
         for (size_t i = 0; i < group.nodes.size(); ++i) {
             const auto *n = group.nodes[i];
@@ -598,8 +589,7 @@ GraphCompiler::compile(const GraphSignature &sig, const GraphNode *root) {
                         s < static_cast<int>(plan->buffer_slots.size())) {
                         const auto &slot = plan->buffer_slots[s];
                         if (slot.shape == step.output_shape &&
-                            slot.dtype == step.output_dtype &&
-                            slot.is_input) {
+                            slot.dtype == step.output_dtype && slot.is_input) {
                             step.can_inplace = true;
                             step.inplace_input_slot = s;
                             break;

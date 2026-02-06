@@ -13,8 +13,8 @@ class GraphCompiler {
   public:
     // Compile a graph rooted at `root` into an executable plan.
     // The signature is attached to the resulting CompiledGraph.
-    static std::shared_ptr<CompiledGraph>
-    compile(const GraphSignature &sig, const GraphNode *root);
+    static std::shared_ptr<CompiledGraph> compile(const GraphSignature &sig,
+                                                  const GraphNode *root);
 
   private:
     // Pipeline stages

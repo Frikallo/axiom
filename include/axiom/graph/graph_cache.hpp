@@ -24,8 +24,8 @@ class GraphCache {
     // the graph from `root` and inserts it. The compilation itself
     // happens outside the lock, so concurrent compilations of different
     // signatures are allowed.
-    std::shared_ptr<CompiledGraph>
-    get_or_compile(const GraphSignature &sig, const GraphNode *root);
+    std::shared_ptr<CompiledGraph> get_or_compile(const GraphSignature &sig,
+                                                  const GraphNode *root);
 
     void clear();
     size_t size() const;

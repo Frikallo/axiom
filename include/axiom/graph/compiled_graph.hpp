@@ -30,10 +30,10 @@ struct ExecutionStep {
     };
 
     Kind kind;
-    ops::OpType op_type;          // For SingleOp
+    ops::OpType op_type; // For SingleOp
     GraphNode::Params params;
     Device device;
-    FusedPattern pattern;         // For FusedKnown
+    FusedPattern pattern; // For FusedKnown
 
     // Chain of ops for fused steps
     std::vector<ops::OpType> op_chain;
@@ -61,8 +61,8 @@ struct BufferSlot {
     Strides strides;
     Device device;
 
-    int first_use = -1;   // Step index that produces this
-    int last_use = -1;    // Last step that reads this
+    int first_use = -1; // Step index that produces this
+    int last_use = -1;  // Last step that reads this
 
     bool is_input = false;
     int input_index = -1; // Index into the flat list of constant inputs
@@ -74,7 +74,7 @@ struct CompiledGraph {
     GraphSignature signature;
     std::vector<ExecutionStep> steps;
     std::vector<BufferSlot> buffer_slots;
-    std::vector<int> input_slots;  // Slot indices for external/constant inputs
+    std::vector<int> input_slots; // Slot indices for external/constant inputs
     int output_slot = -1;
     size_t num_allocations = 0;
     std::vector<int> slot_to_allocation;

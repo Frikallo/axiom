@@ -10,8 +10,7 @@ GraphCache &GraphCache::instance() {
 }
 
 std::shared_ptr<CompiledGraph>
-GraphCache::get_or_compile(const GraphSignature &sig,
-                           const GraphNode *root) {
+GraphCache::get_or_compile(const GraphSignature &sig, const GraphNode *root) {
     // Phase 1: lookup under lock
     {
         std::lock_guard<std::mutex> lock(mutex_);

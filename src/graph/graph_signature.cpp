@@ -51,8 +51,7 @@ static inline uint64_t fnv_hash_bool(uint64_t h, bool val) {
 }
 
 // Topological sort (non-recursive to avoid stack overflow on deep graphs)
-static std::vector<const GraphNode *>
-topo_sort(const GraphNode *root) {
+static std::vector<const GraphNode *> topo_sort(const GraphNode *root) {
     std::vector<const GraphNode *> result;
     std::unordered_set<const GraphNode *> visited;
     std::vector<std::pair<const GraphNode *, size_t>> stack;

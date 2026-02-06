@@ -123,15 +123,13 @@ void GraphExecutor::execute_single_op(const ExecutionStep &step,
     } else if (is_reduction_op(op)) {
         result = operation->execute_reduction(
             get_input(indices[0]), step.params.axes, step.params.keep_dims);
-    } else if (op == ops::OpType::MatMul ||
-               op == ops::OpType::BatchMatMul) {
+    } else if (op == ops::OpType::MatMul || op == ops::OpType::BatchMatMul) {
         result = operation->execute_matmul(
             get_input(indices[0]), get_input(indices[1]),
             step.params.transpose_a, step.params.transpose_b);
-    } else if (op == ops::OpType::Softmax ||
-               op == ops::OpType::LogSoftmax) {
-        result = operation->execute_reduction(
-            get_input(indices[0]), {step.params.axis}, false);
+    } else if (op == ops::OpType::Softmax || op == ops::OpType::LogSoftmax) {
+        result = operation->execute_reduction(get_input(indices[0]),
+                                              {step.params.axis}, false);
     } else {
         throw RuntimeError("Unsupported op type in GraphExecutor::SingleOp");
     }
@@ -311,7 +309,7 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
             if (s >= 0 && s < static_cast<int>(buffers.size())) {
                 bool already = false;
                 for (const auto &t : inputs) {
-                    if (t.storage() == buffers[s].storage())  {
+                    if (t.storage() == buffers[s].storage()) {
                         already = true;
                         break;
                     }
@@ -323,8 +321,7 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
         }
     }
 
-    if (!is_fused_simd_dtype(step.output_dtype) ||
-        step.device != Device::CPU) {
+    if (!is_fused_simd_dtype(step.output_dtype) || step.device != Device::CPU) {
         // Fallback to generic
         execute_fused_generic(step, plan, buffers);
         return;
@@ -522,8 +519,7 @@ void GraphExecutor::execute_fused_generic(const ExecutionStep &step,
         const ops::Operation *operation =
             ops::OperationRegistry::get_operation(op, device);
         if (!operation) {
-            operation =
-                ops::OperationRegistry::get_operation(op, Device::CPU);
+            operation = ops::OperationRegistry::get_operation(op, Device::CPU);
             device = Device::CPU;
         }
         if (!operation) {
@@ -602,8 +598,8 @@ void GraphExecutor::execute_matmul_activation(const ExecutionStep &step,
     };
 
     Tensor result = operation->execute_matmul(
-        get_buf(mm_indices[0]), get_buf(mm_indices[1]),
-        step.params.transpose_a, step.params.transpose_b);
+        get_buf(mm_indices[0]), get_buf(mm_indices[1]), step.params.transpose_a,
+        step.params.transpose_b);
 
     // Apply activation in-place using devirtualized fn-ptr
     ops::OpType act_op = step.op_chain[1];
