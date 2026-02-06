@@ -904,13 +904,29 @@ QRResult qr(const Tensor &a) {
         float *r_data = result.R.typed_data<float>();
 
         std::vector<float> tau(k);
-        std::vector<float> work(n * 64);
+
+        // Query optimal workspace for sgeqrf
+        float work_query_qr;
+        int lda_q = static_cast<int>(m);
+        backend.sgeqrf(static_cast<int>(m), static_cast<int>(n), nullptr, lda_q,
+                       nullptr, &work_query_qr, -1);
+        // Query optimal workspace for sorgqr
+        float work_query_orgqr;
+        backend.sorgqr(static_cast<int>(m), static_cast<int>(k),
+                       static_cast<int>(k), nullptr, lda_q, nullptr,
+                       &work_query_orgqr, -1);
+        int optimal_work = std::max({static_cast<int>(work_query_qr),
+                                     static_cast<int>(work_query_orgqr),
+                                     static_cast<int>(n * 64)});
+        std::vector<float> work(optimal_work);
+
+        // Pre-allocate transpose buffer outside loop
+        std::vector<float> a_col(m * n);
 
         for (size_t b = 0; b < batch_size; ++b) {
             float *a_batch = a_data + b * m * n;
 
             // Transpose to column-major
-            std::vector<float> a_col(m * n);
             for (size_t i = 0; i < m; ++i) {
                 for (size_t j = 0; j < n; ++j) {
                     a_col[j * m + i] = a_batch[i * n + j];
@@ -961,12 +977,28 @@ QRResult qr(const Tensor &a) {
         double *r_data = result.R.typed_data<double>();
 
         std::vector<double> tau(k);
-        std::vector<double> work(n * 64);
+
+        // Query optimal workspace for dgeqrf
+        double work_query_qr;
+        int lda_q = static_cast<int>(m);
+        backend.dgeqrf(static_cast<int>(m), static_cast<int>(n), nullptr, lda_q,
+                       nullptr, &work_query_qr, -1);
+        // Query optimal workspace for dorgqr
+        double work_query_orgqr;
+        backend.dorgqr(static_cast<int>(m), static_cast<int>(k),
+                       static_cast<int>(k), nullptr, lda_q, nullptr,
+                       &work_query_orgqr, -1);
+        int optimal_work = std::max({static_cast<int>(work_query_qr),
+                                     static_cast<int>(work_query_orgqr),
+                                     static_cast<int>(n * 64)});
+        std::vector<double> work(optimal_work);
+
+        // Pre-allocate transpose buffer outside loop
+        std::vector<double> a_col(m * n);
 
         for (size_t b = 0; b < batch_size; ++b) {
             double *a_batch = a_data + b * m * n;
 
-            std::vector<double> a_col(m * n);
             for (size_t i = 0; i < m; ++i) {
                 for (size_t j = 0; j < n; ++j) {
                     a_col[j * m + i] = a_batch[i * n + j];
@@ -1023,12 +1055,12 @@ Tensor cholesky(const Tensor &a, bool upper) {
         float *a_data = a_work.typed_data<float>();
         float *result_data = result.typed_data<float>();
 
+        std::vector<float> a_col(n * n);
         for (size_t b = 0; b < batch_size; ++b) {
             float *a_batch = a_data + b * n * n;
             float *result_batch = result_data + b * n * n;
 
             // Transpose to column-major
-            std::vector<float> a_col(n * n);
             for (size_t i = 0; i < n; ++i) {
                 for (size_t j = 0; j < n; ++j) {
                     a_col[j * n + i] = a_batch[i * n + j];
@@ -1060,11 +1092,11 @@ Tensor cholesky(const Tensor &a, bool upper) {
         result = Tensor(a.shape(), DType::Float64);
         double *result_data = result.typed_data<double>();
 
+        std::vector<double> a_col(n * n);
         for (size_t b = 0; b < batch_size; ++b) {
             double *a_batch = a_data + b * n * n;
             double *result_batch = result_data + b * n * n;
 
-            std::vector<double> a_col(n * n);
             for (size_t i = 0; i < n; ++i) {
                 for (size_t j = 0; j < n; ++j) {
                     a_col[j * n + i] = a_batch[i * n + j];
@@ -1279,14 +1311,25 @@ EigResult eig(const Tensor &a) {
 
         std::vector<double> wr(n), wi(n);
         std::vector<double> vr(n * n);
-        std::vector<double> work(4 * n);
+
+        // Query optimal workspace size
+        double work_query;
+        int lda_q = static_cast<int>(n);
+        int ldvr_q = static_cast<int>(n);
+        backend.dgeev('N', 'V', static_cast<int>(n), nullptr, lda_q, nullptr,
+                      nullptr, nullptr, 1, nullptr, ldvr_q, &work_query, -1);
+        int optimal_work =
+            std::max(static_cast<int>(work_query), static_cast<int>(4 * n));
+        std::vector<double> work(optimal_work);
+
+        // Pre-allocate transpose buffer outside loop
+        std::vector<double> a_col(n * n);
 
         for (size_t b = 0; b < batch_size; ++b) {
             double *a_batch = a_data + b * n * n;
             complex128_t *eigenval_batch = eigenval_data + b * n;
             complex128_t *eigenvec_batch = eigenvec_data + b * n * n;
 
-            std::vector<double> a_col(n * n);
             for (size_t i = 0; i < n; ++i) {
                 for (size_t j = 0; j < n; ++j) {
                     a_col[j * n + i] = a_batch[i * n + j];
@@ -1360,14 +1403,23 @@ EigResult eigh(const Tensor &a) {
         float *eigenval_data = result.eigenvalues.typed_data<float>();
         float *eigenvec_data = result.eigenvectors.typed_data<float>();
 
-        std::vector<float> work(3 * n);
+        // Query optimal workspace size
+        float work_query;
+        int lda_q = static_cast<int>(n);
+        backend.ssyev('V', 'U', static_cast<int>(n), nullptr, lda_q, nullptr,
+                      &work_query, -1);
+        int optimal_work =
+            std::max(static_cast<int>(work_query), static_cast<int>(3 * n));
+        std::vector<float> work(optimal_work);
+
+        // Pre-allocate transpose buffer outside loop
+        std::vector<float> a_col(n * n);
 
         for (size_t b = 0; b < batch_size; ++b) {
             float *a_batch = a_data + b * n * n;
             float *eigenval_batch = eigenval_data + b * n;
             float *eigenvec_batch = eigenvec_data + b * n * n;
 
-            std::vector<float> a_col(n * n);
             for (size_t i = 0; i < n; ++i) {
                 for (size_t j = 0; j < n; ++j) {
                     a_col[j * n + i] = a_batch[i * n + j];
@@ -1398,14 +1450,23 @@ EigResult eigh(const Tensor &a) {
         double *eigenval_data = result.eigenvalues.typed_data<double>();
         double *eigenvec_data = result.eigenvectors.typed_data<double>();
 
-        std::vector<double> work(3 * n);
+        // Query optimal workspace size
+        double work_query;
+        int lda_q = static_cast<int>(n);
+        backend.dsyev('V', 'U', static_cast<int>(n), nullptr, lda_q, nullptr,
+                      &work_query, -1);
+        int optimal_work =
+            std::max(static_cast<int>(work_query), static_cast<int>(3 * n));
+        std::vector<double> work(optimal_work);
+
+        // Pre-allocate transpose buffer outside loop
+        std::vector<double> a_col(n * n);
 
         for (size_t b = 0; b < batch_size; ++b) {
             double *a_batch = a_data + b * n * n;
             double *eigenval_batch = eigenval_data + b * n;
             double *eigenvec_batch = eigenvec_data + b * n * n;
 
-            std::vector<double> a_col(n * n);
             for (size_t i = 0; i < n; ++i) {
                 for (size_t j = 0; j < n; ++j) {
                     a_col[j * n + i] = a_batch[i * n + j];

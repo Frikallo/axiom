@@ -153,9 +153,11 @@ void CPUBinaryOperation<Func>::execute_binary_same_shape(const Tensor &lhs,
             result_data[i] = func_(lhs_data[i], rhs_data[i]);
         }
     } else {
-        // Convert tensors to result type
-        Tensor lhs_converted = lhs.astype(result.dtype());
-        Tensor rhs_converted = rhs.astype(result.dtype());
+        // Convert tensors to result type (skip if already matching)
+        Tensor lhs_converted =
+            (lhs.dtype() == result.dtype()) ? lhs : lhs.astype(result.dtype());
+        Tensor rhs_converted =
+            (rhs.dtype() == result.dtype()) ? rhs : rhs.astype(result.dtype());
 
         const T *lhs_data = lhs_converted.template typed_data<T>();
         const T *rhs_data = rhs_converted.template typed_data<T>();
@@ -933,6 +935,16 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
             } else if constexpr (std::is_same_v<Func, RsqrtFunc>) {
                 accelerate::vrsqrt_f32(input_data, result_data, total_elements);
                 return;
+            } else if constexpr (std::is_same_v<Func, SigmoidFunc>) {
+                // sigmoid(x) = 1 / (1 + exp(-x))
+                accelerate::vneg_f32(input_data, result_data, total_elements);
+                accelerate::vexp_f32(result_data, result_data, total_elements);
+                int n = static_cast<int>(total_elements);
+                float one = 1.0f;
+                vDSP_vsadd(result_data, 1, &one, result_data, 1, n);
+                accelerate::vrecip_f32(result_data, result_data,
+                                       total_elements);
+                return;
             }
         }
         if constexpr (std::is_same_v<T, double>) {
@@ -1023,6 +1035,16 @@ void CPUUnaryOperation<Func>::execute_unary_typed(const Tensor &input,
                 return;
             } else if constexpr (std::is_same_v<Func, RsqrtFunc>) {
                 accelerate::vrsqrt_f64(input_data, result_data, total_elements);
+                return;
+            } else if constexpr (std::is_same_v<Func, SigmoidFunc>) {
+                // sigmoid(x) = 1 / (1 + exp(-x))
+                accelerate::vneg_f64(input_data, result_data, total_elements);
+                accelerate::vexp_f64(result_data, result_data, total_elements);
+                int n = static_cast<int>(total_elements);
+                double one = 1.0;
+                vDSP_vsaddD(result_data, 1, &one, result_data, 1, n);
+                accelerate::vrecip_f64(result_data, result_data,
+                                       total_elements);
                 return;
             }
         }
