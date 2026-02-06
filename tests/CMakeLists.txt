@@ -473,3 +473,28 @@ set_tests_properties(fusion
     PROPERTIES
         TIMEOUT 30
 )
+
+# Graph compiler tests
+add_executable(test_graph_compiler
+    test_graph_compiler.cpp
+)
+
+target_link_libraries(test_graph_compiler
+    PRIVATE
+        axiom
+)
+
+target_include_directories(test_graph_compiler
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME graph_compiler
+    COMMAND test_graph_compiler
+)
+
+set_tests_properties(graph_compiler
+    PROPERTIES
+        TIMEOUT 30
+)

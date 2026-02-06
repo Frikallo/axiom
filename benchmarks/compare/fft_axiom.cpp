@@ -39,35 +39,39 @@ BenchResult benchmark_op(const std::string& op, size_t n, int warmup = 3,
 
     // Warmup
     for (int i = 0; i < warmup; i++) {
+        Tensor C;
         if (op == "fft")
-            auto C = fft::fft(A);
+            C = fft::fft(A);
         else if (op == "ifft")
-            auto C = fft::ifft(complex_input);
+            C = fft::ifft(complex_input);
         else if (op == "fft2")
-            auto C = fft::fft2(A);
+            C = fft::fft2(A);
         else if (op == "ifft2")
-            auto C = fft::ifft2(complex_input);
+            C = fft::ifft2(complex_input);
         else if (op == "rfft")
-            auto C = fft::rfft(A);
+            C = fft::rfft(A);
         else if (op == "rfft2")
-            auto C = fft::rfft2(A);
+            C = fft::rfft2(A);
+        (void)C.data();  // Force materialization of lazy tensor
     }
 
     // Benchmark
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; i++) {
+        Tensor C;
         if (op == "fft")
-            auto C = fft::fft(A);
+            C = fft::fft(A);
         else if (op == "ifft")
-            auto C = fft::ifft(complex_input);
+            C = fft::ifft(complex_input);
         else if (op == "fft2")
-            auto C = fft::fft2(A);
+            C = fft::fft2(A);
         else if (op == "ifft2")
-            auto C = fft::ifft2(complex_input);
+            C = fft::ifft2(complex_input);
         else if (op == "rfft")
-            auto C = fft::rfft(A);
+            C = fft::rfft(A);
         else if (op == "rfft2")
-            auto C = fft::rfft2(A);
+            C = fft::rfft2(A);
+        (void)C.data();  // Force materialization of lazy tensor
     }
     auto end = std::chrono::high_resolution_clock::now();
 

@@ -19,27 +19,31 @@ BenchResult benchmark_op(const std::string& op, size_t n, int warmup = 3,
 
     // Warmup
     for (int i = 0; i < warmup; i++) {
+        Tensor C;
         if (op == "add")
-            auto C = A + B;
+            C = A + B;
         else if (op == "sub")
-            auto C = A - B;
+            C = A - B;
         else if (op == "mul")
-            auto C = A * B;
+            C = A * B;
         else if (op == "div")
-            auto C = A / B;
+            C = A / B;
+        (void)C.data();  // Force materialization of lazy tensor
     }
 
     // Benchmark
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; i++) {
+        Tensor C;
         if (op == "add")
-            auto C = A + B;
+            C = A + B;
         else if (op == "sub")
-            auto C = A - B;
+            C = A - B;
         else if (op == "mul")
-            auto C = A * B;
+            C = A * B;
         else if (op == "div")
-            auto C = A / B;
+            C = A / B;
+        (void)C.data();  // Force materialization of lazy tensor
     }
     auto end = std::chrono::high_resolution_clock::now();
 

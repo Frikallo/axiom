@@ -15,6 +15,13 @@ class Tensor;
 
 namespace graph {
 
+// Forward declarations for graph compiler infrastructure
+struct GraphSignature;
+struct CompiledGraph;
+class GraphCompiler;
+class GraphCache;
+class GraphExecutor;
+
 // Environment variable to disable lazy evaluation globally
 // Set AXIOM_EAGER_MODE=1 to disable lazy evaluation
 bool is_eager_mode_enabled();

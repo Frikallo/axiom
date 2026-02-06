@@ -1,5 +1,9 @@
 #include "axiom/graph/graph_registry.hpp"
 #include "axiom/error.hpp"
+#include "axiom/graph/compiled_graph.hpp"
+#include "axiom/graph/graph_cache.hpp"
+#include "axiom/graph/graph_executor.hpp"
+#include "axiom/graph/graph_signature.hpp"
 #include "axiom/operations.hpp"
 #include "axiom/tensor.hpp"
 #include "axiom/type_conversion.hpp"
@@ -766,26 +770,110 @@ void GraphRegistry::execute_node(GraphNode *node) {
     node->is_materialized_ = true;
 }
 
+// Collect constant/materialized input tensors in topological order,
+// matching the order expected by the compiled plan's input_slots.
+static std::vector<Tensor>
+collect_constant_inputs(const GraphNode *root, const CompiledGraph & /*plan*/) {
+    // Walk the graph in topological order and collect constants
+    std::vector<const GraphNode *> sorted;
+    std::unordered_set<const GraphNode *> visited;
+    std::vector<std::pair<const GraphNode *, size_t>> stack;
+    stack.push_back({root, 0});
+
+    while (!stack.empty()) {
+        auto &[n, idx] = stack.back();
+        if (visited.count(n)) {
+            stack.pop_back();
+            continue;
+        }
+        if (idx < n->inputs.size()) {
+            const GraphNode *child = n->inputs[idx].get();
+            idx++;
+            if (!visited.count(child))
+                stack.push_back({child, 0});
+        } else {
+            visited.insert(n);
+            sorted.push_back(n);
+            stack.pop_back();
+        }
+    }
+
+    // Collect input tensors from constant/materialized nodes
+    std::vector<Tensor> inputs;
+    std::unordered_set<const GraphNode *> seen;
+    for (const auto *n : sorted) {
+        if (n->is_constant || n->is_materialized_) {
+            if (seen.insert(n).second) {
+                if (n->is_constant) {
+                    inputs.emplace_back(
+                        n->constant_storage, n->output_shape,
+                        n->constant_strides, n->output_dtype,
+                        n->constant_offset);
+                } else {
+                    inputs.emplace_back(
+                        n->cached_result_, n->cached_shape_,
+                        n->cached_strides_, n->output_dtype);
+                }
+            }
+        }
+    }
+    return inputs;
+}
+
+// Mark all non-constant nodes in the subgraph as materialized
+static void mark_subgraph_materialized(GraphNode *root) {
+    std::unordered_set<GraphNode *> visited;
+    std::vector<GraphNode *> stack;
+    stack.push_back(root);
+
+    while (!stack.empty()) {
+        GraphNode *n = stack.back();
+        stack.pop_back();
+        if (!visited.insert(n).second)
+            continue;
+        for (auto &inp : n->inputs) {
+            if (!inp->is_constant && !inp->is_materialized_) {
+                // Mark intermediates as fused (they don't have their
+                // own result — the fused execution skipped them)
+                inp->is_fused = true;
+                inp->is_materialized_ = true;
+                stack.push_back(inp.get());
+            }
+        }
+    }
+}
+
 void GraphRegistry::materialize(GraphNode *node) {
     if (node->is_materialized_)
         return;
 
-    // Optimization pass: identify and mark fusable chains
-    optimize_subgraph(node);
-
-    // If the node was materialized by fusion, we're done
-    if (node->is_materialized_)
-        return;
-
-    // Get execution order via topological sort
-    auto execution_order = topological_sort(node);
-
-    // Execute remaining non-fused nodes in order
-    for (GraphNode *n : execution_order) {
-        if (!n->is_materialized_) {
-            execute_node(n);
+    // Ensure all constant inputs are available
+    for (auto &inp : node->inputs) {
+        if (!inp->is_constant && !inp->is_materialized_) {
+            materialize(inp.get());
         }
     }
+
+    // Compute structural signature of the graph
+    auto sig = compute_signature(node);
+
+    // Get compiled plan from cache (compile on miss)
+    auto plan = GraphCache::instance().get_or_compile(sig, node);
+
+    // Collect input tensors from constant/materialized nodes
+    auto inputs = collect_constant_inputs(node, *plan);
+
+    // Execute the compiled plan (hot path — no graph walking)
+    auto result = GraphExecutor::execute(*plan, inputs);
+
+    // Store result back into node
+    node->cached_result_ = result.storage();
+    node->cached_shape_ = result.shape();
+    node->cached_strides_ = result.strides();
+    node->is_materialized_ = true;
+
+    // Mark intermediate nodes as materialized
+    mark_subgraph_materialized(node);
 
     // Clean up pending nodes that are now materialized
     pending_nodes_.erase(std::remove_if(pending_nodes_.begin(),

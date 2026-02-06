@@ -25,12 +25,14 @@ int main(int argc, char* argv[]) {
     // Warmup
     for (int i = 0; i < warmup; i++) {
         auto C = A.matmul(B);
+        (void)C.data();  // Force materialization of lazy tensor
     }
 
     // Benchmark
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; i++) {
         auto C = A.matmul(B);
+        (void)C.data();  // Force materialization of lazy tensor
     }
     auto end = std::chrono::high_resolution_clock::now();
 
