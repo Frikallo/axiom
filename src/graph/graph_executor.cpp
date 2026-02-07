@@ -6,6 +6,7 @@
 #include "backends/cpu/simd/simd_dispatch.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <unordered_set>
 
 #include "axiom/parallel.hpp"
@@ -432,18 +433,17 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
         size_t nt = parallel::get_num_threads();
         size_t chunk = (n + nt - 1) / nt;
         ptrdiff_t nchunks = static_cast<ptrdiff_t>((n + chunk - 1) / chunk);
-        bool ok = true;
+        std::atomic<bool> ok{true};
 #pragma omp parallel for schedule(static)
         for (ptrdiff_t ci = 0; ci < nchunks; ++ci) {
             size_t start = static_cast<size_t>(ci) * chunk;
             size_t count = std::min(chunk, n - start);
             if (!dispatch_fused_simd(step.pattern, inputs, result, start,
                                      count)) {
-#pragma omp atomic write
-                ok = false;
+                ok.store(false, std::memory_order_relaxed);
             }
         }
-        if (ok) {
+        if (ok.load(std::memory_order_relaxed)) {
             buffers[step.output_slot] = result;
             return;
         }

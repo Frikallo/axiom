@@ -37,7 +37,8 @@ class PCG64 {
         uint32_t xorshifted =
             static_cast<uint32_t>(((old_state >> 18) ^ old_state) >> 27);
         uint32_t rot = static_cast<uint32_t>(old_state >> 59);
-        uint32_t result32 = (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+        uint32_t result32 =
+            (xorshifted >> rot) | (xorshifted << ((32u - rot) & 31u));
 
         // Generate 64 bits from two 32-bit outputs
         uint64_t high = result32;
@@ -47,7 +48,8 @@ class PCG64 {
         xorshifted =
             static_cast<uint32_t>(((old_state >> 18) ^ old_state) >> 27);
         rot = static_cast<uint32_t>(old_state >> 59);
-        uint32_t low = (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+        uint32_t low =
+            (xorshifted >> rot) | (xorshifted << ((32u - rot) & 31u));
 
         return (high << 32) | low;
     }

@@ -31,12 +31,12 @@ struct ExecutionStep {
         FusedReduction    // Elementwise chain + full reduction
     };
 
-    Kind kind;
-    ops::OpType op_type;      // For SingleOp
-    ops::OpType reduction_op; // For FusedReduction
+    Kind kind{};
+    ops::OpType op_type{};      // For SingleOp
+    ops::OpType reduction_op{}; // For FusedReduction
     GraphNode::Params params;
-    Device device;
-    FusedPattern pattern; // For FusedKnown
+    Device device = Device::CPU;
+    FusedPattern pattern = FusedPattern::None; // For FusedKnown
 
     // Chain of ops for fused steps
     std::vector<ops::OpType> op_chain;
@@ -45,10 +45,10 @@ struct ExecutionStep {
     // -1 means "use result of previous op in chain"
     std::vector<std::vector<int>> input_slot_indices;
 
-    int output_slot;
-    size_t total_elements;
+    int output_slot = -1;
+    size_t total_elements = 0;
     Shape output_shape;
-    DType output_dtype;
+    DType output_dtype{};
     std::vector<AccessPattern> input_access;
 
     size_t tile_size = 0;

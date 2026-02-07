@@ -203,7 +203,11 @@ struct MultiplyFunc {
 
 struct DivideFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
-        return a / b;
+        if constexpr (std::is_same_v<T, bool>) {
+            return static_cast<bool>(static_cast<int>(a) / static_cast<int>(b));
+        } else {
+            return a / b;
+        }
     }
 };
 
@@ -220,7 +224,9 @@ struct PowerFunc {
 
 struct ModuloFunc {
     template <typename T> T operator()(const T &a, const T &b) const {
-        if constexpr (std::is_integral_v<T>) {
+        if constexpr (std::is_same_v<T, bool>) {
+            return static_cast<bool>(static_cast<int>(a) % static_cast<int>(b));
+        } else if constexpr (std::is_integral_v<T>) {
             return a % b;
         } else {
             return static_cast<T>(std::fmod(a, b));
@@ -378,6 +384,8 @@ struct NegateFunc {
     template <typename T> T operator()(const T &a) const {
         if constexpr (std::is_same_v<T, bool>) {
             return !a;
+        } else if constexpr (std::is_unsigned_v<T>) {
+            return static_cast<T>(T{0} - a);
         } else {
             return -a; // Works for complex types too
         }
@@ -767,6 +775,8 @@ struct ReciprocalFunc {
             return T{1} / a;
         } else if constexpr (std::is_same_v<T, float16_t>) {
             return static_cast<T>(1.0f / static_cast<float>(a));
+        } else if constexpr (std::is_same_v<T, bool>) {
+            return a; // 1/true = true
         } else {
             // Integer division: 1/a (truncated)
             return (a != T{0}) ? (T{1} / a) : T{0};
