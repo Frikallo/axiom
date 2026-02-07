@@ -1734,14 +1734,14 @@ Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
     auto dtype_variant = variant_to_dtype(dtype);
     std::visit(overload{
         [&]<typename T>(T)
-            requires(!T::is_float())
+            requires(!T::is_pod_float())
                     {
                         throw TypeError(
                             "randn only supports floating point types, got " +
                             axiom::dtype_name(dtype));
                     },
                     [&]<typename T>(T)
-                        requires(T::is_float())
+                        requires(T::is_pod_float())
         {
             using value_type = typename T::value_type;
             value_type *data = tensor.typed_data<value_type>();
@@ -1771,14 +1771,14 @@ Tensor Tensor::uniform(double low, double high, const Shape &shape, DType dtype,
     auto dtype_variant = variant_to_dtype(dtype);
     std::visit(overload{
         [&]<typename T>(T)
-            requires(!T::is_float())
+            requires(!T::is_pod_float())
                     {
                         throw TypeError(
                             "randn only supports floating point types, got " +
                             axiom::dtype_name(dtype));
                     },
                     [&]<typename T>(T)
-                        requires(T::is_float())
+                        requires(T::is_pod_float())
         {
             using value_type = typename T::value_type;
             value_type *data = tensor.typed_data<value_type>();
@@ -1897,13 +1897,13 @@ Tensor Tensor::logspace(double start, double stop, size_t num, bool endpoint,
     auto dtype_variant = variant_to_dtype(dtype);
     std::visit(overload{
         [&]<typename T>(T)
-            requires(!T::is_float())
+            requires(!T::is_pod_float())
                     {
                         throw TypeError::unsupported_dtype(
                             axiom::dtype_name(dtype), "logspace");
                     },
                     [&]<typename T>(T)
-                        requires(T::is_float())
+                        requires(T::is_pod_float())
         {
             using value_type = typename T::value_type;
             auto *data = linear.typed_data<value_type>();

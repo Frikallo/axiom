@@ -16,6 +16,7 @@ template <class... Ts> struct overload : Ts... {
     using Ts::operator()...; // Bring all operator() into scope
 };
 
+// TODO: Add class description
 template <class T> class BaseType {
   public:
     using value_type = T;
@@ -33,6 +34,11 @@ template <class T> class BaseType {
         return is_complex_t<value_type>::value;
     }
     static constexpr bool is_float() {
+        // capture 16 bit floats
+        return std::is_floating_point_v<value_type> ||
+               std::is_same_v<float16_t, value_type>;
+    }
+    static constexpr bool is_pod_float() {
         return std::is_floating_point_v<value_type>;
     }
     static constexpr bool is_int() { return std::is_integral_v<value_type>; }
@@ -50,6 +56,7 @@ class Bool : public BaseType<bool> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -65,6 +72,7 @@ class Int8 : public BaseType<int8_t> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -80,6 +88,7 @@ class Int16 : public BaseType<int16_t> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -94,6 +103,7 @@ class Int32 : public BaseType<int32_t> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -108,6 +118,7 @@ class Int64 : public BaseType<int64_t> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -123,6 +134,7 @@ class UInt8 : public BaseType<uint8_t> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -138,6 +150,7 @@ class UInt16 : public BaseType<uint16_t> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -152,6 +165,7 @@ class UInt32 : public BaseType<uint32_t> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -166,6 +180,7 @@ class UInt64 : public BaseType<uint64_t> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -180,6 +195,7 @@ class Float16 : public BaseType<float16_t> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -194,6 +210,7 @@ class Float32 : public BaseType<float> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -208,6 +225,7 @@ class Float64 : public BaseType<double> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -223,6 +241,7 @@ class Complex64 : public BaseType<std::complex<float>> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
@@ -238,6 +257,7 @@ class Complex128 : public BaseType<std::complex<double>> {
     using BaseType::is_complex;
     using BaseType::is_float;
     using BaseType::is_int;
+    using BaseType::is_pod_float;
     using BaseType::is_signed;
     using BaseType::is_unsigned;
     static value_type one();
