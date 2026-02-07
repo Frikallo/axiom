@@ -22,15 +22,15 @@ struct GraphNode {
     uint64_t id;
 
     // The operation this node represents
-    ops::OpType op_type;
+    ops::OpType op_type{};
 
     // Input nodes (other lazy tensors or constant nodes)
     std::vector<std::shared_ptr<GraphNode>> inputs;
 
     // Computed metadata (no allocation yet)
     Shape output_shape;
-    DType output_dtype;
-    Device target_device;
+    DType output_dtype{};
+    Device target_device = Device::CPU;
 
     // Operation-specific parameters
     struct Params {
