@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <unordered_set>
 
+#include "axiom/parallel.hpp"
+
 namespace axiom {
 namespace graph {
 
@@ -201,6 +203,10 @@ void GraphExecutor::execute_single_op(const ExecutionStep &step,
 // FusedKnown: use existing HWY SIMD fused kernels
 // ============================================================================
 
+// FusedKnown SIMD kernels do minimal work per call, so OpenMP thread
+// spawn overhead is only amortized at larger sizes (~1M+ elements).
+static constexpr size_t FUSED_KNOWN_MIN_PARALLEL = 524288;
+
 // Helper to check if dtype is supported for SIMD fused patterns
 static bool is_fused_simd_dtype(DType dtype) {
     return dtype == DType::Float32 || dtype == DType::Float64 ||
@@ -220,15 +226,18 @@ static bool is_integer_pattern_supported(FusedPattern pattern) {
     }
 }
 
-// Execute a known fused pattern using optimized SIMD kernels
+// Execute a known fused pattern using optimized SIMD kernels.
+// off/cnt allow processing a sub-range for parallel dispatch.
 static bool dispatch_fused_simd(FusedPattern pattern,
                                 const std::vector<Tensor> &inputs,
-                                Tensor &result) {
+                                Tensor &result, size_t off = 0,
+                                size_t cnt = 0) {
     if (inputs.empty())
         return false;
 
     DType dtype = inputs[0].dtype();
-    size_t n = inputs[0].size();
+    if (cnt == 0)
+        cnt = inputs[0].size();
 
     bool is_integer = (dtype == DType::Int32 || dtype == DType::Int64);
     if (is_integer && !is_integer_pattern_supported(pattern))
@@ -238,14 +247,16 @@ static bool dispatch_fused_simd(FusedPattern pattern,
     case FusedPattern::PATTERN:                                                \
         if (inputs.size() >= 2) {                                              \
             if (dtype == DType::Float32) {                                     \
-                simd::DISPATCH_FN<float>(inputs[0].typed_data<float>(),        \
-                                         inputs[1].typed_data<float>(),        \
-                                         result.typed_data<float>(), n);       \
+                simd::DISPATCH_FN<float>(                                      \
+                    inputs[0].typed_data<float>() + off,                       \
+                    inputs[1].typed_data<float>() + off,                       \
+                    result.typed_data<float>() + off, cnt);                    \
                 return true;                                                   \
             } else if (dtype == DType::Float64) {                              \
-                simd::DISPATCH_FN<double>(inputs[0].typed_data<double>(),      \
-                                          inputs[1].typed_data<double>(),      \
-                                          result.typed_data<double>(), n);     \
+                simd::DISPATCH_FN<double>(                                     \
+                    inputs[0].typed_data<double>() + off,                      \
+                    inputs[1].typed_data<double>() + off,                      \
+                    result.typed_data<double>() + off, cnt);                   \
                 return true;                                                   \
             }                                                                  \
         }                                                                      \
@@ -255,24 +266,28 @@ static bool dispatch_fused_simd(FusedPattern pattern,
     case FusedPattern::PATTERN:                                                \
         if (inputs.size() >= 2) {                                              \
             if (dtype == DType::Float32) {                                     \
-                simd::DISPATCH_FN<float>(inputs[0].typed_data<float>(),        \
-                                         inputs[1].typed_data<float>(),        \
-                                         result.typed_data<float>(), n);       \
+                simd::DISPATCH_FN<float>(                                      \
+                    inputs[0].typed_data<float>() + off,                       \
+                    inputs[1].typed_data<float>() + off,                       \
+                    result.typed_data<float>() + off, cnt);                    \
                 return true;                                                   \
             } else if (dtype == DType::Float64) {                              \
-                simd::DISPATCH_FN<double>(inputs[0].typed_data<double>(),      \
-                                          inputs[1].typed_data<double>(),      \
-                                          result.typed_data<double>(), n);     \
+                simd::DISPATCH_FN<double>(                                     \
+                    inputs[0].typed_data<double>() + off,                      \
+                    inputs[1].typed_data<double>() + off,                      \
+                    result.typed_data<double>() + off, cnt);                   \
                 return true;                                                   \
             } else if (dtype == DType::Int32) {                                \
-                simd::DISPATCH_FN<int32_t>(inputs[0].typed_data<int32_t>(),    \
-                                           inputs[1].typed_data<int32_t>(),    \
-                                           result.typed_data<int32_t>(), n);   \
+                simd::DISPATCH_FN<int32_t>(                                    \
+                    inputs[0].typed_data<int32_t>() + off,                     \
+                    inputs[1].typed_data<int32_t>() + off,                     \
+                    result.typed_data<int32_t>() + off, cnt);                  \
                 return true;                                                   \
             } else if (dtype == DType::Int64) {                                \
-                simd::DISPATCH_FN<int64_t>(inputs[0].typed_data<int64_t>(),    \
-                                           inputs[1].typed_data<int64_t>(),    \
-                                           result.typed_data<int64_t>(), n);   \
+                simd::DISPATCH_FN<int64_t>(                                    \
+                    inputs[0].typed_data<int64_t>() + off,                     \
+                    inputs[1].typed_data<int64_t>() + off,                     \
+                    result.typed_data<int64_t>() + off, cnt);                  \
                 return true;                                                   \
             }                                                                  \
         }                                                                      \
@@ -282,16 +297,18 @@ static bool dispatch_fused_simd(FusedPattern pattern,
     case FusedPattern::PATTERN:                                                \
         if (inputs.size() >= 3) {                                              \
             if (dtype == DType::Float32) {                                     \
-                simd::DISPATCH_FN<float>(inputs[0].typed_data<float>(),        \
-                                         inputs[1].typed_data<float>(),        \
-                                         inputs[2].typed_data<float>(),        \
-                                         result.typed_data<float>(), n);       \
+                simd::DISPATCH_FN<float>(                                      \
+                    inputs[0].typed_data<float>() + off,                       \
+                    inputs[1].typed_data<float>() + off,                       \
+                    inputs[2].typed_data<float>() + off,                       \
+                    result.typed_data<float>() + off, cnt);                    \
                 return true;                                                   \
             } else if (dtype == DType::Float64) {                              \
-                simd::DISPATCH_FN<double>(inputs[0].typed_data<double>(),      \
-                                          inputs[1].typed_data<double>(),      \
-                                          inputs[2].typed_data<double>(),      \
-                                          result.typed_data<double>(), n);     \
+                simd::DISPATCH_FN<double>(                                     \
+                    inputs[0].typed_data<double>() + off,                      \
+                    inputs[1].typed_data<double>() + off,                      \
+                    inputs[2].typed_data<double>() + off,                      \
+                    result.typed_data<double>() + off, cnt);                   \
                 return true;                                                   \
             }                                                                  \
         }                                                                      \
@@ -301,28 +318,32 @@ static bool dispatch_fused_simd(FusedPattern pattern,
     case FusedPattern::PATTERN:                                                \
         if (inputs.size() >= 3) {                                              \
             if (dtype == DType::Float32) {                                     \
-                simd::DISPATCH_FN<float>(inputs[0].typed_data<float>(),        \
-                                         inputs[1].typed_data<float>(),        \
-                                         inputs[2].typed_data<float>(),        \
-                                         result.typed_data<float>(), n);       \
+                simd::DISPATCH_FN<float>(                                      \
+                    inputs[0].typed_data<float>() + off,                       \
+                    inputs[1].typed_data<float>() + off,                       \
+                    inputs[2].typed_data<float>() + off,                       \
+                    result.typed_data<float>() + off, cnt);                    \
                 return true;                                                   \
             } else if (dtype == DType::Float64) {                              \
-                simd::DISPATCH_FN<double>(inputs[0].typed_data<double>(),      \
-                                          inputs[1].typed_data<double>(),      \
-                                          inputs[2].typed_data<double>(),      \
-                                          result.typed_data<double>(), n);     \
+                simd::DISPATCH_FN<double>(                                     \
+                    inputs[0].typed_data<double>() + off,                      \
+                    inputs[1].typed_data<double>() + off,                      \
+                    inputs[2].typed_data<double>() + off,                      \
+                    result.typed_data<double>() + off, cnt);                   \
                 return true;                                                   \
             } else if (dtype == DType::Int32) {                                \
-                simd::DISPATCH_FN<int32_t>(inputs[0].typed_data<int32_t>(),    \
-                                           inputs[1].typed_data<int32_t>(),    \
-                                           inputs[2].typed_data<int32_t>(),    \
-                                           result.typed_data<int32_t>(), n);   \
+                simd::DISPATCH_FN<int32_t>(                                    \
+                    inputs[0].typed_data<int32_t>() + off,                     \
+                    inputs[1].typed_data<int32_t>() + off,                     \
+                    inputs[2].typed_data<int32_t>() + off,                     \
+                    result.typed_data<int32_t>() + off, cnt);                  \
                 return true;                                                   \
             } else if (dtype == DType::Int64) {                                \
-                simd::DISPATCH_FN<int64_t>(inputs[0].typed_data<int64_t>(),    \
-                                           inputs[1].typed_data<int64_t>(),    \
-                                           inputs[2].typed_data<int64_t>(),    \
-                                           result.typed_data<int64_t>(), n);   \
+                simd::DISPATCH_FN<int64_t>(                                    \
+                    inputs[0].typed_data<int64_t>() + off,                     \
+                    inputs[1].typed_data<int64_t>() + off,                     \
+                    inputs[2].typed_data<int64_t>() + off,                     \
+                    result.typed_data<int64_t>() + off, cnt);                  \
                 return true;                                                   \
             }                                                                  \
         }                                                                      \
@@ -398,9 +419,34 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
         result = Tensor(step.output_shape, step.output_dtype, step.device);
     }
 
-    if (dispatch_fused_simd(step.pattern, inputs, result)) {
-        buffers[step.output_slot] = result;
-        return;
+    size_t n = step.total_elements;
+
+    if (parallel::should_parallelize(n, FUSED_KNOWN_MIN_PARALLEL)) {
+        // Parallel: chunk data across threads
+        size_t nt = parallel::get_num_threads();
+        size_t chunk = (n + nt - 1) / nt;
+        ptrdiff_t nchunks =
+            static_cast<ptrdiff_t>((n + chunk - 1) / chunk);
+        bool ok = true;
+#pragma omp parallel for schedule(static)
+        for (ptrdiff_t ci = 0; ci < nchunks; ++ci) {
+            size_t start = static_cast<size_t>(ci) * chunk;
+            size_t count = std::min(chunk, n - start);
+            if (!dispatch_fused_simd(step.pattern, inputs, result,
+                                     start, count)) {
+#pragma omp atomic write
+                ok = false;
+            }
+        }
+        if (ok) {
+            buffers[step.output_slot] = result;
+            return;
+        }
+    } else {
+        if (dispatch_fused_simd(step.pattern, inputs, result)) {
+            buffers[step.output_slot] = result;
+            return;
+        }
     }
 
     // Fallback
@@ -493,11 +539,6 @@ static bool try_tiled_fused_loop(const ExecutionStep &step,
     }
     char *out_ptr = reinterpret_cast<char *>(output.data());
 
-    // Stack tile buffers for intermediate results (double-buffer)
-    TileBuffer tile_a_buf, tile_b_buf;
-    void *tile_a = tile_a_buf.data;
-    void *tile_b = tile_b_buf.data;
-
     auto resolve_ptr = [&](int slot, size_t offset) -> const void * {
         if (slot >= 0 && slot < static_cast<int>(buffers.size())) {
             return reinterpret_cast<const char *>(buffers[slot].data()) +
@@ -506,19 +547,16 @@ static bool try_tiled_fused_loop(const ExecutionStep &step,
         return nullptr;
     };
 
-    for (size_t base = 0; base < total; base += tile_size) {
-        size_t count = std::min(tile_size, total - base);
-
-        // Current intermediate result pointer alternates between tile_a
-        // and tile_b. After the last op, we copy directly to output.
+    // Inner loop body: process one tile of the fused chain
+    auto process_tile = [&](size_t base, size_t count, void *tile_a,
+                            void *tile_b) {
         void *prev = nullptr;
-        bool prev_is_a = true; // tracks which tile holds `prev`
+        bool prev_is_a = true;
 
         for (size_t oi = 0; oi < descs.size(); ++oi) {
             const auto &d = descs[oi];
             bool is_last = (oi == descs.size() - 1);
 
-            // Where to write this op's result
             void *dst;
             if (is_last) {
                 dst = out_ptr + base * elem_size;
@@ -527,33 +565,44 @@ static bool try_tiled_fused_loop(const ExecutionStep &step,
             }
 
             if (d.is_unary) {
-                const void *src;
-                if (d.input_slot_a == -1) {
-                    src = prev;
-                } else {
-                    src = resolve_ptr(d.input_slot_a, base);
-                }
+                const void *src = (d.input_slot_a == -1)
+                                      ? prev
+                                      : resolve_ptr(d.input_slot_a, base);
                 d.unary_fn(src, dst, count);
             } else {
-                const void *src_a;
-                const void *src_b;
-                if (d.input_slot_a == -1) {
-                    src_a = prev;
-                } else {
-                    src_a = resolve_ptr(d.input_slot_a, base);
-                }
-                if (d.input_slot_b == -1) {
-                    src_b = prev;
-                } else {
-                    src_b = resolve_ptr(d.input_slot_b, base);
-                }
+                const void *src_a = (d.input_slot_a == -1)
+                                        ? prev
+                                        : resolve_ptr(d.input_slot_a, base);
+                const void *src_b = (d.input_slot_b == -1)
+                                        ? prev
+                                        : resolve_ptr(d.input_slot_b, base);
                 d.binary_fn(src_a, src_b, dst, count);
             }
 
             prev = dst;
-            if (!is_last) {
+            if (!is_last)
                 prev_is_a = !prev_is_a;
-            }
+        }
+    };
+
+    if (parallel::should_parallelize(total)) {
+        // Parallel: each thread gets its own tile buffers
+        ptrdiff_t num_tiles = static_cast<ptrdiff_t>(
+            (total + tile_size - 1) / tile_size);
+#pragma omp parallel for schedule(static)
+        for (ptrdiff_t ti = 0; ti < num_tiles; ++ti) {
+            size_t base = static_cast<size_t>(ti) * tile_size;
+            size_t count = std::min(tile_size, total - base);
+            TileBuffer local_a, local_b;
+            process_tile(base, count, local_a.data, local_b.data);
+        }
+    } else {
+        // Sequential: single set of tile buffers
+        TileBuffer tile_a_buf, tile_b_buf;
+        for (size_t base = 0; base < total; base += tile_size) {
+            size_t count = std::min(tile_size, total - base);
+            process_tile(base, count, tile_a_buf.data,
+                         tile_b_buf.data);
         }
     }
 
