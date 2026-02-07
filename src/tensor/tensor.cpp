@@ -1709,12 +1709,20 @@ Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
         throw DeviceError::cpu_only("arange");
 
     auto dtype_variant = variant_to_dtype(dtype);
-    std::visit(overload{[&]<typename T>(T) {
-                   using value_type = typename T::value_type;
-                   value_type *data = t.typed_data<value_type>();
-                   for (size_t i = 0; i < size; ++i)
-                       data[i] = start + i * step;
-               }},
+    std::visit(overload{[&]<typename T>(T)
+                            requires(!T::is_int())
+                                    {
+                                        throw TypeError::unsupported_dtype(
+                                            axiom::dtype_name(dtype), "arange");
+                                    },
+                                    [&]<typename T>(T)
+                                        requires(T::is_int())
+                        {
+                            using value_type = typename T::value_type;
+                            value_type *data = t.typed_data<value_type>();
+                            for (size_t i = 0; i < size; ++i)
+                                data[i] = start + i * step;
+                        }},
                dtype_variant);
 
     return t;
@@ -1771,7 +1779,7 @@ Tensor Tensor::uniform(double low, double high, const Shape &shape, DType dtype,
     auto dtype_variant = variant_to_dtype(dtype);
     std::visit(overload{
         [&]<typename T>(T)
-            requires(!T::is_pod_float())
+            requires(!T::is_float())
                     {
                         throw TypeError(
                             "randn only supports floating point types, got " +
@@ -1787,6 +1795,13 @@ Tensor Tensor::uniform(double low, double high, const Shape &shape, DType dtype,
                     rng.uniform<value_type>(static_cast<value_type>(low),
                                             static_cast<value_type>(high));
             }
+        },
+        [&](axiom::Float16) {
+            float16_t *data = tensor.typed_data<float16_t>();
+            for (size_t i = 0; i < tensor.size(); ++i) {
+                data[i] = float16_t(rng.uniform<float>(
+                    static_cast<float>(low), static_cast<float>(high)));
+            }
         }},
                dtype_variant);
     if (device == Device::GPU)
@@ -1799,7 +1814,8 @@ Tensor Tensor::randint(int64_t low, int64_t high, const Shape &shape,
     if (low >= high)
         throw ValueError("randint: low must be less than high");
 
-    // Always create and initialize on CPU first, then transfer to target device
+    // Always create and initialize on CPU first, then transfer to target
+    // device
     auto tensor = Tensor(shape, dtype, Device::CPU, order);
     auto &rng = RandomGenerator::instance();
     auto dtype_variant = variant_to_dtype(dtype);
@@ -2382,8 +2398,9 @@ Tensor Tensor::real() const {
 
     // Strides stay the same - we still step between complex elements,
     // just interpreting the real part (first half) of each
-    // Layout: [real0][imag0][real1][imag1]... stride moves us to next complex
-    // Real part is at the same offset (complex is laid out as [real, imag])
+    // Layout: [real0][imag0][real1][imag1]... stride moves us to next
+    // complex Real part is at the same offset (complex is laid out as
+    // [real, imag])
     return Tensor(storage_, shape_, strides_, base_dtype, offset_,
                   memory_order_);
 }
@@ -2400,8 +2417,9 @@ Tensor Tensor::imag() const {
 
     // Strides stay the same - we still step between complex elements,
     // just interpreting the imag part (second half) of each
-    // Layout: [real0][imag0][real1][imag1]... stride moves us to next complex
-    // Imag part is offset by the size of the base type (to skip the real part)
+    // Layout: [real0][imag0][real1][imag1]... stride moves us to next
+    // complex Imag part is offset by the size of the base type (to skip the
+    // real part)
     return Tensor(storage_, shape_, strides_, base_dtype, offset_ + base_size,
                   memory_order_);
 }
@@ -2439,8 +2457,8 @@ Tensor Tensor::concatenate(const std::vector<Tensor> &tensors, int axis) {
     for (size_t i = 1; i < tensors.size(); ++i) {
         const Tensor &t = tensors[i];
         if (t.ndim() != first.ndim()) {
-            throw ShapeError(
-                "concatenate: all tensors must have same number of dimensions");
+            throw ShapeError("concatenate: all tensors must have same "
+                             "number of dimensions");
         }
         for (int d = 0; d < ndim; ++d) {
             if (d != norm_axis && t.shape()[d] != first.shape()[d]) {
