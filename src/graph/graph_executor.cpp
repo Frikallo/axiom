@@ -106,33 +106,6 @@ Tensor GraphExecutor::execute(const CompiledGraph &plan,
         execute_step(step, plan, buffers);
     }
 
-    // Auto-tune tile size on first execution of a graph with fused steps.
-    // Use heuristic: longer chains benefit from smaller tiles (better L1
-    // residency), shorter chains benefit from larger tiles (less overhead).
-    if (!plan.tuned_.load(std::memory_order_relaxed)) {
-        size_t best_ts = TILE_ELEMENTS; // default 16K elements
-        for (const auto &step : plan.steps) {
-            if ((step.kind == ExecutionStep::Kind::FusedGeneric ||
-                 step.kind == ExecutionStep::Kind::FusedReduction) &&
-                step.device == Device::CPU && step.total_elements >= 100000) {
-                size_t chain_len = step.op_chain.size();
-                if (chain_len >= 6) {
-                    // Long chains: smaller tiles to keep working set in L1
-                    best_ts = 4096;
-                } else if (chain_len >= 3) {
-                    // Medium chains: default
-                    best_ts = 16384;
-                } else {
-                    // Short chains: larger tiles, less overhead
-                    best_ts = 65536;
-                }
-                break;
-            }
-        }
-        plan.tuned_tile_size_.store(best_ts, std::memory_order_relaxed);
-        plan.tuned_.store(true, std::memory_order_relaxed);
-    }
-
     // Return the output
     if (plan.output_slot >= 0 &&
         plan.output_slot < static_cast<int>(buffers.size())) {
@@ -498,8 +471,7 @@ struct alignas(64) TileBuffer {
 // lacks a fn-ptr (unsupported dtype/op), in which case the caller
 // falls back to OperationRegistry dispatch.
 static bool try_tiled_fused_loop(const ExecutionStep &step,
-                                 std::vector<Tensor> &buffers,
-                                 const CompiledGraph &plan) {
+                                 std::vector<Tensor> &buffers) {
     if (step.device != Device::CPU)
         return false;
 
@@ -560,12 +532,7 @@ static bool try_tiled_fused_loop(const ExecutionStep &step,
     }
 
     size_t total = step.total_elements;
-    size_t ts = plan.tuned_.load(std::memory_order_relaxed)
-                    ? plan.tuned_tile_size_.load(std::memory_order_relaxed)
-                    : TILE_ELEMENTS;
-    if (ts == 0)
-        ts = TILE_ELEMENTS;
-    size_t tile_size = std::min(ts, total);
+    size_t tile_size = std::min(TILE_ELEMENTS, total);
 
     // Output buffer
     Tensor &output = buffers[step.output_slot];
@@ -644,10 +611,10 @@ static bool try_tiled_fused_loop(const ExecutionStep &step,
 }
 
 void GraphExecutor::execute_fused_generic(const ExecutionStep &step,
-                                          const CompiledGraph &plan,
+                                          const CompiledGraph & /*plan*/,
                                           std::vector<Tensor> &buffers) {
     // Try the fast tiled path first
-    if (try_tiled_fused_loop(step, buffers, plan))
+    if (try_tiled_fused_loop(step, buffers))
         return;
 
     // Fallback: sequential op-by-op via OperationRegistry
@@ -905,12 +872,7 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
         return;
     }
 
-    size_t ts = plan.tuned_.load(std::memory_order_relaxed)
-                    ? plan.tuned_tile_size_.load(std::memory_order_relaxed)
-                    : TILE_ELEMENTS;
-    if (ts == 0)
-        ts = TILE_ELEMENTS;
-    size_t tile_size = std::min(ts, total);
+    size_t tile_size = std::min(TILE_ELEMENTS, total);
 
     auto resolve_ptr = [&](int slot, size_t offset) -> const void * {
         if (slot >= 0 && slot < static_cast<int>(buffers.size())) {

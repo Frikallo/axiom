@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -87,10 +86,6 @@ struct CompiledGraph {
     size_t num_allocations = 0;
     std::vector<int> slot_to_allocation;
     std::vector<size_t> allocation_sizes;
-
-    // Auto-tune tile size for fused loops
-    mutable std::atomic<bool> tuned_{false};
-    mutable std::atomic<size_t> tuned_tile_size_{0};
 
     // Arena pool for buffer reuse across executions
     mutable std::mutex arena_mutex_;
