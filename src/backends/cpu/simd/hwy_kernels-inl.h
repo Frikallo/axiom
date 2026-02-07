@@ -236,6 +236,152 @@ HWY_NOINLINE void BinaryFmodImplT(const T *HWY_RESTRICT a,
 }
 
 // ============================================================================
+// Scalar-Broadcast Binary Operations (result[i] = op(scalar, b[i]) or
+//                                     result[i] = op(a[i], scalar))
+// ============================================================================
+
+// Add: scalar + vec
+template <typename T>
+HWY_NOINLINE void BinaryAddScalarLhsImplT(T scalar, const T *HWY_RESTRICT b,
+                                          T *HWY_RESTRICT result, size_t n) {
+    const hn::ScalableTag<T> d;
+    const size_t N = hn::Lanes(d);
+    const auto vs = hn::Set(d, scalar);
+    size_t i = 0;
+    for (; i + N <= n; i += N)
+        hn::StoreU(hn::Add(vs, hn::LoadU(d, b + i)), d, result + i);
+    for (; i < n; ++i)
+        result[i] = scalar + b[i];
+}
+template <typename T>
+HWY_NOINLINE void BinaryAddScalarRhsImplT(const T *HWY_RESTRICT a, T scalar,
+                                          T *HWY_RESTRICT result, size_t n) {
+    BinaryAddScalarLhsImplT(scalar, a, result, n); // commutative
+}
+
+// Sub: scalar - vec, vec - scalar
+template <typename T>
+HWY_NOINLINE void BinarySubScalarLhsImplT(T scalar, const T *HWY_RESTRICT b,
+                                          T *HWY_RESTRICT result, size_t n) {
+    const hn::ScalableTag<T> d;
+    const size_t N = hn::Lanes(d);
+    const auto vs = hn::Set(d, scalar);
+    size_t i = 0;
+    for (; i + N <= n; i += N)
+        hn::StoreU(hn::Sub(vs, hn::LoadU(d, b + i)), d, result + i);
+    for (; i < n; ++i)
+        result[i] = scalar - b[i];
+}
+template <typename T>
+HWY_NOINLINE void BinarySubScalarRhsImplT(const T *HWY_RESTRICT a, T scalar,
+                                          T *HWY_RESTRICT result, size_t n) {
+    const hn::ScalableTag<T> d;
+    const size_t N = hn::Lanes(d);
+    const auto vs = hn::Set(d, scalar);
+    size_t i = 0;
+    for (; i + N <= n; i += N)
+        hn::StoreU(hn::Sub(hn::LoadU(d, a + i), vs), d, result + i);
+    for (; i < n; ++i)
+        result[i] = a[i] - scalar;
+}
+
+// Mul: scalar * vec
+template <typename T>
+HWY_NOINLINE void BinaryMulScalarLhsImplT(T scalar, const T *HWY_RESTRICT b,
+                                          T *HWY_RESTRICT result, size_t n) {
+    const hn::ScalableTag<T> d;
+    const size_t N = hn::Lanes(d);
+    const auto vs = hn::Set(d, scalar);
+    size_t i = 0;
+    for (; i + N <= n; i += N)
+        hn::StoreU(hn::Mul(vs, hn::LoadU(d, b + i)), d, result + i);
+    for (; i < n; ++i)
+        result[i] = scalar * b[i];
+}
+template <typename T>
+HWY_NOINLINE void BinaryMulScalarRhsImplT(const T *HWY_RESTRICT a, T scalar,
+                                          T *HWY_RESTRICT result, size_t n) {
+    BinaryMulScalarLhsImplT(scalar, a, result, n); // commutative
+}
+
+// Div: scalar / vec, vec / scalar
+template <typename T>
+HWY_NOINLINE void BinaryDivScalarLhsImplT(T scalar, const T *HWY_RESTRICT b,
+                                          T *HWY_RESTRICT result, size_t n) {
+    const hn::ScalableTag<T> d;
+    const size_t N = hn::Lanes(d);
+    const auto vs = hn::Set(d, scalar);
+    size_t i = 0;
+    for (; i + N <= n; i += N)
+        hn::StoreU(hn::Div(vs, hn::LoadU(d, b + i)), d, result + i);
+    for (; i < n; ++i)
+        result[i] = scalar / b[i];
+}
+template <typename T>
+HWY_NOINLINE void BinaryDivScalarRhsImplT(const T *HWY_RESTRICT a, T scalar,
+                                          T *HWY_RESTRICT result, size_t n) {
+    const hn::ScalableTag<T> d;
+    const size_t N = hn::Lanes(d);
+    const auto vs = hn::Set(d, scalar);
+    size_t i = 0;
+    for (; i + N <= n; i += N)
+        hn::StoreU(hn::Div(hn::LoadU(d, a + i), vs), d, result + i);
+    for (; i < n; ++i)
+        result[i] = a[i] / scalar;
+}
+
+// Non-template wrappers for HWY_EXPORT — float
+HWY_NOINLINE void BinaryAddScalarLhsF(float s, const float *b, float *r,
+                                      size_t n) {
+    BinaryAddScalarLhsImplT(s, b, r, n);
+}
+HWY_NOINLINE void BinarySubScalarLhsF(float s, const float *b, float *r,
+                                      size_t n) {
+    BinarySubScalarLhsImplT(s, b, r, n);
+}
+HWY_NOINLINE void BinarySubScalarRhsF(const float *a, float s, float *r,
+                                      size_t n) {
+    BinarySubScalarRhsImplT(a, s, r, n);
+}
+HWY_NOINLINE void BinaryMulScalarLhsF(float s, const float *b, float *r,
+                                      size_t n) {
+    BinaryMulScalarLhsImplT(s, b, r, n);
+}
+HWY_NOINLINE void BinaryDivScalarLhsF(float s, const float *b, float *r,
+                                      size_t n) {
+    BinaryDivScalarLhsImplT(s, b, r, n);
+}
+HWY_NOINLINE void BinaryDivScalarRhsF(const float *a, float s, float *r,
+                                      size_t n) {
+    BinaryDivScalarRhsImplT(a, s, r, n);
+}
+// double
+HWY_NOINLINE void BinaryAddScalarLhsD(double s, const double *b, double *r,
+                                      size_t n) {
+    BinaryAddScalarLhsImplT(s, b, r, n);
+}
+HWY_NOINLINE void BinarySubScalarLhsD(double s, const double *b, double *r,
+                                      size_t n) {
+    BinarySubScalarLhsImplT(s, b, r, n);
+}
+HWY_NOINLINE void BinarySubScalarRhsD(const double *a, double s, double *r,
+                                      size_t n) {
+    BinarySubScalarRhsImplT(a, s, r, n);
+}
+HWY_NOINLINE void BinaryMulScalarLhsD(double s, const double *b, double *r,
+                                      size_t n) {
+    BinaryMulScalarLhsImplT(s, b, r, n);
+}
+HWY_NOINLINE void BinaryDivScalarLhsD(double s, const double *b, double *r,
+                                      size_t n) {
+    BinaryDivScalarLhsImplT(s, b, r, n);
+}
+HWY_NOINLINE void BinaryDivScalarRhsD(const double *a, double s, double *r,
+                                      size_t n) {
+    BinaryDivScalarRhsImplT(a, s, r, n);
+}
+
+// ============================================================================
 // Unary Operations (templated implementations)
 // ============================================================================
 

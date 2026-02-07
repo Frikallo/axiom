@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -24,14 +25,16 @@ enum class AccessPattern : uint8_t {
 
 struct ExecutionStep {
     enum class Kind : uint8_t {
-        SingleOp,        // Dispatch via OperationRegistry
-        FusedKnown,      // Matched HWY SIMD pattern
-        FusedGeneric,    // Generic fused loop with fn-ptr dispatch
-        MatMulActivation // MatMul + activation fused
+        SingleOp,         // Dispatch via OperationRegistry
+        FusedKnown,       // Matched HWY SIMD pattern
+        FusedGeneric,     // Generic fused loop with fn-ptr dispatch
+        MatMulActivation, // MatMul + activation fused
+        FusedReduction    // Elementwise chain + full reduction
     };
 
     Kind kind;
-    ops::OpType op_type; // For SingleOp
+    ops::OpType op_type;      // For SingleOp
+    ops::OpType reduction_op; // For FusedReduction
     GraphNode::Params params;
     Device device;
     FusedPattern pattern; // For FusedKnown
@@ -84,6 +87,10 @@ struct CompiledGraph {
     size_t num_allocations = 0;
     std::vector<int> slot_to_allocation;
     std::vector<size_t> allocation_sizes;
+
+    // Auto-tune tile size for fused loops
+    mutable std::atomic<bool> tuned_{false};
+    mutable std::atomic<size_t> tuned_tile_size_{0};
 
     // Arena pool for buffer reuse across executions
     mutable std::mutex arena_mutex_;

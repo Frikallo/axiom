@@ -43,6 +43,22 @@ HWY_EXPORT(BinaryAtan2D);
 HWY_EXPORT(BinaryHypotD);
 HWY_EXPORT(BinaryFmodD);
 
+// Scalar-broadcast binary operations - float
+HWY_EXPORT(BinaryAddScalarLhsF);
+HWY_EXPORT(BinarySubScalarLhsF);
+HWY_EXPORT(BinarySubScalarRhsF);
+HWY_EXPORT(BinaryMulScalarLhsF);
+HWY_EXPORT(BinaryDivScalarLhsF);
+HWY_EXPORT(BinaryDivScalarRhsF);
+
+// Scalar-broadcast binary operations - double
+HWY_EXPORT(BinaryAddScalarLhsD);
+HWY_EXPORT(BinarySubScalarLhsD);
+HWY_EXPORT(BinarySubScalarRhsD);
+HWY_EXPORT(BinaryMulScalarLhsD);
+HWY_EXPORT(BinaryDivScalarLhsD);
+HWY_EXPORT(BinaryDivScalarRhsD);
+
 // Unary operations - float
 HWY_EXPORT(UnaryNegF);
 HWY_EXPORT(UnaryAbsF);
@@ -787,6 +803,60 @@ void dispatch_activation_leaky_relu<float>(const float* input, float* output, si
 template <>
 void dispatch_activation_leaky_relu<double>(const double* input, double* output, size_t n, double alpha) {
     dispatch_activation_leaky_relu_d(input, output, n, alpha);
+}
+
+// ============================================================================
+// Scalar-broadcast dispatch functions
+// ============================================================================
+
+// Add: scalar + vec (commutative, works for both LHS and RHS)
+void dispatch_scalar_add_f(float s, const float *b, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryAddScalarLhsF)(s, b, r, n);
+}
+void dispatch_scalar_add_d(double s, const double *b, double *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryAddScalarLhsD)(s, b, r, n);
+}
+
+// Sub: scalar - vec
+void dispatch_scalar_sub_lhs_f(float s, const float *b, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinarySubScalarLhsF)(s, b, r, n);
+}
+void dispatch_scalar_sub_lhs_d(double s, const double *b, double *r,
+                                size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinarySubScalarLhsD)(s, b, r, n);
+}
+// Sub: vec - scalar
+void dispatch_scalar_sub_rhs_f(const float *a, float s, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinarySubScalarRhsF)(a, s, r, n);
+}
+void dispatch_scalar_sub_rhs_d(const double *a, double s, double *r,
+                                size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinarySubScalarRhsD)(a, s, r, n);
+}
+
+// Mul: scalar * vec (commutative)
+void dispatch_scalar_mul_f(float s, const float *b, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryMulScalarLhsF)(s, b, r, n);
+}
+void dispatch_scalar_mul_d(double s, const double *b, double *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryMulScalarLhsD)(s, b, r, n);
+}
+
+// Div: scalar / vec
+void dispatch_scalar_div_lhs_f(float s, const float *b, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryDivScalarLhsF)(s, b, r, n);
+}
+void dispatch_scalar_div_lhs_d(double s, const double *b, double *r,
+                                size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryDivScalarLhsD)(s, b, r, n);
+}
+// Div: vec / scalar
+void dispatch_scalar_div_rhs_f(const float *a, float s, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryDivScalarRhsF)(a, s, r, n);
+}
+void dispatch_scalar_div_rhs_d(const double *a, double s, double *r,
+                                size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryDivScalarRhsD)(a, s, r, n);
 }
 
 // ============================================================================

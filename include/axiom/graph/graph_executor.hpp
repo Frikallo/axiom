@@ -34,6 +34,14 @@ class GraphExecutor {
 
     static void execute_matmul_activation(const ExecutionStep &step,
                                           std::vector<Tensor> &buffers);
+
+    static void execute_fused_reduction(const ExecutionStep &step,
+                                        const CompiledGraph &plan,
+                                        std::vector<Tensor> &buffers);
+
+    static void execute_fused_reduction_fallback(const ExecutionStep &step,
+                                                 const CompiledGraph &plan,
+                                                 std::vector<Tensor> &buffers);
 };
 
 } // namespace graph

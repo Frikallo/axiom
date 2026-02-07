@@ -15,6 +15,7 @@
 #include "axiom/linalg.hpp"
 #include "axiom/numeric.hpp"
 #include "axiom/operations.hpp"
+#include "axiom/parallel.hpp"
 #include "axiom/random.hpp"
 #include "axiom/system.hpp"
 
@@ -493,9 +494,71 @@ Tensor Tensor::ascontiguousarray() const {
     auto new_tensor = Tensor(shape_, dtype_, device(), MemoryOrder::RowMajor);
 
     if (device() == Device::CPU) {
-        recursive_copy(static_cast<uint8_t *>(new_tensor.data()),
-                       static_cast<const uint8_t *>(this->data()), shape_,
-                       new_tensor.strides(), this->strides(), itemsize(), 0);
+        // Fast path: 2D non-contiguous (e.g., transposed matrix)
+        // Use cache-blocked copy to avoid cache thrashing
+        if (ndim() == 2 && shape_[0] > 1 && shape_[1] > 1) {
+            size_t rows = shape_[0];
+            size_t cols = shape_[1];
+            size_t isize = itemsize();
+            int64_t src_row_stride = strides_[0];
+            int64_t src_col_stride = strides_[1];
+            int64_t dst_row_stride = new_tensor.strides()[0];
+
+            constexpr size_t BLOCK = 8;
+            const uint8_t *src = static_cast<const uint8_t *>(this->data());
+            uint8_t *dst = static_cast<uint8_t *>(new_tensor.data());
+
+#ifdef AXIOM_USE_OPENMP
+            if (parallel::should_parallelize(rows * cols)) {
+                ptrdiff_t nbi =
+                    static_cast<ptrdiff_t>((rows + BLOCK - 1) / BLOCK);
+                ptrdiff_t nbj =
+                    static_cast<ptrdiff_t>((cols + BLOCK - 1) / BLOCK);
+#pragma omp parallel for collapse(2) schedule(static)
+                for (ptrdiff_t bi = 0; bi < nbi; ++bi) {
+                    for (ptrdiff_t bj = 0; bj < nbj; ++bj) {
+                        size_t i0 = static_cast<size_t>(bi) * BLOCK;
+                        size_t j0 = static_cast<size_t>(bj) * BLOCK;
+                        size_t i1 = std::min(i0 + BLOCK, rows);
+                        size_t j1 = std::min(j0 + BLOCK, cols);
+                        for (size_t i = i0; i < i1; ++i) {
+                            for (size_t j = j0; j < j1; ++j) {
+                                std::memcpy(dst + i * dst_row_stride +
+                                                static_cast<int64_t>(j) *
+                                                    static_cast<int64_t>(isize),
+                                            src + i * src_row_stride +
+                                                j * src_col_stride,
+                                            isize);
+                            }
+                        }
+                    }
+                }
+            } else
+#endif
+            {
+                for (size_t bi = 0; bi < rows; bi += BLOCK) {
+                    for (size_t bj = 0; bj < cols; bj += BLOCK) {
+                        size_t i1 = std::min(bi + BLOCK, rows);
+                        size_t j1 = std::min(bj + BLOCK, cols);
+                        for (size_t i = bi; i < i1; ++i) {
+                            for (size_t j = bj; j < j1; ++j) {
+                                std::memcpy(dst + i * dst_row_stride +
+                                                static_cast<int64_t>(j) *
+                                                    static_cast<int64_t>(isize),
+                                            src + i * src_row_stride +
+                                                j * src_col_stride,
+                                            isize);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            recursive_copy(static_cast<uint8_t *>(new_tensor.data()),
+                           static_cast<const uint8_t *>(this->data()), shape_,
+                           new_tensor.strides(), this->strides(), itemsize(),
+                           0);
+        }
     } else {
         new_tensor.storage_->copy_from(*storage_);
     }

@@ -345,6 +345,202 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(
     size_t total_elements = ShapeUtils::size(result_shape);
     size_t ndim = result_shape.size();
 
+    // ======== Broadcast SIMD fast paths ========
+    // Only for same input/output type with SIMD support
+    if constexpr (std::is_same_v<InputT, OutputT> &&
+                  simd::has_support<InputT>) {
+        bool lhs_scalar = (ShapeUtils::size(lhs_shape) == 1);
+        bool rhs_scalar = (ShapeUtils::size(rhs_shape) == 1);
+
+        // --- Scalar broadcast: one input is size 1 ---
+        if (lhs_scalar || rhs_scalar) {
+            InputT scalar_val = lhs_scalar ? lhs_data[0] : rhs_data[0];
+            const InputT *vec_data = lhs_scalar ? rhs_data : lhs_data;
+            bool scalar_is_lhs = lhs_scalar;
+
+            // Check that the vector operand is contiguous
+            const Shape &vec_shape = scalar_is_lhs ? rhs_shape : lhs_shape;
+            const Strides &vec_strides =
+                scalar_is_lhs ? rhs_strides_in : lhs_strides_in;
+            auto expected = ShapeUtils::calculate_strides(
+                vec_shape, static_cast<int64_t>(sizeof(InputT)));
+            bool vec_contiguous = (vec_strides == expected);
+
+            if (vec_contiguous) {
+                bool handled = false;
+                if constexpr (std::is_same_v<InputT, float>) {
+                    if constexpr (std::is_same_v<Func, AddFunc>) {
+                        simd::dispatch_scalar_add_f(
+                            scalar_val, vec_data, result_data, total_elements);
+                        handled = true;
+                    } else if constexpr (std::is_same_v<Func, SubtractFunc>) {
+                        if (scalar_is_lhs)
+                            simd::dispatch_scalar_sub_lhs_f(
+                                scalar_val, vec_data, result_data,
+                                total_elements);
+                        else
+                            simd::dispatch_scalar_sub_rhs_f(
+                                vec_data, scalar_val, result_data,
+                                total_elements);
+                        handled = true;
+                    } else if constexpr (std::is_same_v<Func, MultiplyFunc>) {
+                        simd::dispatch_scalar_mul_f(
+                            scalar_val, vec_data, result_data, total_elements);
+                        handled = true;
+                    } else if constexpr (std::is_same_v<Func, DivideFunc>) {
+                        if (scalar_is_lhs)
+                            simd::dispatch_scalar_div_lhs_f(
+                                scalar_val, vec_data, result_data,
+                                total_elements);
+                        else
+                            simd::dispatch_scalar_div_rhs_f(
+                                vec_data, scalar_val, result_data,
+                                total_elements);
+                        handled = true;
+                    }
+                }
+                if constexpr (std::is_same_v<InputT, double>) {
+                    if constexpr (std::is_same_v<Func, AddFunc>) {
+                        simd::dispatch_scalar_add_d(
+                            scalar_val, vec_data, result_data, total_elements);
+                        handled = true;
+                    } else if constexpr (std::is_same_v<Func, SubtractFunc>) {
+                        if (scalar_is_lhs)
+                            simd::dispatch_scalar_sub_lhs_d(
+                                scalar_val, vec_data, result_data,
+                                total_elements);
+                        else
+                            simd::dispatch_scalar_sub_rhs_d(
+                                vec_data, scalar_val, result_data,
+                                total_elements);
+                        handled = true;
+                    } else if constexpr (std::is_same_v<Func, MultiplyFunc>) {
+                        simd::dispatch_scalar_mul_d(
+                            scalar_val, vec_data, result_data, total_elements);
+                        handled = true;
+                    } else if constexpr (std::is_same_v<Func, DivideFunc>) {
+                        if (scalar_is_lhs)
+                            simd::dispatch_scalar_div_lhs_d(
+                                scalar_val, vec_data, result_data,
+                                total_elements);
+                        else
+                            simd::dispatch_scalar_div_rhs_d(
+                                vec_data, scalar_val, result_data,
+                                total_elements);
+                        handled = true;
+                    }
+                }
+                if (handled)
+                    return;
+            }
+        }
+
+        // --- Outer-dim broadcast: [1,N] op [M,N] or [M,N] op [1,N] ---
+        // Both inner dims contiguous, one outer dim is 1.
+        if (ndim == 2) {
+            size_t M = result_shape[0];
+            size_t N = result_shape[1];
+            int64_t elem_stride = static_cast<int64_t>(sizeof(InputT));
+
+            // Check which input has outer dim == 1
+            bool lhs_outer_bcast =
+                (lhs_shape.size() <= 1 ||
+                 (lhs_shape.size() == 2 && lhs_shape[0] == 1));
+            bool rhs_outer_bcast =
+                (rhs_shape.size() <= 1 ||
+                 (rhs_shape.size() == 2 && rhs_shape[0] == 1));
+
+            auto is_row_contiguous = [&](const Shape &s, const Strides &st) {
+                if (s.empty())
+                    return true;
+                size_t last = s.size() - 1;
+                return s[last] > 0 && st[last] == elem_stride;
+            };
+
+            if ((lhs_outer_bcast || rhs_outer_bcast) &&
+                !(lhs_outer_bcast && rhs_outer_bcast) &&
+                // Both inputs must have matching inner dim N
+                (lhs_shape.size() >= 1 && rhs_shape.size() >= 1 &&
+                 lhs_shape.back() == rhs_shape.back() &&
+                 lhs_shape.back() == N)) {
+                const InputT *row_data = lhs_outer_bcast ? lhs_data : rhs_data;
+                const InputT *mat_data = lhs_outer_bcast ? rhs_data : lhs_data;
+                const Shape &mat_shape =
+                    lhs_outer_bcast ? rhs_shape : lhs_shape;
+                const Strides &mat_strides =
+                    lhs_outer_bcast ? rhs_strides_in : lhs_strides_in;
+                const Strides &row_strides =
+                    lhs_outer_bcast ? lhs_strides_in : rhs_strides_in;
+                bool bcast_is_lhs = lhs_outer_bcast;
+
+                bool mat_row_contig = is_row_contiguous(mat_shape, mat_strides);
+                bool row_contig = is_row_contiguous(
+                    lhs_outer_bcast ? lhs_shape : rhs_shape, row_strides);
+
+                if (mat_row_contig && row_contig && mat_shape.size() == 2) {
+                    int64_t mat_row_stride = mat_strides[0];
+                    bool handled = false;
+
+                    auto do_rows = [&](auto simd_fn) {
+#ifdef AXIOM_USE_OPENMP
+                        if (parallel::should_parallelize(M * N)) {
+                            ptrdiff_t pm = static_cast<ptrdiff_t>(M);
+#pragma omp parallel for schedule(static)
+                            for (ptrdiff_t r = 0; r < pm; ++r) {
+                                const InputT *mr =
+                                    reinterpret_cast<const InputT *>(
+                                        reinterpret_cast<const uint8_t *>(
+                                            mat_data) +
+                                        r * mat_row_stride);
+                                if (bcast_is_lhs)
+                                    simd_fn(row_data, mr, result_data + r * N,
+                                            N);
+                                else
+                                    simd_fn(mr, row_data, result_data + r * N,
+                                            N);
+                            }
+                        } else
+#endif
+                        {
+                            for (size_t r = 0; r < M; ++r) {
+                                const InputT *mr =
+                                    reinterpret_cast<const InputT *>(
+                                        reinterpret_cast<const uint8_t *>(
+                                            mat_data) +
+                                        static_cast<int64_t>(r) *
+                                            mat_row_stride);
+                                if (bcast_is_lhs)
+                                    simd_fn(row_data, mr, result_data + r * N,
+                                            N);
+                                else
+                                    simd_fn(mr, row_data, result_data + r * N,
+                                            N);
+                            }
+                        }
+                    };
+
+                    if constexpr (std::is_same_v<Func, AddFunc>) {
+                        do_rows(simd::dispatch_binary_add<InputT>);
+                        handled = true;
+                    } else if constexpr (std::is_same_v<Func, SubtractFunc>) {
+                        do_rows(simd::dispatch_binary_sub<InputT>);
+                        handled = true;
+                    } else if constexpr (std::is_same_v<Func, MultiplyFunc>) {
+                        do_rows(simd::dispatch_binary_mul<InputT>);
+                        handled = true;
+                    } else if constexpr (std::is_same_v<Func, DivideFunc>) {
+                        do_rows(simd::dispatch_binary_div<InputT>);
+                        handled = true;
+                    }
+
+                    if (handled)
+                        return;
+                }
+            }
+        }
+    }
+    // ======== End broadcast SIMD fast paths ========
+
     // Prepare broadcasted strides
     Strides lhs_bcast_strides =
         ShapeUtils::broadcast_strides(lhs_shape, lhs_strides_in, result_shape);
@@ -512,6 +708,38 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(
     const Strides &lhs_strides = lhs.strides();
     size_t total_elements = lhs.size();
 
+    // OpenMP parallel path for large in-place broadcast operations
+#ifdef AXIOM_USE_OPENMP
+    if (parallel::should_parallelize(total_elements)) {
+        ShapeDivisors shape_divisors(lhs_shape);
+        ptrdiff_t n = static_cast<ptrdiff_t>(total_elements);
+#pragma omp parallel for schedule(static)
+        for (ptrdiff_t i = 0; i < n; ++i) {
+            size_t remaining = static_cast<size_t>(i);
+            int64_t lhs_byte_offset = 0;
+            int64_t rhs_byte_offset = 0;
+
+            for (int d = static_cast<int>(lhs_ndim) - 1; d >= 0; --d) {
+                auto result = fxdiv_divide_size_t(remaining, shape_divisors[d]);
+                size_t coord = result.remainder;
+                remaining = result.quotient;
+                lhs_byte_offset += static_cast<int64_t>(coord) * lhs_strides[d];
+                rhs_byte_offset +=
+                    static_cast<int64_t>(coord) * rhs_bcast_strides[d];
+            }
+
+            T &lhs_val = *reinterpret_cast<T *>(
+                reinterpret_cast<uint8_t *>(lhs_data) + lhs_byte_offset);
+            const T &rhs_val = *reinterpret_cast<const T *>(
+                reinterpret_cast<const uint8_t *>(rhs_data) + rhs_byte_offset);
+
+            lhs_val = func_(lhs_val, rhs_val);
+        }
+        return;
+    }
+#endif
+
+    // Sequential fallback with coordinate tracking
     std::vector<size_t> coords(lhs_ndim, 0);
 
     for (size_t i = 0; i < total_elements; ++i) {
@@ -1412,6 +1640,130 @@ fallback_path:
 scalar_fallback:
 #endif // !AXIOM_USE_ACCELERATE
 
+    // Fast path: single-axis reduction on contiguous input with SIMD
+    if (norm_axes.size() == 1 && input.is_contiguous()) {
+        int axis = norm_axes[0];
+        bool is_last_axis = (axis == static_cast<int>(input.ndim()) - 1);
+        bool is_first_axis = (axis == 0);
+
+        // Last-axis reduction: each row is an independent SIMD reduction
+        if (is_last_axis && input.ndim() >= 2) {
+            if constexpr (simd::has_support<AccumT>) {
+                size_t row_size = input.shape().back();
+                size_t num_rows = input.size() / row_size;
+                Tensor result(result_shape, accum_dtype, Device::CPU);
+                AccumT *out = result.template typed_data<AccumT>();
+
+                const AccumT *in;
+                Tensor input_converted;
+                if constexpr (use_float32_accum) {
+                    input_converted = input.astype(DType::Float32);
+                    in = input_converted.template typed_data<AccumT>();
+                } else {
+                    in = input.template typed_data<AccumT>();
+                }
+
+                auto reduce_row = [&](size_t r) {
+                    const AccumT *row = in + r * row_size;
+                    if constexpr (std::is_same_v<Func, SumFunc>) {
+                        out[r] = simd::dispatch_reduce_sum(row, row_size);
+                    } else if constexpr (std::is_same_v<Func, MaxFunc>) {
+                        out[r] = simd::dispatch_reduce_max(row, row_size);
+                    } else if constexpr (std::is_same_v<Func, MinFunc>) {
+                        out[r] = simd::dispatch_reduce_min(row, row_size);
+                    } else if constexpr (std::is_same_v<Func, ProdFunc>) {
+                        out[r] = simd::dispatch_reduce_prod(row, row_size);
+                    } else {
+                        // Unsupported reduction — use scalar
+                        AccumT acc = Func::template identity<AccumT>();
+                        for (size_t j = 0; j < row_size; ++j)
+                            acc = func_(acc, row[j]);
+                        out[r] = acc;
+                    }
+                };
+
+#ifdef AXIOM_USE_OPENMP
+                if (parallel::should_parallelize(num_rows, 64)) {
+                    ptrdiff_t nr = static_cast<ptrdiff_t>(num_rows);
+#pragma omp parallel for schedule(static)
+                    for (ptrdiff_t r = 0; r < nr; ++r)
+                        reduce_row(static_cast<size_t>(r));
+                } else
+#endif
+                {
+                    for (size_t r = 0; r < num_rows; ++r)
+                        reduce_row(r);
+                }
+
+                if (op_type_ == ops::OpType::Mean) {
+                    for (size_t i = 0; i < num_rows; ++i)
+                        out[i] /= static_cast<AccumT>(row_size);
+                }
+                if constexpr (use_float32_accum)
+                    return result.astype(result_dtype);
+                return result;
+            }
+        }
+
+        // First-axis reduction: accumulate row-by-row with SIMD add
+        if (is_first_axis && input.ndim() >= 2) {
+            if constexpr (simd::has_support<AccumT> &&
+                          std::is_floating_point_v<AccumT>) {
+                size_t D0 = input.shape()[0];
+                size_t num_cols = input.size() / D0;
+                Tensor result(result_shape, accum_dtype, Device::CPU);
+                AccumT *out = result.template typed_data<AccumT>();
+
+                const AccumT *in;
+                Tensor input_converted;
+                if constexpr (use_float32_accum) {
+                    input_converted = input.astype(DType::Float32);
+                    in = input_converted.template typed_data<AccumT>();
+                } else {
+                    in = input.template typed_data<AccumT>();
+                }
+
+                // Initialize result to first row
+                std::memcpy(out, in, num_cols * sizeof(AccumT));
+
+                // Accumulate remaining rows
+                if constexpr (std::is_same_v<Func, SumFunc>) {
+                    for (size_t r = 1; r < D0; ++r) {
+                        simd::dispatch_binary_add(out, in + r * num_cols, out,
+                                                  num_cols);
+                    }
+                } else {
+                    // For max/min: use element-wise max/min
+                    if constexpr (std::is_same_v<Func, MaxFunc>) {
+                        for (size_t r = 1; r < D0; ++r)
+                            simd::dispatch_binary_max(out, in + r * num_cols,
+                                                      out, num_cols);
+                    } else if constexpr (std::is_same_v<Func, MinFunc>) {
+                        for (size_t r = 1; r < D0; ++r)
+                            simd::dispatch_binary_min(out, in + r * num_cols,
+                                                      out, num_cols);
+                    } else if constexpr (std::is_same_v<Func, ProdFunc>) {
+                        for (size_t r = 1; r < D0; ++r)
+                            simd::dispatch_binary_mul(out, in + r * num_cols,
+                                                      out, num_cols);
+                    } else {
+                        goto axis_fallback;
+                    }
+                }
+
+                if (op_type_ == ops::OpType::Mean) {
+                    AccumT divisor = static_cast<AccumT>(D0);
+                    for (size_t i = 0; i < num_cols; ++i)
+                        out[i] /= divisor;
+                }
+                if constexpr (use_float32_accum)
+                    return result.astype(result_dtype);
+                return result;
+            }
+        }
+    }
+axis_fallback:
+
     // For accumulation, use Float32 if needed
     Tensor result(result_shape, accum_dtype, Device::CPU);
     result.fill(Func::template identity<AccumT>());
@@ -2222,6 +2574,31 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
     size_t numel = ShapeUtils::size(output_shape);
     if (numel == 0)
         return result;
+
+    // Fast path: all contiguous, same shape, bool condition, same dtype
+    if (condition.is_contiguous() && a.is_contiguous() && b.is_contiguous() &&
+        condition.shape() == output_shape && a.shape() == output_shape &&
+        b.shape() == output_shape && condition.dtype() == DType::Bool &&
+        a.dtype() == output_dtype && b.dtype() == output_dtype) {
+        const bool *cond = condition.typed_data<bool>();
+        const T *a_ptr = a.template typed_data<T>();
+        const T *b_ptr = b.template typed_data<T>();
+        T *out = result.template typed_data<T>();
+
+#ifdef AXIOM_USE_OPENMP
+        if (parallel::should_parallelize(numel)) {
+            ptrdiff_t n = static_cast<ptrdiff_t>(numel);
+#pragma omp parallel for schedule(static)
+            for (ptrdiff_t i = 0; i < n; ++i)
+                out[i] = cond[i] ? a_ptr[i] : b_ptr[i];
+        } else
+#endif
+        {
+            for (size_t i = 0; i < numel; ++i)
+                out[i] = cond[i] ? a_ptr[i] : b_ptr[i];
+        }
+        return result;
+    }
 
     // Get strides for broadcasting
     auto cond_strides = ShapeUtils::broadcast_strides(

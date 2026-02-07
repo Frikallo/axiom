@@ -277,6 +277,58 @@ GraphCompiler::fusion_analysis(const std::vector<const GraphNode *> &sorted) {
     }
     groups = std::move(merged);
 
+    // Post-process: merge elementwise group + following full reduction
+    {
+        std::vector<FusionGroup> merged2;
+        merged2.reserve(groups.size());
+        for (size_t i = 0; i < groups.size(); ++i) {
+            if (i + 1 < groups.size()) {
+                auto &ew = groups[i];
+                auto &red = groups[i + 1];
+                // Check: red is a single-node full reduction (all axes)
+                if (red.nodes.size() == 1 &&
+                    is_reduction_op(red.nodes[0]->op_type) &&
+                    red.nodes[0]->params.axes.empty() && // full reduction
+                    ew.is_fused &&                       // elementwise chain
+                    !ew.nodes.empty() && ew.nodes.back()->ref_count <= 1) {
+
+                    // All ops in chain must produce the same dtype
+                    // (mixed chains like float->bool can't be tiled)
+                    bool same_dtype = true;
+                    DType chain_dtype = ew.nodes[0]->output_dtype;
+                    for (const auto *n : ew.nodes) {
+                        if (n->output_dtype != chain_dtype) {
+                            same_dtype = false;
+                            break;
+                        }
+                    }
+
+                    // Check that the reduction consumes the ew output
+                    bool uses_ew = false;
+                    if (same_dtype) {
+                        for (const auto &inp : red.nodes[0]->inputs) {
+                            if (inp.get() == ew.nodes.back()) {
+                                uses_ew = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (uses_ew) {
+                        // Absorb reduction into elementwise group
+                        ew.nodes.push_back(red.nodes[0]);
+                        ew.is_fused_reduction = true;
+                        merged2.push_back(std::move(ew));
+                        ++i; // skip reduction group
+                        continue;
+                    }
+                }
+            }
+            merged2.push_back(std::move(groups[i]));
+        }
+        groups = std::move(merged2);
+    }
+
     return groups;
 }
 
@@ -529,10 +581,26 @@ std::shared_ptr<CompiledGraph> GraphCompiler::compile(const GraphSignature &sig,
         step.device = last->target_device;
         step.total_elements = ShapeUtils::size(last->output_shape);
 
-        if (group.is_fused && group.nodes.size() == 2 &&
-            (group.nodes[0]->op_type == ops::OpType::MatMul ||
-             group.nodes[0]->op_type == ops::OpType::BatchMatMul) &&
-            is_unary_op(group.nodes[1]->op_type)) {
+        if (group.is_fused_reduction) {
+            // Elementwise chain + full reduction
+            step.kind = ExecutionStep::Kind::FusedReduction;
+            const auto *red_node = group.nodes.back();
+            step.reduction_op = red_node->op_type;
+            step.params = red_node->params;
+            // op_chain includes the elementwise ops (excl. reduction)
+            for (size_t ni = 0; ni + 1 < group.nodes.size(); ++ni) {
+                step.op_chain.push_back(group.nodes[ni]->op_type);
+            }
+            // The input of the whole chain determines total_elements
+            // (the reduction collapses to scalar)
+            if (!group.nodes.empty() && group.nodes.size() >= 2) {
+                const auto *first = group.nodes[0];
+                step.total_elements = ShapeUtils::size(first->output_shape);
+            }
+        } else if (group.is_fused && group.nodes.size() == 2 &&
+                   (group.nodes[0]->op_type == ops::OpType::MatMul ||
+                    group.nodes[0]->op_type == ops::OpType::BatchMatMul) &&
+                   is_unary_op(group.nodes[1]->op_type)) {
             // MatMul + activation fusion
             step.kind = ExecutionStep::Kind::MatMulActivation;
             step.op_type = group.nodes[0]->op_type;

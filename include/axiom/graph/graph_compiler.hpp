@@ -30,6 +30,7 @@ class GraphCompiler {
         std::vector<const GraphNode *> nodes;
         FusedPattern pattern;
         bool is_fused;
+        bool is_fused_reduction = false;
     };
 
     static std::vector<FusionGroup>
