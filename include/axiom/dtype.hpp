@@ -3,11 +3,259 @@
 #include <complex>
 #include <cstdint>
 #include <string>
+#include <tuple>
+#include <variant>
 
 #include "axiom/bfloat16.hpp"
 #include "axiom/float16.hpp"
 
 namespace axiom {
+
+// The overload pattern template
+template <class... Ts> struct overload : Ts... {
+    using Ts::operator()...; // Bring all operator() into scope
+};
+
+template <class T> class BaseType {
+  public:
+    using value_type = T;
+
+    template <typename E> struct is_complex_t : public std::false_type {};
+
+    template <typename E>
+    struct is_complex_t<std::complex<E>> : public std::true_type {};
+
+    template <class F, class... Args> void dispatch(F &&f, Args &&...args) {
+        f(*this, std::forward<Args>(args)...);
+    }
+    static constexpr size_t dtype_size() { return sizeof(T); }
+    static constexpr bool is_complex() {
+        return is_complex_t<value_type>::value;
+    }
+    static constexpr bool is_float() {
+        return std::is_floating_point_v<value_type>;
+    }
+    static constexpr bool is_int() { return std::is_integral_v<value_type>; }
+    static constexpr bool is_unsigned() {
+        return std::is_unsigned_v<value_type>;
+    }
+    static constexpr bool is_signed() { return std::is_signed_v<value_type>; }
+};
+
+class Bool : public BaseType<bool> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "Bool"; }
+};
+
+class Int8 : public BaseType<int8_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "Int8"; }
+};
+
+class Int16 : public BaseType<int16_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "Int16"; }
+};
+class Int32 : public BaseType<int32_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "int32"; }
+};
+class Int64 : public BaseType<int64_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "Int64"; }
+};
+
+class UInt8 : public BaseType<uint8_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "UInt8"; }
+};
+
+class UInt16 : public BaseType<uint16_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "UInt16"; }
+};
+class UInt32 : public BaseType<uint32_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "UInt32"; }
+};
+class UInt64 : public BaseType<uint64_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "UInt64"; }
+};
+class Float16 : public BaseType<float16_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "Float16"; }
+};
+class Float32 : public BaseType<float> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "Float32"; }
+};
+class Float64 : public BaseType<double> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "Float64"; }
+};
+
+class Complex64 : public BaseType<std::complex<float>> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "Complex64"; }
+};
+
+class Complex128 : public BaseType<std::complex<double>> {
+  public:
+    using value_type = typename BaseType::value_type;
+    using BaseType::dispatch;
+    using BaseType::dtype_size;
+    using BaseType::is_complex;
+    using BaseType::is_float;
+    using BaseType::is_int;
+    using BaseType::is_signed;
+    using BaseType::is_unsigned;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "Complex128"; }
+};
+
+using TypeVariant =
+    ::std::variant<Bool, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32,
+                   UInt64, Float16, Float32, Float64, Complex64, Complex128>;
+
+bool is_complex_dtype(TypeVariant DType);
+bool is_floating_dtype(TypeVariant DType);
+bool is_int_dtype(TypeVariant DType);
+bool is_signed_dtype(TypeVariant DType);
+bool is_unsigned_dtype(TypeVariant DType);
+size_t dtype_size(TypeVariant DType);
+std::string dtype_name(TypeVariant DType);
 
 // float16_t is defined in axiom/float16.hpp
 using complex64_t = std::complex<float>;
@@ -34,6 +282,8 @@ enum class DType : uint8_t {
     Complex64,
     Complex128
 };
+
+TypeVariant variant_to_dtype(DType dtype);
 
 constexpr size_t dtype_size(DType dtype) {
     switch (dtype) {
