@@ -1851,13 +1851,13 @@ Tensor Tensor::linspace(double start, double stop, size_t num, bool endpoint,
         auto t = Tensor({1}, dtype, Device::CPU);
         std::visit(overload{
             [&]<typename T>(T)
-                requires(!T::is_float())
+                requires(!T::is_pod_float())
                         {
                             throw TypeError::unsupported_dtype(
                                 axiom::dtype_name(dtype), "linspace");
                         },
                         [&]<typename T>(T)
-                            requires(T::is_float())
+                            requires(T::is_pod_float())
             {
                 using value_type = typename T::value_type;
                 t.typed_data<value_type>()[0] = static_cast<value_type>(start);
@@ -1871,13 +1871,13 @@ Tensor Tensor::linspace(double start, double stop, size_t num, bool endpoint,
 
     std::visit(
         overload{[&]<typename T>(T)
-                     requires(!T::is_float())
+                     requires(!T::is_pod_float())
                              {
                                  throw TypeError::unsupported_dtype(
                                      axiom::dtype_name(dtype), "linspace");
                              },
                              [&]<typename T>(T)
-                                 requires(T::is_float())
+                                 requires(T::is_pod_float())
                  {
                      using value_type = typename T::value_type;
                      auto *data = t.typed_data<value_type>();
@@ -1935,10 +1935,10 @@ Tensor Tensor::geomspace(double start, double stop, size_t num, bool endpoint,
     if (negative) {
         auto dtype_variant = variant_to_dtype(dtype);
         std::visit(overload{[&]<typename T>(T)
-                                requires(!T::is_float())
+                                requires(!T::is_pod_float())
                                         {},
                                         [&]<typename T>(T)
-                                            requires(T::is_float())
+                                            requires(T::is_pod_float())
                             {
                                 using value_type = typename T::value_type;
                                 auto *data = result.typed_data<value_type>();
@@ -2228,7 +2228,7 @@ bool Tensor::has_nan() const {
     auto dtype_variant = variant_to_dtype(dtype_);
     return std::visit(overload{
         [&]<typename T>(T)
-            requires(T::is_float())
+            requires(T::is_pod_float())
                     {
                         using value_type = typename T::value_type;
                         return check_nan.template operator()<value_type>();
@@ -2242,7 +2242,7 @@ bool Tensor::has_nan() const {
                                 },
                                 [&]<typename T>(T)
                                     requires(
-                                        !(T::is_complex() || T::is_float()))
+                                        !(T::is_complex() || T::is_pod_float()))
         { return false; }},
                       dtype_variant);
 }
@@ -2275,7 +2275,7 @@ bool Tensor::has_inf() const {
     auto dtype_variant = variant_to_dtype(dtype_);
     return std::visit(overload{
         [&]<typename T>(T)
-            requires(T::is_float())
+            requires(T::is_pod_float())
                     {
                         using value_type = typename T::value_type;
                         return check_inf.template operator()<value_type>();
@@ -2289,7 +2289,7 @@ bool Tensor::has_inf() const {
                                 },
                                 [&]<typename T>(T)
                                     requires(
-                                        !(T::is_complex() || T::is_float()))
+                                        !(T::is_complex() || T::is_pod_float()))
         { return false; }},
                       dtype_variant);
 }
