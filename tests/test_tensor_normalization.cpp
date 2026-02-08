@@ -1,63 +1,12 @@
-#include <axiom/axiom.hpp>
-#include <cmath>
-#include <functional>
-#include <iostream>
-#include <stdexcept>
-#include <string>
-#include <vector>
+#include "axiom_test_utils.hpp"
 
 using namespace axiom;
-
-// Test harness
-static int tests_run = 0;
-static int tests_passed = 0;
-
-#define RUN_TEST(test_func) run_test([&]() { test_func(); }, #test_func)
-
-void run_test(const std::function<void()> &test_func,
-              const std::string &test_name) {
-    tests_run++;
-    std::cout << "--- Running: " << test_name << " ---" << std::endl;
-    try {
-        test_func();
-        std::cout << "--- PASSED: " << test_name << " ---" << std::endl;
-        tests_passed++;
-    } catch (const std::exception &e) {
-        std::cerr << "--- FAILED: " << test_name << " ---" << std::endl;
-        std::cerr << "    Error: " << e.what() << std::endl;
-    }
-    std::cout << std::endl;
-}
-
-#define ASSERT(condition, msg)                                                 \
-    do {                                                                       \
-        if (!(condition)) {                                                    \
-            throw std::runtime_error("Assertion failed: (" #condition ") - " + \
-                                     std::string(msg));                        \
-        }                                                                      \
-    } while (0)
-
-template <typename T>
-void assert_tensor_near(const Tensor &t, const std::vector<T> &expected,
-                        T tol = T(1e-4)) {
-    auto t_cpu = t.cpu();
-    ASSERT(t_cpu.size() == expected.size(), "Size mismatch");
-    const T *data = t_cpu.typed_data<T>();
-    for (size_t i = 0; i < expected.size(); ++i) {
-        if (std::abs(data[i] - expected[i]) > tol) {
-            throw std::runtime_error("Value mismatch at index " +
-                                     std::to_string(i) + ": got " +
-                                     std::to_string(data[i]) + ", expected " +
-                                     std::to_string(expected[i]));
-        }
-    }
-}
 
 // ============================================================================
 // Layer Normalization Tests
 // ============================================================================
 
-void test_layer_norm_basic() {
+TEST(TensorNormalization, LayerNormBasic) {
     // Input: [1, 2, 3, 4, 5] with mean=3, var=2
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
     auto t = Tensor::from_data(data.data(), {5});
@@ -68,7 +17,7 @@ void test_layer_norm_basic() {
 
     auto result = ops::layer_norm(t, weight, bias, -1, 1e-5f);
 
-    ASSERT(result.shape() == Shape{5}, "Shape should be preserved");
+    ASSERT_TRUE(result.shape() == Shape{5}) << "Shape should be preserved";
 
     auto result_cpu = result.cpu();
     const float *out = result_cpu.typed_data<float>();
@@ -78,13 +27,13 @@ void test_layer_norm_basic() {
     for (int i = 0; i < 5; ++i)
         sum += out[i];
     float mean = sum / 5.0f;
-    ASSERT(std::abs(mean) < 0.1f, "Normalized mean should be ~0");
+    ASSERT_TRUE(std::abs(mean) < 0.1f) << "Normalized mean should be ~0";
 
     // Check center value (3 -> 0 after normalization)
-    ASSERT(std::abs(out[2]) < 0.1f, "Center value should be ~0");
+    ASSERT_TRUE(std::abs(out[2]) < 0.1f) << "Center value should be ~0";
 }
 
-void test_layer_norm_with_weight_bias() {
+TEST(TensorNormalization, LayerNormWithWeightBias) {
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
     auto t = Tensor::from_data(data.data(), {4});
 
@@ -102,7 +51,7 @@ void test_layer_norm_with_weight_bias() {
     // (since mean=2.5, values 2 and 3 are around the center)
 }
 
-void test_layer_norm_2d() {
+TEST(TensorNormalization, LayerNorm2D) {
     // 2x4 tensor, normalize along last axis
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
     auto t = Tensor::from_data(data.data(), {2, 4});
@@ -112,7 +61,7 @@ void test_layer_norm_2d() {
 
     auto result = ops::layer_norm(t, weight, bias, -1, 1e-5f);
 
-    ASSERT(result.shape() == Shape({2, 4}), "Shape should be preserved");
+    ASSERT_TRUE(result.shape() == Shape({2, 4})) << "Shape should be preserved";
 
     auto result_cpu = result.cpu();
     const float *out = result_cpu.typed_data<float>();
@@ -120,15 +69,15 @@ void test_layer_norm_2d() {
     // Each row should have mean ~0
     float sum0 = out[0] + out[1] + out[2] + out[3];
     float sum1 = out[4] + out[5] + out[6] + out[7];
-    ASSERT(std::abs(sum0 / 4.0f) < 0.1f, "First row mean should be ~0");
-    ASSERT(std::abs(sum1 / 4.0f) < 0.1f, "Second row mean should be ~0");
+    ASSERT_TRUE(std::abs(sum0 / 4.0f) < 0.1f) << "First row mean should be ~0";
+    ASSERT_TRUE(std::abs(sum1 / 4.0f) < 0.1f) << "Second row mean should be ~0";
 }
 
 // ============================================================================
 // RMS Normalization Tests
 // ============================================================================
 
-void test_rms_norm_basic() {
+TEST(TensorNormalization, RmsNormBasic) {
     std::vector<float> data = {
         3.0f, 4.0f}; // RMS = sqrt((9+16)/2) = sqrt(12.5) ~= 3.536
     auto t = Tensor::from_data(data.data(), {2});
@@ -142,13 +91,13 @@ void test_rms_norm_basic() {
 
     // After RMS normalization: [3/3.536, 4/3.536] = [0.848, 1.131]
     float rms = std::sqrt((9.0f + 16.0f) / 2.0f);
-    ASSERT(std::abs(out[0] - 3.0f / rms) < 0.01f,
-           "First value should be 3/RMS");
-    ASSERT(std::abs(out[1] - 4.0f / rms) < 0.01f,
-           "Second value should be 4/RMS");
+    ASSERT_TRUE(std::abs(out[0] - 3.0f / rms) < 0.01f)
+        << "First value should be 3/RMS";
+    ASSERT_TRUE(std::abs(out[1] - 4.0f / rms) < 0.01f)
+        << "Second value should be 4/RMS";
 }
 
-void test_rms_norm_with_weight() {
+TEST(TensorNormalization, RmsNormWithWeight) {
     std::vector<float> data = {3.0f, 4.0f};
     auto t = Tensor::from_data(data.data(), {2});
 
@@ -161,13 +110,13 @@ void test_rms_norm_with_weight() {
 
     // With weight=2: [2*3/3.536, 2*4/3.536]
     float rms = std::sqrt((9.0f + 16.0f) / 2.0f);
-    ASSERT(std::abs(out[0] - 2.0f * 3.0f / rms) < 0.01f,
-           "First value should be 2*3/RMS");
-    ASSERT(std::abs(out[1] - 2.0f * 4.0f / rms) < 0.01f,
-           "Second value should be 2*4/RMS");
+    ASSERT_TRUE(std::abs(out[0] - 2.0f * 3.0f / rms) < 0.01f)
+        << "First value should be 2*3/RMS";
+    ASSERT_TRUE(std::abs(out[1] - 2.0f * 4.0f / rms) < 0.01f)
+        << "Second value should be 2*4/RMS";
 }
 
-void test_rms_norm_2d() {
+TEST(TensorNormalization, RmsNorm2D) {
     std::vector<float> data = {3.0f, 4.0f, 6.0f, 8.0f};
     auto t = Tensor::from_data(data.data(), {2, 2});
 
@@ -175,7 +124,7 @@ void test_rms_norm_2d() {
 
     auto result = ops::rms_norm(t, weight, -1, 1e-5f);
 
-    ASSERT(result.shape() == Shape({2, 2}), "Shape should be preserved");
+    ASSERT_TRUE(result.shape() == Shape({2, 2})) << "Shape should be preserved";
 
     auto result_cpu = result.cpu();
     const float *out = result_cpu.typed_data<float>();
@@ -185,21 +134,18 @@ void test_rms_norm_2d() {
     float rms1 = std::sqrt((9.0f + 16.0f) / 2.0f);
     float rms2 = std::sqrt((36.0f + 64.0f) / 2.0f);
 
-    ASSERT(std::abs(out[0] - 3.0f / rms1) < 0.01f, "Row 1, col 1");
-    ASSERT(std::abs(out[1] - 4.0f / rms1) < 0.01f, "Row 1, col 2");
-    ASSERT(std::abs(out[2] - 6.0f / rms2) < 0.01f, "Row 2, col 1");
-    ASSERT(std::abs(out[3] - 8.0f / rms2) < 0.01f, "Row 2, col 2");
+    ASSERT_TRUE(std::abs(out[0] - 3.0f / rms1) < 0.01f) << "Row 1, col 1";
+    ASSERT_TRUE(std::abs(out[1] - 4.0f / rms1) < 0.01f) << "Row 1, col 2";
+    ASSERT_TRUE(std::abs(out[2] - 6.0f / rms2) < 0.01f) << "Row 2, col 1";
+    ASSERT_TRUE(std::abs(out[3] - 8.0f / rms2) < 0.01f) << "Row 2, col 2";
 }
 
 // ============================================================================
 // GPU Tests
 // ============================================================================
 
-void test_layer_norm_gpu() {
-    if (!system::should_run_gpu_tests()) {
-        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
-        return;
-    }
+TEST(TensorNormalization, LayerNormGpu) {
+    SKIP_IF_NO_GPU();
 
     std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
     auto t = Tensor::from_data(data.data(), {4}).gpu();
@@ -208,21 +154,18 @@ void test_layer_norm_gpu() {
 
     auto result = ops::layer_norm(t, weight, bias, -1, 1e-5f);
 
-    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
-    ASSERT(result.shape() == Shape{4}, "Shape should be preserved");
+    ASSERT_TRUE(result.device() == Device::GPU) << "Result should be on GPU";
+    ASSERT_TRUE(result.shape() == Shape{4}) << "Shape should be preserved";
 
     // Verify mean is ~0
     auto result_cpu = result.cpu();
     const float *out = result_cpu.typed_data<float>();
     float sum = out[0] + out[1] + out[2] + out[3];
-    ASSERT(std::abs(sum / 4.0f) < 0.1f, "Normalized mean should be ~0");
+    ASSERT_TRUE(std::abs(sum / 4.0f) < 0.1f) << "Normalized mean should be ~0";
 }
 
-void test_rms_norm_gpu() {
-    if (!system::should_run_gpu_tests()) {
-        std::cout << "  Skipping (GPU tests disabled)" << std::endl;
-        return;
-    }
+TEST(TensorNormalization, RmsNormGpu) {
+    SKIP_IF_NO_GPU();
 
     std::vector<float> data = {3.0f, 4.0f};
     auto t = Tensor::from_data(data.data(), {2}).gpu();
@@ -230,15 +173,15 @@ void test_rms_norm_gpu() {
 
     auto result = ops::rms_norm(t, weight, -1, 1e-5f);
 
-    ASSERT(result.device() == Device::GPU, "Result should be on GPU");
-    ASSERT(result.shape() == Shape{2}, "Shape should be preserved");
+    ASSERT_TRUE(result.device() == Device::GPU) << "Result should be on GPU";
+    ASSERT_TRUE(result.shape() == Shape{2}) << "Shape should be preserved";
 }
 
 // ============================================================================
 // Integration Test: Transformer Block Pattern
 // ============================================================================
 
-void test_transformer_attention_pattern() {
+TEST(TensorNormalization, TransformerAttentionPattern) {
     // Simulate a small attention computation
     // This tests the integration of multiple operations
 
@@ -258,7 +201,8 @@ void test_transformer_attention_pattern() {
     // Weighted sum
     auto out = probs.matmul(v);
 
-    ASSERT(out.shape() == Shape({1, 4, 4}), "Output shape should be (1, 4, 4)");
+    ASSERT_TRUE(out.shape() == Shape({1, 4, 4}))
+        << "Output shape should be (1, 4, 4)";
 
     // Check softmax probabilities sum to 1 along last axis
     auto probs_cpu = probs.cpu();
@@ -269,39 +213,7 @@ void test_transformer_attention_pattern() {
         for (int j = 0; j < 4; ++j) {
             row_sum += p[i * 4 + j];
         }
-        ASSERT(std::abs(row_sum - 1.0f) < 0.01f, "Softmax row should sum to 1");
+        ASSERT_TRUE(std::abs(row_sum - 1.0f) < 0.01f)
+            << "Softmax row should sum to 1";
     }
-}
-
-int main() {
-    // Initialize operations registry
-    ops::OperationRegistry::initialize_builtin_operations();
-
-    std::cout << "=== Normalization Tests ===" << std::endl << std::endl;
-
-    // Layer Norm tests
-    std::cout << "--- Layer Norm Tests ---" << std::endl;
-    RUN_TEST(test_layer_norm_basic);
-    RUN_TEST(test_layer_norm_with_weight_bias);
-    RUN_TEST(test_layer_norm_2d);
-
-    // RMS Norm tests
-    std::cout << "--- RMS Norm Tests ---" << std::endl;
-    RUN_TEST(test_rms_norm_basic);
-    RUN_TEST(test_rms_norm_with_weight);
-    RUN_TEST(test_rms_norm_2d);
-
-    // GPU tests
-    std::cout << "--- GPU Tests ---" << std::endl;
-    RUN_TEST(test_layer_norm_gpu);
-    RUN_TEST(test_rms_norm_gpu);
-
-    // Integration tests
-    std::cout << "--- Integration Tests ---" << std::endl;
-    RUN_TEST(test_transformer_attention_pattern);
-
-    std::cout << "=== Results ===" << std::endl;
-    std::cout << "Passed: " << tests_passed << "/" << tests_run << std::endl;
-
-    return (tests_passed == tests_run) ? 0 : 1;
 }

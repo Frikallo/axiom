@@ -1,580 +1,146 @@
 # Tests for Axiom tensor library
 
 # Keep assertions enabled in tests even for Release builds
-# This prevents "unused variable" warnings for variables only used in assert()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     add_compile_options(-UNDEBUG)
 endif()
 
-# Basic tensor functionality test
-add_executable(test_tensor_basic
-    test_tensor_basic.cpp
-)
+# ============================================================================
+# Google Test
+# ============================================================================
 
-target_link_libraries(test_tensor_basic
-    PRIVATE
+include(FetchContent)
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        v1.15.2
+    GIT_SHALLOW    TRUE
+)
+# Prevent gtest from overriding compiler/linker settings on Windows
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+include(GoogleTest)
+
+# ============================================================================
+# Shared test utilities library
+# ============================================================================
+
+add_library(axiom_test_utils STATIC axiom_test_main.cpp)
+
+target_link_libraries(axiom_test_utils
+    PUBLIC
         axiom
+        GTest::gtest
+        GTest::gtest_main
 )
 
-target_include_directories(test_tensor_basic
-    PRIVATE
+target_include_directories(axiom_test_utils
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/src
 )
 
-# Add the test to CTest
-add_test(
-    NAME tensor_basic
-    COMMAND test_tensor_basic
-)
+# ============================================================================
+# Helper function to reduce per-test boilerplate
+# ============================================================================
 
-# Set test properties
-set_tests_properties(tensor_basic
-    PROPERTIES
-        TIMEOUT 30
-)
+function(axiom_add_test TEST_NAME)
+    cmake_parse_arguments(ARG "" "TIMEOUT;WORKING_DIRECTORY" "SOURCES;EXTRA_LIBS;EXTRA_INCLUDES" ${ARGN})
 
-# Comprehensive tensor operations test
-add_executable(test_tensor_operations
-    test_tensor_operations.cpp
-)
+    if(NOT ARG_SOURCES)
+        set(ARG_SOURCES ${TEST_NAME}.cpp)
+    endif()
+    if(NOT ARG_TIMEOUT)
+        set(ARG_TIMEOUT 30)
+    endif()
 
-target_link_libraries(test_tensor_operations
-    PRIVATE
-        axiom
-)
+    add_executable(${TEST_NAME} ${ARG_SOURCES})
 
-target_include_directories(test_tensor_operations
-    PRIVATE
+    target_link_libraries(${TEST_NAME}
+        PRIVATE
+            axiom_test_utils
+            ${ARG_EXTRA_LIBS}
+    )
+
+    if(ARG_EXTRA_INCLUDES)
+        target_include_directories(${TEST_NAME}
+            PRIVATE
+                ${ARG_EXTRA_INCLUDES}
+        )
+    endif()
+
+    if(ARG_WORKING_DIRECTORY)
+        gtest_discover_tests(${TEST_NAME}
+            TIMEOUT ${ARG_TIMEOUT}
+            WORKING_DIRECTORY ${ARG_WORKING_DIRECTORY}
+        )
+    else()
+        gtest_discover_tests(${TEST_NAME}
+            TIMEOUT ${ARG_TIMEOUT}
+        )
+    endif()
+endfunction()
+
+# ============================================================================
+# Standard tests (30s timeout)
+# ============================================================================
+
+axiom_add_test(test_tensor_basic)
+axiom_add_test(test_tensor_operations)
+axiom_add_test(test_tensor_views)
+axiom_add_test(test_tensor_indexing)
+axiom_add_test(test_tensor_unary_operations)
+axiom_add_test(test_tensor_reductions)
+axiom_add_test(test_tensor_matmul)
+axiom_add_test(test_tensor_random)
+axiom_add_test(test_tensor_shape_ops)
+axiom_add_test(test_tensor_comparisons)
+axiom_add_test(test_tensor_argmax_argmin)
+axiom_add_test(test_tensor_where)
+axiom_add_test(test_tensor_activations)
+axiom_add_test(test_tensor_complex)
+axiom_add_test(test_tensor_normalization)
+axiom_add_test(test_tensor_gather_scatter)
+axiom_add_test(test_tensor_logical_bitwise)
+axiom_add_test(test_tensor_numpy_ops)
+axiom_add_test(test_broadcast)
+axiom_add_test(test_random_extended)
+axiom_add_test(test_shape_ops_extended)
+axiom_add_test(test_advanced_indexing)
+axiom_add_test(test_einsum)
+axiom_add_test(test_fft)
+axiom_add_test(test_pooling)
+axiom_add_test(test_einops_reduce)
+
+# ============================================================================
+# Tests with longer timeouts (60s)
+# ============================================================================
+
+axiom_add_test(test_cpu_gpu_parity TIMEOUT 60)
+axiom_add_test(test_transformer_ops TIMEOUT 60)
+axiom_add_test(test_tensor_linalg TIMEOUT 60)
+axiom_add_test(test_parallel TIMEOUT 60)
+axiom_add_test(test_io_flatbuffers TIMEOUT 60)
+
+# ============================================================================
+# Special: SIMD dispatch test (extra libs/includes)
+# ============================================================================
+
+axiom_add_test(test_simd_dispatch
+    EXTRA_LIBS hwy
+    EXTRA_INCLUDES
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/third_party/FXdiv/include
+        ${highway_SOURCE_DIR}
 )
 
-add_test(
-    NAME tensor_operations
-    COMMAND test_tensor_operations
-)
-
-set_tests_properties(tensor_operations
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Slicing and view tests
-add_executable(test_tensor_views
-    test_tensor_views.cpp
-)
-
-target_link_libraries(test_tensor_views
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_views
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_views
-    COMMAND test_tensor_views
-)
-
-set_tests_properties(tensor_views
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Indexing tests
-add_executable(test_tensor_indexing
-    test_tensor_indexing.cpp
-)
-
-target_link_libraries(test_tensor_indexing
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_indexing
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_indexing
-    COMMAND test_tensor_indexing
-)
-
-set_tests_properties(tensor_indexing
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Unary operations tests
-add_executable(test_tensor_unary_operations
-    test_tensor_unary_operations.cpp
-)
-
-target_link_libraries(test_tensor_unary_operations
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_unary_operations
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-if(AXIOM_METAL_SUPPORTED)
-    target_compile_definitions(test_tensor_unary_operations PRIVATE AXIOM_TEST_GPU)
-endif()
-
-add_test(
-    NAME tensor_unary_operations
-    COMMAND test_tensor_unary_operations
-)
-
-set_tests_properties(tensor_unary_operations
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Reduction operations tests
-add_executable(test_tensor_reductions
-    test_tensor_reductions.cpp
-)
-
-target_link_libraries(test_tensor_reductions
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_reductions
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_reductions
-    COMMAND test_tensor_reductions
-)
-
-set_tests_properties(tensor_reductions
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Matrix multiplication tests
-add_executable(test_tensor_matmul
-    test_tensor_matmul.cpp
-)
-
-target_link_libraries(test_tensor_matmul
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_matmul
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_matmul
-    COMMAND test_tensor_matmul
-)
-
-set_tests_properties(tensor_matmul
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Random number generation tests
-add_executable(test_tensor_random
-    test_tensor_random.cpp
-)
-
-target_link_libraries(test_tensor_random
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_random
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_random
-    COMMAND test_tensor_random
-)
-
-set_tests_properties(tensor_random
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Shape operations tests
-add_executable(test_tensor_shape_ops
-    test_tensor_shape_ops.cpp
-)
-
-target_link_libraries(test_tensor_shape_ops
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_shape_ops
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_shape_ops
-    COMMAND test_tensor_shape_ops
-)
-
-set_tests_properties(tensor_shape_ops
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Comparison operations tests
-add_executable(test_tensor_comparisons
-    test_tensor_comparisons.cpp
-)
-
-target_link_libraries(test_tensor_comparisons
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_comparisons
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_comparisons
-    COMMAND test_tensor_comparisons
-)
-
-set_tests_properties(tensor_comparisons
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Argmax/Argmin tests
-add_executable(test_tensor_argmax_argmin
-    test_tensor_argmax_argmin.cpp
-)
-
-target_link_libraries(test_tensor_argmax_argmin
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_argmax_argmin
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_argmax_argmin
-    COMMAND test_tensor_argmax_argmin
-)
-
-set_tests_properties(tensor_argmax_argmin
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Where operation tests
-add_executable(test_tensor_where
-    test_tensor_where.cpp
-)
-
-target_link_libraries(test_tensor_where
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_where
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_where
-    COMMAND test_tensor_where
-)
-
-set_tests_properties(tensor_where
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Activation functions tests
-add_executable(test_tensor_activations
-    test_tensor_activations.cpp
-)
-
-target_link_libraries(test_tensor_activations
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_activations
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_activations
-    COMMAND test_tensor_activations
-)
-
-set_tests_properties(tensor_activations
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Complex operations tests
-add_executable(test_tensor_complex
-    test_tensor_complex.cpp
-)
-
-target_link_libraries(test_tensor_complex
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_complex
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_complex
-    COMMAND test_tensor_complex
-)
-
-set_tests_properties(tensor_complex
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Normalization operations tests
-add_executable(test_tensor_normalization
-    test_tensor_normalization.cpp
-)
-
-target_link_libraries(test_tensor_normalization
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_normalization
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_normalization
-    COMMAND test_tensor_normalization
-)
-
-set_tests_properties(tensor_normalization
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Gather/Scatter/IndexSelect tests
-add_executable(test_tensor_gather_scatter
-    test_tensor_gather_scatter.cpp
-)
-
-target_link_libraries(test_tensor_gather_scatter
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_gather_scatter
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_gather_scatter
-    COMMAND test_tensor_gather_scatter
-)
-
-set_tests_properties(tensor_gather_scatter
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Einops reduce tests
-add_executable(test_einops_reduce
-    test_einops_reduce.cpp
-)
-
-target_link_libraries(test_einops_reduce
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_einops_reduce
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME einops_reduce
-    COMMAND test_einops_reduce
-)
-
-set_tests_properties(einops_reduce
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# CPU/GPU parity tests
-add_executable(test_cpu_gpu_parity
-    test_cpu_gpu_parity.cpp
-)
-
-target_link_libraries(test_cpu_gpu_parity
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_cpu_gpu_parity
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME cpu_gpu_parity
-    COMMAND test_cpu_gpu_parity
-)
-
-set_tests_properties(cpu_gpu_parity
-    PROPERTIES
-        TIMEOUT 60
-)
-
-# Transformer operations tests
-add_executable(test_transformer_ops
-    test_transformer_ops.cpp
-)
-
-target_link_libraries(test_transformer_ops
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_transformer_ops
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME transformer_ops
-    COMMAND test_transformer_ops
-)
-
-set_tests_properties(transformer_ops
-    PROPERTIES
-        TIMEOUT 60
-)
-
-# Logical/Bitwise/Math operations tests
-add_executable(test_tensor_logical_bitwise
-    test_tensor_logical_bitwise.cpp
-)
-
-target_link_libraries(test_tensor_logical_bitwise
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_logical_bitwise
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_logical_bitwise
-    COMMAND test_tensor_logical_bitwise
-)
-
-set_tests_properties(tensor_logical_bitwise
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# NumPy-like operations tests
-add_executable(test_tensor_numpy_ops
-    test_tensor_numpy_ops.cpp
-)
-
-target_link_libraries(test_tensor_numpy_ops
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_numpy_ops
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_numpy_ops
-    COMMAND test_tensor_numpy_ops
-)
-
-set_tests_properties(tensor_numpy_ops
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# FlatBuffers I/O tests
-add_executable(test_io_flatbuffers
-    test_io_flatbuffers.cpp
-)
-
-target_link_libraries(test_io_flatbuffers
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_io_flatbuffers
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME io_flatbuffers
-    COMMAND test_io_flatbuffers
-)
-
-set_tests_properties(io_flatbuffers
-    PROPERTIES
-        TIMEOUT 60
-)
-
-# NumPy I/O tests
-add_executable(test_io_numpy
-    test_io_numpy.cpp
-)
-
-target_link_libraries(test_io_numpy
-    PRIVATE
-        axiom
-)
+# ============================================================================
+# Special: NumPy I/O test (fixtures + working directory)
+# ============================================================================
 
-target_include_directories(test_io_numpy
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+axiom_add_test(test_io_numpy
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 # Generate NumPy test fixtures
@@ -589,267 +155,3 @@ if(Python3_FOUND)
 else()
     message(WARNING "Python3 not found - NumPy test fixtures must be generated manually")
 endif()
-
-add_test(
-    NAME io_numpy
-    COMMAND test_io_numpy
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-set_tests_properties(io_numpy
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Linear algebra tests
-add_executable(test_tensor_linalg
-    test_tensor_linalg.cpp
-)
-
-target_link_libraries(test_tensor_linalg
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_tensor_linalg
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME tensor_linalg
-    COMMAND test_tensor_linalg
-)
-
-set_tests_properties(tensor_linalg
-    PROPERTIES
-        TIMEOUT 60
-)
-
-# Parallel operations tests
-add_executable(test_parallel
-    test_parallel.cpp
-)
-
-target_link_libraries(test_parallel
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_parallel
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME parallel
-    COMMAND test_parallel
-)
-
-set_tests_properties(parallel
-    PROPERTIES
-        TIMEOUT 60
-)
-
-# SIMD runtime dispatch tests
-add_executable(test_simd_dispatch
-    test_simd_dispatch.cpp
-)
-
-target_link_libraries(test_simd_dispatch
-    PRIVATE
-        axiom
-        hwy
-)
-
-target_include_directories(test_simd_dispatch
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/third_party/FXdiv/include
-        ${highway_SOURCE_DIR}
-)
-
-add_test(
-    NAME simd_dispatch
-    COMMAND test_simd_dispatch
-)
-
-set_tests_properties(simd_dispatch
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Broadcast utilities tests
-add_executable(test_broadcast
-    test_broadcast.cpp
-)
-
-target_link_libraries(test_broadcast
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_broadcast
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME broadcast
-    COMMAND test_broadcast
-)
-
-set_tests_properties(broadcast
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Extended random module tests
-add_executable(test_random_extended
-    test_random_extended.cpp
-)
-
-target_link_libraries(test_random_extended
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_random_extended
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME random_extended
-    COMMAND test_random_extended
-)
-
-set_tests_properties(random_extended
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Extended shape operations tests
-add_executable(test_shape_ops_extended
-    test_shape_ops_extended.cpp
-)
-
-target_link_libraries(test_shape_ops_extended
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_shape_ops_extended
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME shape_ops_extended
-    COMMAND test_shape_ops_extended
-)
-
-set_tests_properties(shape_ops_extended
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Advanced indexing tests
-add_executable(test_advanced_indexing
-    test_advanced_indexing.cpp
-)
-
-target_link_libraries(test_advanced_indexing
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_advanced_indexing
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME advanced_indexing
-    COMMAND test_advanced_indexing
-)
-
-set_tests_properties(advanced_indexing
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Einsum tests
-add_executable(test_einsum
-    test_einsum.cpp
-)
-
-target_link_libraries(test_einsum
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_einsum
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME einsum
-    COMMAND test_einsum
-)
-
-set_tests_properties(einsum
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# FFT tests
-add_executable(test_fft
-    test_fft.cpp
-)
-
-target_link_libraries(test_fft
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_fft
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME fft
-    COMMAND test_fft
-)
-
-set_tests_properties(fft
-    PROPERTIES
-        TIMEOUT 30
-)
-
-# Pooling operations tests
-add_executable(test_pooling
-    test_pooling.cpp
-)
-
-target_link_libraries(test_pooling
-    PRIVATE
-        axiom
-)
-
-target_include_directories(test_pooling
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
-)
-
-add_test(
-    NAME pooling
-    COMMAND test_pooling
-)
-
-set_tests_properties(pooling
-    PROPERTIES
-        TIMEOUT 30
-)

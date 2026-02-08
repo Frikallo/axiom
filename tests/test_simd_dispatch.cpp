@@ -1,30 +1,11 @@
 // Test for runtime SIMD dispatch functionality (Highway backend)
 #include "../src/backends/cpu/simd/simd_dispatch.hpp"
+#include "axiom_test_utils.hpp"
 #include <cmath>
 #include <cstdio>
 #include <vector>
 
 using namespace axiom::backends::cpu::simd;
-
-#define ASSERT(cond)                                                           \
-    do {                                                                       \
-        if (!(cond)) {                                                         \
-            printf("FAIL: %s at %s:%d\n", #cond, __FILE__, __LINE__);          \
-            return 1;                                                          \
-        }                                                                      \
-    } while (0)
-
-#define RUN_TEST(test_func)                                                    \
-    do {                                                                       \
-        printf("Running %s... ", #test_func);                                  \
-        fflush(stdout);                                                        \
-        if (test_func() == 0) {                                                \
-            printf("OK\n");                                                    \
-        } else {                                                               \
-            printf("FAILED\n");                                                \
-            return 1;                                                          \
-        }                                                                      \
-    } while (0)
 
 bool nearly_equal(float a, float b, float eps = 1e-5f) {
     return std::abs(a - b) < eps;
@@ -34,20 +15,18 @@ bool nearly_equal(double a, double b, double eps = 1e-10) {
     return std::abs(a - b) < eps;
 }
 
-int test_runtime_arch_detection() {
+TEST(SimdDispatch, RuntimeArchDetection) {
     auto info = get_simd_info();
     printf("[detected: %s] ", info.arch_name);
 
     // Should return something valid
-    ASSERT(info.arch_name != nullptr);
-    ASSERT(info.arch_name[0] != '\0');
-    ASSERT(info.alignment > 0);
-    ASSERT(info.float32_width > 0);
-
-    return 0;
+    ASSERT_TRUE(info.arch_name != nullptr);
+    ASSERT_TRUE(info.arch_name[0] != '\0');
+    ASSERT_TRUE(info.alignment > 0);
+    ASSERT_TRUE(info.float32_width > 0);
 }
 
-int test_binary_add_float() {
+TEST(SimdDispatch, BinaryAddFloat) {
     const size_t n = 1024;
     std::vector<float> a(n), b(n), result(n);
 
@@ -59,13 +38,11 @@ int test_binary_add_float() {
     dispatch_binary_add(a.data(), b.data(), result.data(), n);
 
     for (size_t i = 0; i < n; ++i) {
-        ASSERT(nearly_equal(result[i], a[i] + b[i]));
+        ASSERT_TRUE(nearly_equal(result[i], a[i] + b[i]));
     }
-
-    return 0;
 }
 
-int test_binary_mul_double() {
+TEST(SimdDispatch, BinaryMulDouble) {
     const size_t n = 512;
     std::vector<double> a(n), b(n), result(n);
 
@@ -77,13 +54,11 @@ int test_binary_mul_double() {
     dispatch_binary_mul(a.data(), b.data(), result.data(), n);
 
     for (size_t i = 0; i < n; ++i) {
-        ASSERT(nearly_equal(result[i], a[i] * b[i]));
+        ASSERT_TRUE(nearly_equal(result[i], a[i] * b[i]));
     }
-
-    return 0;
 }
 
-int test_reduce_sum_float() {
+TEST(SimdDispatch, ReduceSumFloat) {
     const size_t n = 1000;
     std::vector<float> data(n);
 
@@ -94,12 +69,11 @@ int test_reduce_sum_float() {
     }
 
     float result = dispatch_reduce_sum(data.data(), n);
-    ASSERT(nearly_equal(result, expected, 1e-3f)); // Allow some FP tolerance
-
-    return 0;
+    ASSERT_TRUE(
+        nearly_equal(result, expected, 1e-3f)); // Allow some FP tolerance
 }
 
-int test_reduce_max_float() {
+TEST(SimdDispatch, ReduceMaxFloat) {
     const size_t n = 1000;
     std::vector<float> data(n);
 
@@ -109,12 +83,10 @@ int test_reduce_max_float() {
     data[500] = 9999.0f; // Max value
 
     float result = dispatch_reduce_max(data.data(), n);
-    ASSERT(nearly_equal(result, 9999.0f));
-
-    return 0;
+    ASSERT_TRUE(nearly_equal(result, 9999.0f));
 }
 
-int test_unary_exp_float() {
+TEST(SimdDispatch, UnaryExpFloat) {
     const size_t n = 256;
     std::vector<float> input(n), output(n);
 
@@ -126,13 +98,11 @@ int test_unary_exp_float() {
     dispatch_unary_exp(input.data(), output.data(), n);
 
     for (size_t i = 0; i < n; ++i) {
-        ASSERT(nearly_equal(output[i], std::exp(input[i]), 1e-4f));
+        ASSERT_TRUE(nearly_equal(output[i], std::exp(input[i]), 1e-4f));
     }
-
-    return 0;
 }
 
-int test_activation_relu_float() {
+TEST(SimdDispatch, ActivationReluFloat) {
     const size_t n = 256;
     std::vector<float> input(n), output(n);
 
@@ -144,13 +114,11 @@ int test_activation_relu_float() {
 
     for (size_t i = 0; i < n; ++i) {
         float expected = input[i] > 0 ? input[i] : 0;
-        ASSERT(nearly_equal(output[i], expected));
+        ASSERT_TRUE(nearly_equal(output[i], expected));
     }
-
-    return 0;
 }
 
-int test_small_arrays() {
+TEST(SimdDispatch, SmallArrays) {
     // Test with arrays smaller than SIMD width to ensure scalar fallback works
     std::vector<float> a = {1, 2, 3};
     std::vector<float> b = {4, 5, 6};
@@ -158,14 +126,12 @@ int test_small_arrays() {
 
     dispatch_binary_add(a.data(), b.data(), result.data(), 3);
 
-    ASSERT(nearly_equal(result[0], 5.0f));
-    ASSERT(nearly_equal(result[1], 7.0f));
-    ASSERT(nearly_equal(result[2], 9.0f));
-
-    return 0;
+    ASSERT_TRUE(nearly_equal(result[0], 5.0f));
+    ASSERT_TRUE(nearly_equal(result[1], 7.0f));
+    ASSERT_TRUE(nearly_equal(result[2], 9.0f));
 }
 
-int test_unaligned_access() {
+TEST(SimdDispatch, UnalignedAccess) {
     // Test with odd-sized arrays that won't be aligned to SIMD boundaries
     const size_t n = 17; // Prime number, won't align to any SIMD width
     std::vector<float> a(n), b(n), result(n);
@@ -178,34 +144,6 @@ int test_unaligned_access() {
     dispatch_binary_add(a.data(), b.data(), result.data(), n);
 
     for (size_t i = 0; i < n; ++i) {
-        ASSERT(nearly_equal(result[i], a[i] + b[i]));
+        ASSERT_TRUE(nearly_equal(result[i], a[i] + b[i]));
     }
-
-    return 0;
-}
-
-int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-
-    printf("=== SIMD Runtime Dispatch Tests (Highway) ===\n");
-#ifdef AXIOM_USE_HIGHWAY
-    printf("Backend: Google Highway\n");
-#else
-    printf("Backend: Scalar fallback\n");
-#endif
-    printf("\n");
-
-    RUN_TEST(test_runtime_arch_detection);
-    RUN_TEST(test_binary_add_float);
-    RUN_TEST(test_binary_mul_double);
-    RUN_TEST(test_reduce_sum_float);
-    RUN_TEST(test_reduce_max_float);
-    RUN_TEST(test_unary_exp_float);
-    RUN_TEST(test_activation_relu_float);
-    RUN_TEST(test_small_arrays);
-    RUN_TEST(test_unaligned_access);
-
-    printf("\n=== All SIMD dispatch tests passed! ===\n");
-    return 0;
 }
