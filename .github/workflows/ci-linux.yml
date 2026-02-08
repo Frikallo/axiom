@@ -47,7 +47,7 @@ jobs:
 
     - name: Run Tests
       working-directory: build
-      run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+      run: ctest -C ${{ env.BUILD_TYPE }} -j$(nproc) --output-on-failure
 
     - name: Upload Test Results
       if: failure()

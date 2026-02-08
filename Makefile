@@ -119,23 +119,23 @@ rebuild-debug: clean-debug debug  ## Clean and rebuild debug
 .PHONY: test
 test: release  ## Run all tests
 	@echo "$(CYAN)Running tests...$(RESET)"
-	@cd $(BUILD_DIR) && $(CTEST) --output-on-failure
+	@cd $(BUILD_DIR) && $(CTEST) -j$(NPROC) --output-on-failure
 	@echo "$(GREEN)✓ Tests complete$(RESET)"
 
 .PHONY: test-verbose
 test-verbose: release  ## Run all tests with verbose output
 	@echo "$(CYAN)Running tests (verbose)...$(RESET)"
-	@cd $(BUILD_DIR) && $(CTEST) --output-on-failure --verbose
+	@cd $(BUILD_DIR) && $(CTEST) -j$(NPROC) --output-on-failure --verbose
 
 .PHONY: test-debug
 test-debug: debug  ## Run all tests (debug build)
 	@echo "$(CYAN)Running tests (debug)...$(RESET)"
-	@cd $(BUILD_DIR_DEBUG) && $(CTEST) --output-on-failure
+	@cd $(BUILD_DIR_DEBUG) && $(CTEST) -j$(NPROC) --output-on-failure
 
 .PHONY: test-failed
 test-failed: release  ## Rerun only failed tests
 	@echo "$(CYAN)Rerunning failed tests...$(RESET)"
-	@cd $(BUILD_DIR) && $(CTEST) --rerun-failed --output-on-failure
+	@cd $(BUILD_DIR) && $(CTEST) --rerun-failed -j$(NPROC) --output-on-failure
 
 # Run a single test: make test-single TEST=tensor_basic
 .PHONY: test-single
