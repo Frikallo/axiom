@@ -1709,20 +1709,37 @@ Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
         throw DeviceError::cpu_only("arange");
 
     auto dtype_variant = variant_to_dtype(dtype);
-    std::visit(overload{[&]<typename T>(T)
-                            requires(!T::is_int())
-                                    {
-                                        throw TypeError::unsupported_dtype(
-                                            axiom::dtype_name(dtype), "arange");
-                                    },
-                                    [&]<typename T>(T)
-                                        requires(T::is_int())
-                        {
-                            using value_type = typename T::value_type;
-                            value_type *data = t.typed_data<value_type>();
-                            for (size_t i = 0; i < size; ++i)
-                                data[i] = start + i * step;
-                        }},
+    std::visit(overload{
+        [&]<typename T>(T)
+            requires(T::is_int())
+                    {
+                        using value_type = typename T::value_type;
+                        value_type *data = t.typed_data<value_type>();
+                        for (size_t i = 0; i < size; ++i)
+                            data[i] = static_cast<value_type>(start + i * step);
+                    },
+                    [&]<typename T>(T)
+                        requires(T::is_pod_float())
+                                {
+                                    using value_type = typename T::value_type;
+                                    value_type *data =
+                                        t.typed_data<value_type>();
+                                    for (size_t i = 0; i < size; ++i)
+                                        data[i] = static_cast<value_type>(
+                                            start + i * step);
+                                },
+                                [&](axiom::Float16) {
+                                    float16_t *data = t.typed_data<float16_t>();
+                                    for (size_t i = 0; i < size; ++i)
+                                        data[i] = float16_t(static_cast<float>(
+                                            start + i * step));
+                                },
+                                [&]<typename T>(T)
+                                    requires(T::is_complex())
+        {
+            throw TypeError::unsupported_dtype(axiom::dtype_name(dtype),
+                                               "arange");
+        }},
                dtype_variant);
 
     return t;
@@ -1742,7 +1759,7 @@ Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
     auto dtype_variant = variant_to_dtype(dtype);
     std::visit(overload{
         [&]<typename T>(T)
-            requires(!T::is_pod_float())
+            requires(!T::is_float())
                     {
                         throw TypeError(
                             "randn only supports floating point types, got " +
@@ -1755,6 +1772,11 @@ Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
             value_type *data = tensor.typed_data<value_type>();
             for (size_t i = 0; i < tensor.size(); ++i)
                 data[i] = rng.normal<value_type>();
+        },
+        [&](axiom::Float16) {
+            float16_t *data = tensor.typed_data<float16_t>();
+            for (size_t i = 0; i < tensor.size(); ++i)
+                data[i] = float16_t(rng.normal<float>());
         }},
                dtype_variant);
 
@@ -1782,7 +1804,7 @@ Tensor Tensor::uniform(double low, double high, const Shape &shape, DType dtype,
             requires(!T::is_float())
                     {
                         throw TypeError(
-                            "randn only supports floating point types, got " +
+                            "uniform only supports floating point types, got " +
                             axiom::dtype_name(dtype));
                     },
                     [&]<typename T>(T)
@@ -2244,7 +2266,7 @@ bool Tensor::has_nan() const {
     auto dtype_variant = variant_to_dtype(dtype_);
     return std::visit(overload{
         [&]<typename T>(T)
-            requires(T::is_pod_float())
+            requires(T::is_float())
                     {
                         using value_type = typename T::value_type;
                         return check_nan.template operator()<value_type>();
@@ -2258,7 +2280,7 @@ bool Tensor::has_nan() const {
                                 },
                                 [&]<typename T>(T)
                                     requires(
-                                        !(T::is_complex() || T::is_pod_float()))
+                                        !(T::is_complex() || T::is_float()))
         { return false; }},
                       dtype_variant);
 }
@@ -2291,7 +2313,7 @@ bool Tensor::has_inf() const {
     auto dtype_variant = variant_to_dtype(dtype_);
     return std::visit(overload{
         [&]<typename T>(T)
-            requires(T::is_pod_float())
+            requires(T::is_float())
                     {
                         using value_type = typename T::value_type;
                         return check_inf.template operator()<value_type>();
@@ -2305,7 +2327,7 @@ bool Tensor::has_inf() const {
                                 },
                                 [&]<typename T>(T)
                                     requires(
-                                        !(T::is_complex() || T::is_pod_float()))
+                                        !(T::is_complex() || T::is_float()))
         { return false; }},
                       dtype_variant);
 }
