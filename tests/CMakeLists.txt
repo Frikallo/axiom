@@ -74,10 +74,12 @@ function(axiom_add_test TEST_NAME)
         gtest_discover_tests(${TEST_NAME}
             TIMEOUT ${ARG_TIMEOUT}
             WORKING_DIRECTORY ${ARG_WORKING_DIRECTORY}
+            DISCOVERY_MODE PRE_TEST
         )
     else()
         gtest_discover_tests(${TEST_NAME}
             TIMEOUT ${ARG_TIMEOUT}
+            DISCOVERY_MODE PRE_TEST
         )
     endif()
 endfunction()
