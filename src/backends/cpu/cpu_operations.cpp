@@ -346,22 +346,10 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(
     size_t ndim = result_shape.size();
 
     // Prepare broadcasted strides
-    Strides lhs_bcast_strides(ndim, 0);
-    Strides rhs_bcast_strides(ndim, 0);
-
-    int lhs_dim_offset = ndim - lhs_shape.size();
-    for (size_t i = 0; i < lhs_shape.size(); ++i) {
-        if (lhs_shape[i] != 1) {
-            lhs_bcast_strides[i + lhs_dim_offset] = lhs_strides_in[i];
-        }
-    }
-
-    int rhs_dim_offset = ndim - rhs_shape.size();
-    for (size_t i = 0; i < rhs_shape.size(); ++i) {
-        if (rhs_shape[i] != 1) {
-            rhs_bcast_strides[i + rhs_dim_offset] = rhs_strides_in[i];
-        }
-    }
+    Strides lhs_bcast_strides =
+        ShapeUtils::broadcast_strides(lhs_shape, lhs_strides_in, result_shape);
+    Strides rhs_bcast_strides =
+        ShapeUtils::broadcast_strides(rhs_shape, rhs_strides_in, result_shape);
 
     // Precompute divisors for fast index calculations (FXdiv optimization)
     // This converts repeated divisions into multiplications + shifts
@@ -422,13 +410,7 @@ void CPUBinaryOperation<Func>::execute_broadcast_loop(
 
         result_data[i] = func_(lhs_val, rhs_val);
 
-        // Increment coordinates
-        for (int j = ndim - 1; j >= 0; --j) {
-            if (++result_coords[j] < result_shape[j]) {
-                break;
-            }
-            result_coords[j] = 0;
-        }
+        ShapeUtils::increment_coords(result_coords, result_shape);
     }
 }
 
@@ -522,14 +504,8 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(
     size_t rhs_ndim = rhs_shape.size();
 
     // Prepare broadcasted strides for rhs (lhs strides remain as-is)
-    Strides rhs_bcast_strides(lhs_ndim, 0);
-    size_t rhs_dim_offset = lhs_ndim - rhs_ndim;
-
-    for (size_t i = 0; i < rhs_ndim; ++i) {
-        if (rhs_shape[i] != 1) {
-            rhs_bcast_strides[i + rhs_dim_offset] = rhs.strides()[i];
-        }
-    }
+    Strides rhs_bcast_strides =
+        ShapeUtils::broadcast_strides(rhs_shape, rhs.strides(), lhs_shape);
 
     T *lhs_data = lhs.template typed_data<T>();
     const T *rhs_data = rhs.template typed_data<T>();
@@ -556,13 +532,7 @@ void CPUBinaryOperation<Func>::execute_inplace_broadcast(
 
         lhs_val = func_(lhs_val, rhs_val);
 
-        // Increment coordinates
-        for (int j = static_cast<int>(lhs_ndim) - 1; j >= 0; --j) {
-            if (++coords[j] < lhs_shape[j]) {
-                break;
-            }
-            coords[j] = 0;
-        }
+        ShapeUtils::increment_coords(coords, lhs_shape);
     }
 }
 
@@ -612,22 +582,10 @@ void CPUComplexBinaryOperation::execute_complex_typed(const Tensor &lhs,
     size_t ndim = result_shape.size();
 
     // Prepare broadcasted strides
-    Strides lhs_bcast_strides(ndim, 0);
-    Strides rhs_bcast_strides(ndim, 0);
-
-    size_t lhs_dim_offset = ndim - lhs.shape().size();
-    for (size_t i = 0; i < lhs.shape().size(); ++i) {
-        if (lhs.shape()[i] != 1) {
-            lhs_bcast_strides[i + lhs_dim_offset] = lhs_conv.strides()[i];
-        }
-    }
-
-    size_t rhs_dim_offset = ndim - rhs.shape().size();
-    for (size_t i = 0; i < rhs.shape().size(); ++i) {
-        if (rhs.shape()[i] != 1) {
-            rhs_bcast_strides[i + rhs_dim_offset] = rhs_conv.strides()[i];
-        }
-    }
+    Strides lhs_bcast_strides = ShapeUtils::broadcast_strides(
+        lhs.shape(), lhs_conv.strides(), result_shape);
+    Strides rhs_bcast_strides = ShapeUtils::broadcast_strides(
+        rhs.shape(), rhs_conv.strides(), result_shape);
 
     std::vector<size_t> result_coords(ndim, 0);
 
@@ -667,13 +625,7 @@ void CPUComplexBinaryOperation::execute_complex_typed(const Tensor &lhs,
                             name());
         }
 
-        // Increment coordinates
-        for (int j = ndim - 1; j >= 0; --j) {
-            if (++result_coords[j] < result_shape[j]) {
-                break;
-            }
-            result_coords[j] = 0;
-        }
+        ShapeUtils::increment_coords(result_coords, result_shape);
     }
 }
 
@@ -1995,16 +1947,10 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor &input, int axis,
     }
 #endif
 
-    // Calculate sizes
-    size_t outer_size = 1;
-    for (int i = 0; i < axis; ++i)
-        outer_size *= input.shape()[i];
-
-    size_t axis_size = input.shape()[axis];
-
-    size_t inner_size = 1;
-    for (size_t i = axis + 1; i < ndim; ++i)
-        inner_size *= input.shape()[i];
+    auto axis_sizes = ShapeUtils::axis_outer_inner(input.shape(), axis);
+    size_t outer_size = axis_sizes.outer;
+    size_t axis_size = axis_sizes.axis;
+    size_t inner_size = axis_sizes.inner;
 
     // Iterate over all positions
     for (size_t outer = 0; outer < outer_size; ++outer) {
@@ -2126,16 +2072,10 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor &input, int axis,
     }
 #endif
 
-    // Calculate sizes
-    size_t outer_size = 1;
-    for (int i = 0; i < axis; ++i)
-        outer_size *= input.shape()[i];
-
-    size_t axis_size = input.shape()[axis];
-
-    size_t inner_size = 1;
-    for (size_t i = axis + 1; i < ndim; ++i)
-        inner_size *= input.shape()[i];
+    auto axis_sizes = ShapeUtils::axis_outer_inner(input.shape(), axis);
+    size_t outer_size = axis_sizes.outer;
+    size_t axis_size = axis_sizes.axis;
+    size_t inner_size = axis_sizes.inner;
 
     // Iterate over all positions
     for (size_t outer = 0; outer < outer_size; ++outer) {
@@ -2216,38 +2156,6 @@ Tensor CPUArgMinOperation::execute_reduction(const Tensor &input,
 // CPU Where Operation Implementation
 // ============================================================================
 
-// Helper to compute broadcast strides: maps input shape to output shape strides
-// Returns strides in bytes where broadcasted dimensions have stride 0
-static Strides compute_broadcast_strides(const Shape &input_shape,
-                                         const Shape &output_shape,
-                                         const Strides &input_strides) {
-    size_t out_ndim = output_shape.size();
-    size_t in_ndim = input_shape.size();
-    Strides result(out_ndim, 0);
-
-    // Align shapes from the right
-    for (size_t i = 0; i < out_ndim; ++i) {
-        size_t out_idx = out_ndim - 1 - i;
-        if (i < in_ndim) {
-            size_t in_idx = in_ndim - 1 - i;
-            // If input dimension is 1, it's broadcast (stride = 0)
-            // Otherwise, use the input stride
-            if (input_shape[in_idx] == output_shape[out_idx]) {
-                result[out_idx] = input_strides[in_idx];
-            } else if (input_shape[in_idx] == 1) {
-                result[out_idx] = 0; // Broadcast dimension
-            } else {
-                // This shouldn't happen if shapes are properly broadcastable
-                result[out_idx] = input_strides[in_idx];
-            }
-        } else {
-            // Input has fewer dimensions - broadcast with stride 0
-            result[out_idx] = 0;
-        }
-    }
-    return result;
-}
-
 // Helper to get value from tensor at byte offset, converting to output type T
 template <typename T>
 static T get_tensor_value_at(const void *data, size_t byte_offset,
@@ -2315,12 +2223,12 @@ Tensor CPUWhereOperation::execute_where_typed(const Tensor &condition,
         return result;
 
     // Get strides for broadcasting
-    auto cond_strides = compute_broadcast_strides(
-        condition.shape(), output_shape, condition.strides());
+    auto cond_strides = ShapeUtils::broadcast_strides(
+        condition.shape(), condition.strides(), output_shape);
     auto a_strides =
-        compute_broadcast_strides(a.shape(), output_shape, a.strides());
+        ShapeUtils::broadcast_strides(a.shape(), a.strides(), output_shape);
     auto b_strides =
-        compute_broadcast_strides(b.shape(), output_shape, b.strides());
+        ShapeUtils::broadcast_strides(b.shape(), b.strides(), output_shape);
     auto result_strides = result.strides();
 
     // Get data pointers
@@ -3046,15 +2954,10 @@ Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor &input,
     // Create output tensor
     Tensor result(input.shape(), input.dtype(), Device::CPU);
 
-    size_t outer_size = 1;
-    for (int i = 0; i < norm_axis; ++i)
-        outer_size *= input.shape()[i];
-
-    size_t axis_size = input.shape()[norm_axis];
-
-    size_t inner_size = 1;
-    for (size_t i = norm_axis + 1; i < input.ndim(); ++i)
-        inner_size *= input.shape()[i];
+    auto axis_sizes = ShapeUtils::axis_outer_inner(input.shape(), norm_axis);
+    size_t outer_size = axis_sizes.outer;
+    size_t axis_size = axis_sizes.axis;
+    size_t inner_size = axis_sizes.inner;
 
     const T *input_data = input.typed_data<T>();
     T *result_data = result.typed_data<T>();

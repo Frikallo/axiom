@@ -78,6 +78,12 @@ class ShapeDivisors {
     std::vector<fxdiv_divisor_size_t> divisors_;
 };
 
+struct AxisSizes {
+    size_t outer;
+    size_t axis;
+    size_t inner;
+};
+
 class ShapeUtils {
   public:
     static size_t size(const Shape &shape);
@@ -108,6 +114,48 @@ class ShapeUtils {
     static void unravel_index_fast(size_t linear_idx,
                                    const ShapeDivisors &divisors,
                                    std::vector<size_t> &indices);
+
+    // Increment N-dimensional coordinates in row-major order.
+    // Returns false when coords wraps back to all-zeros (done).
+    static bool increment_coords(std::vector<size_t> &coords,
+                                 const Shape &shape) {
+        for (int i = static_cast<int>(coords.size()) - 1; i >= 0; --i) {
+            if (++coords[i] < shape[i])
+                return true;
+            coords[i] = 0;
+        }
+        return false;
+    }
+
+    // Compute broadcast strides: maps input strides into the output
+    // shape, setting stride to 0 for broadcast (size-1) dimensions.
+    static Strides broadcast_strides(const Shape &input_shape,
+                                     const Strides &input_strides,
+                                     const Shape &result_shape) {
+        size_t out_ndim = result_shape.size();
+        size_t in_ndim = input_shape.size();
+        Strides result(out_ndim, 0);
+        for (size_t i = 0; i < out_ndim; ++i) {
+            size_t out_idx = out_ndim - 1 - i;
+            if (i < in_ndim) {
+                size_t in_idx = in_ndim - 1 - i;
+                if (input_shape[in_idx] != 1)
+                    result[out_idx] = input_strides[in_idx];
+            }
+        }
+        return result;
+    }
+
+    // Decompose a shape around an axis into outer, axis, and inner
+    // sizes for reduction-style loops.
+    static AxisSizes axis_outer_inner(const Shape &shape, int axis) {
+        AxisSizes s{1, shape[axis], 1};
+        for (int i = 0; i < axis; ++i)
+            s.outer *= shape[i];
+        for (size_t i = axis + 1; i < shape.size(); ++i)
+            s.inner *= shape[i];
+        return s;
+    }
 };
 
 Shape squeeze_shape(const Shape &shape, int axis = -1);

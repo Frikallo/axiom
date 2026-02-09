@@ -125,13 +125,7 @@ template <typename Func> Tensor apply(const Tensor &input, Func &&func) {
                 *reinterpret_cast<const InputT *>(base + byte_offset);
             result_data[i] = func(val);
 
-            // Increment coordinates
-            for (int j = static_cast<int>(ndim) - 1; j >= 0; --j) {
-                if (++coords[j] < src.shape()[j]) {
-                    break;
-                }
-                coords[j] = 0;
-            }
+            ShapeUtils::increment_coords(coords, src.shape());
         }
     }
 
@@ -209,22 +203,10 @@ Tensor apply(const Tensor &a, const Tensor &b, Func &&func) {
     // Broadcast path: stride-based element access
     size_t ndim = result_shape.size();
 
-    Strides lhs_bcast(ndim, 0);
-    Strides rhs_bcast(ndim, 0);
-
-    int lhs_off = static_cast<int>(ndim - lhs.shape().size());
-    for (size_t i = 0; i < lhs.shape().size(); ++i) {
-        if (lhs.shape()[i] != 1) {
-            lhs_bcast[i + lhs_off] = lhs.strides()[i];
-        }
-    }
-
-    int rhs_off = static_cast<int>(ndim - rhs.shape().size());
-    for (size_t i = 0; i < rhs.shape().size(); ++i) {
-        if (rhs.shape()[i] != 1) {
-            rhs_bcast[i + rhs_off] = rhs.strides()[i];
-        }
-    }
+    Strides lhs_bcast =
+        ShapeUtils::broadcast_strides(lhs.shape(), lhs.strides(), result_shape);
+    Strides rhs_bcast =
+        ShapeUtils::broadcast_strides(rhs.shape(), rhs.strides(), result_shape);
 
     const auto *lhs_base = reinterpret_cast<const uint8_t *>(lhs.data());
     const auto *rhs_base = reinterpret_cast<const uint8_t *>(rhs.data());
@@ -269,12 +251,7 @@ Tensor apply(const Tensor &a, const Tensor &b, Func &&func) {
         const auto &rv = *reinterpret_cast<const RhsT *>(rhs_base + rhs_off_b);
         result_data[i] = func(lv, rv);
 
-        for (int j = static_cast<int>(ndim) - 1; j >= 0; --j) {
-            if (++coords[j] < result_shape[j]) {
-                break;
-            }
-            coords[j] = 0;
-        }
+        ShapeUtils::increment_coords(coords, result_shape);
     }
 
     return result;
@@ -444,13 +421,7 @@ Tensor apply_along_axis(Func &&func1d, int axis, const Tensor &arr) {
             }
         }
 
-        // Increment outer coordinates
-        for (int j = static_cast<int>(outer_coords.size()) - 1; j >= 0; --j) {
-            if (++outer_coords[j] < outer_shape[j]) {
-                break;
-            }
-            outer_coords[j] = 0;
-        }
+        ShapeUtils::increment_coords(outer_coords, outer_shape);
     }
 
     return result;
