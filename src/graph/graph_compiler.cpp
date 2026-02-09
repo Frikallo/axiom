@@ -110,6 +110,13 @@ static bool can_fuse_pair(const GraphNode *producer,
     if (producer->target_device != consumer->target_device)
         return false;
 
+    // Dtype compatibility: the generic fused loop uses a single dtype
+    // for the whole chain. If the producer changes dtype (e.g.
+    // comparison float->bool), fusing would fail at fn-ptr resolution
+    // and waste time compiling a plan that falls back to op-by-op.
+    if (producer->output_dtype != consumer->output_dtype)
+        return false;
+
     // Compatible shapes
     if (producer->output_shape != consumer->output_shape) {
         if (!ShapeUtils::broadcastable(producer->output_shape,

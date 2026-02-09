@@ -1,24 +1,3 @@
-// hwy_math_ext-inl.h - Custom math functions for Highway
-//
-// Highway's contrib/math provides most transcendentals, but we need custom
-// implementations for:
-//   - erf(x): error function (Abramowitz-Stegun approximation)
-//   - cbrt(x): cube root (Newton-Raphson with exp/log initial guess)
-//
-// This file is included from hwy_kernels-inl.h INSIDE the HWY_NAMESPACE.
-// Do NOT add namespace declarations here - they are already set up.
-
-// ============================================================================
-// erf(x) - Error Function
-// ============================================================================
-// Abramowitz-Stegun approximation 7.1.26
-// Maximum error: ~1.5e-7 for float, ~2.5e-16 for double
-//
-// erf(x) = 1 - (a1*t + a2*t^2 + a3*t^3 + a4*t^4 + a5*t^5) * exp(-x^2)
-// where t = 1 / (1 + p*|x|)
-// and p = 0.3275911, a1 = 0.254829592, a2 = -0.284496736,
-//     a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429
-
 template <class D, class V = hn::VFromD<D>, typename T = hn::TFromD<D>>
 HWY_API V Erf(D d, V x) {
     const V one = hn::Set(d, T{1});

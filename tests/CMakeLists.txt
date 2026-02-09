@@ -166,4 +166,5 @@ endif()
 
 axiom_add_test(test_lazy_evaluation)
 axiom_add_test(test_fusion)
+axiom_add_test(test_fusion_extended)
 axiom_add_test(test_graph_compiler)

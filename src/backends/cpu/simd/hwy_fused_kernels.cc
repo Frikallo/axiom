@@ -1,8 +1,3 @@
-// Copyright 2024 Axiom Authors
-// SPDX-License-Identifier: MIT
-//
-// Dynamic dispatch wrappers for fused SIMD kernels
-
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "backends/cpu/simd/hwy_fused_kernels.cc"
 #include "hwy/foreach_target.h"

@@ -1,18 +1,3 @@
-// hwy_kernels-inl.h - Highway SIMD kernel implementations
-//
-// All kernel implementations for binary, unary, reduction, and activation
-// operations. This file is compiled multiple times via HWY_FOREACH_TARGET
-// to generate optimal code for each supported architecture.
-//
-// Highway handles:
-// - x86: SSE2, SSSE3, SSE4, AVX, AVX2, AVX3, AVX3_DL, AVX3_ZEN4
-// - ARM: NEON
-// - RISC-V: RVV
-// - WebAssembly: WASM, WASM_EMU256
-// - PowerPC: PPC8, PPC9, PPC10
-//
-// SVE/SVE2 are disabled on Apple Silicon (not supported by M-series chips)
-
 // Disable SVE targets on Apple Silicon before including any Highway headers
 #if defined(__APPLE__) && defined(__aarch64__)
 #define HWY_DISABLED_TARGETS (HWY_SVE | HWY_SVE2 | HWY_SVE_256 | HWY_SVE2_128)

@@ -5,6 +5,10 @@
 #include "axiom/operations.hpp"
 #include "backends/cpu/simd/simd_dispatch.hpp"
 
+#ifdef AXIOM_METAL_SUPPORT
+#include "axiom/graph/gpu_fusion.hpp"
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <unordered_set>
@@ -407,6 +411,12 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
     }
 
     if (!is_fused_simd_dtype(step.output_dtype) || step.device != Device::CPU) {
+#ifdef AXIOM_METAL_SUPPORT
+        // Try GPU fused path (single MPSGraph for entire chain)
+        if (step.device == Device::GPU &&
+            execute_gpu_fused_chain(step, buffers))
+            return;
+#endif
         // Fallback to generic
         execute_fused_generic(step, plan, buffers);
         return;
@@ -617,6 +627,12 @@ void GraphExecutor::execute_fused_generic(const ExecutionStep &step,
     if (try_tiled_fused_loop(step, buffers))
         return;
 
+#ifdef AXIOM_METAL_SUPPORT
+    // Try GPU fused path before falling back to op-by-op
+    if (step.device == Device::GPU && execute_gpu_fused_chain(step, buffers))
+        return;
+#endif
+
     // Fallback: sequential op-by-op via OperationRegistry
     Device device = step.device;
     Tensor current;
@@ -794,7 +810,13 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
                                             const CompiledGraph &plan,
                                             std::vector<Tensor> &buffers) {
     if (step.device != Device::CPU) {
-        // GPU: execute elementwise chain + reduction separately
+#ifdef AXIOM_METAL_SUPPORT
+        // Try GPU fused reduction (single MPSGraph for chain + reduction)
+        if (step.device == Device::GPU &&
+            execute_gpu_fused_reduction(step, buffers))
+            return;
+#endif
+        // Fallback: execute elementwise chain + reduction separately
         execute_fused_reduction_fallback(step, plan, buffers);
         return;
     }

@@ -1,9 +1,3 @@
-// Copyright 2024 Axiom Authors
-// SPDX-License-Identifier: MIT
-//
-// Fused SIMD kernels for common operation patterns
-// This file is included multiple times with different SIMD targets
-
 #include "hwy/contrib/math/math-inl.h"
 #include "hwy/highway.h"
 
