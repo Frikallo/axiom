@@ -718,11 +718,7 @@ static Tensor execute_complex_reduction(OpType op_type, const Tensor &input,
             std::vector<size_t> coords(input.ndim(), 0);
             for (size_t i = 0; i < input.size(); ++i) {
                 sum += input_cpu.item<complex64_t>(coords);
-                for (int j = input.ndim() - 1; j >= 0; --j) {
-                    if (++coords[j] < input.shape()[j])
-                        break;
-                    coords[j] = 0;
-                }
+                ShapeUtils::increment_coords(coords, input.shape());
             }
             if (op_type == OpType::Mean)
                 sum /= static_cast<float>(input.size());
@@ -776,11 +772,7 @@ static Tensor execute_complex_reduction(OpType op_type, const Tensor &input,
             std::vector<size_t> coords(input.ndim(), 0);
             for (size_t i = 0; i < input.size(); ++i) {
                 sum += input_cpu.item<complex128_t>(coords);
-                for (int j = input.ndim() - 1; j >= 0; --j) {
-                    if (++coords[j] < input.shape()[j])
-                        break;
-                    coords[j] = 0;
-                }
+                ShapeUtils::increment_coords(coords, input.shape());
             }
             if (op_type == OpType::Mean)
                 sum /= static_cast<double>(input.size());
@@ -952,12 +944,8 @@ static Tensor execute_complex_binary(OpType op_type, const Tensor &lhs,
                     throw TypeError("Operation " + op_type_name(op_type) +
                                     " not supported for complex types");
                 }
-                // Increment coordinates
-                for (int j = coords.size() - 1; j >= 0; --j) {
-                    if (++coords[j] < broadcast_info.result_shape[j])
-                        break;
-                    coords[j] = 0;
-                }
+                ShapeUtils::increment_coords(coords,
+                                             broadcast_info.result_shape);
             }
         }
     } else { // Complex128
@@ -1008,11 +996,8 @@ static Tensor execute_complex_binary(OpType op_type, const Tensor &lhs,
                     throw TypeError("Operation " + op_type_name(op_type) +
                                     " not supported for complex types");
                 }
-                for (int j = coords.size() - 1; j >= 0; --j) {
-                    if (++coords[j] < broadcast_info.result_shape[j])
-                        break;
-                    coords[j] = 0;
-                }
+                ShapeUtils::increment_coords(coords,
+                                             broadcast_info.result_shape);
             }
         }
     }
@@ -1889,11 +1874,7 @@ Tensor take_along_axis(const Tensor &input, const Tensor &indices, int axis) {
             std::vector<size_t> src_coords = coords;                           \
             src_coords[axis] = static_cast<size_t>(idx);                       \
             result.set_item<CTYPE>(coords, input_cpu.item<CTYPE>(src_coords)); \
-            for (int d = ndim - 1; d >= 0; --d) {                              \
-                if (++coords[d] < indices.shape()[d])                          \
-                    break;                                                     \
-                coords[d] = 0;                                                 \
-            }                                                                  \
+            ShapeUtils::increment_coords(coords, indices.shape());             \
         }                                                                      \
         break;                                                                 \
     }
@@ -1969,11 +1950,7 @@ Tensor put_along_axis(const Tensor &input, const Tensor &indices,
             dst_coords[axis] = static_cast<size_t>(idx);                       \
             result.set_item<CTYPE>(dst_coords,                                 \
                                    values_cpu.item<CTYPE>(coords));            \
-            for (int d = ndim - 1; d >= 0; --d) {                              \
-                if (++coords[d] < indices.shape()[d])                          \
-                    break;                                                     \
-                coords[d] = 0;                                                 \
-            }                                                                  \
+            ShapeUtils::increment_coords(coords, indices.shape());             \
         }                                                                      \
         break;                                                                 \
     }

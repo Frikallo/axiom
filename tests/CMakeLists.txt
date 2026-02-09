@@ -114,6 +114,7 @@ axiom_add_test(test_einsum)
 axiom_add_test(test_fft)
 axiom_add_test(test_pooling)
 axiom_add_test(test_einops_reduce)
+axiom_add_test(test_custom_functors)
 
 # ============================================================================
 # Tests with longer timeouts (60s)

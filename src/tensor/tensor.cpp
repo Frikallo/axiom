@@ -819,12 +819,7 @@ Tensor Tensor::roll(int64_t shift, int axis) const {
                         static_cast<const uint8_t *>(data()) + src_offset,
                         itemsize());
 
-            // Increment coordinates
-            for (int j = static_cast<int>(ndim()) - 1; j >= 0; --j) {
-                if (++coords[j] < shape_[j])
-                    break;
-                coords[j] = 0;
-            }
+            ShapeUtils::increment_coords(coords, shape_);
         }
     } else {
         auto cpu_rolled = cpu().roll(shift, axis);
@@ -2634,12 +2629,7 @@ Tensor Tensor::concatenate(const std::vector<Tensor> &tensors, int axis) {
                     static_cast<const uint8_t *>(src.data()) + src_offset,
                     src.itemsize());
 
-                // Increment coordinates
-                for (int j = ndim - 1; j >= 0; --j) {
-                    if (++coords[j] < src.shape()[j])
-                        break;
-                    coords[j] = 0;
-                }
+                ShapeUtils::increment_coords(coords, src.shape());
             }
         } else {
             // GPU: use CPU fallback for now
