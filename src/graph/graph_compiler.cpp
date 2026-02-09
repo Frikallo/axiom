@@ -691,28 +691,6 @@ std::shared_ptr<CompiledGraph> GraphCompiler::compile(const GraphSignature &sig,
             step.params = group.nodes[0]->params;
         }
 
-        // In-place analysis: check if output can reuse an input slot
-        step.can_inplace = false;
-        step.inplace_input_slot = -1;
-        if (!step.input_slot_indices.empty()) {
-            for (const auto &per_op : step.input_slot_indices) {
-                for (int s : per_op) {
-                    if (s >= 0 &&
-                        s < static_cast<int>(plan->buffer_slots.size())) {
-                        const auto &slot = plan->buffer_slots[s];
-                        if (slot.shape == step.output_shape &&
-                            slot.dtype == step.output_dtype && !slot.is_input) {
-                            step.can_inplace = true;
-                            step.inplace_input_slot = s;
-                            break;
-                        }
-                    }
-                }
-                if (step.can_inplace)
-                    break;
-            }
-        }
-
         plan->steps.push_back(std::move(step));
     }
 

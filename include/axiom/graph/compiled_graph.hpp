@@ -53,9 +53,6 @@ struct ExecutionStep {
     std::vector<AccessPattern> input_access;
 
     size_t tile_size = 0;
-
-    bool can_inplace = false;
-    int inplace_input_slot = -1;
 };
 
 struct BufferSlot {
@@ -103,7 +100,12 @@ struct CompiledGraph {
 
     void release_arena(std::unique_ptr<BufferArena> arena) const {
         std::lock_guard<std::mutex> lock(arena_mutex_);
-        free_arenas_.push_back(std::move(arena));
+        // Cap pool size to prevent unbounded growth under concurrent load
+        static constexpr size_t MAX_FREE_ARENAS = 4;
+        if (free_arenas_.size() < MAX_FREE_ARENAS) {
+            free_arenas_.push_back(std::move(arena));
+        }
+        // else: arena is dropped (unique_ptr destroyed)
     }
 };
 

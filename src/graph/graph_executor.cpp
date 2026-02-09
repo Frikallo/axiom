@@ -792,13 +792,15 @@ void GraphExecutor::execute_fused_reduction_fallback(
     if (!operation) {
         operation = ops::OperationRegistry::get_operation(red_op, Device::CPU);
     }
-    if (operation) {
-        Tensor result = operation->execute_reduction(
-            ew_result, step.params.axes, step.params.keep_dims);
-        if (step.output_slot >= 0 &&
-            step.output_slot < static_cast<int>(buffers.size())) {
-            buffers[step.output_slot] = result;
-        }
+    if (!operation) {
+        buffers.pop_back(); // remove temporary slot
+        throw DeviceError("Reduction operation not available for any device");
+    }
+    Tensor result = operation->execute_reduction(ew_result, step.params.axes,
+                                                 step.params.keep_dims);
+    if (step.output_slot >= 0 &&
+        step.output_slot < static_cast<int>(buffers.size())) {
+        buffers[step.output_slot] = result;
     }
     buffers.pop_back(); // remove temporary slot
 }

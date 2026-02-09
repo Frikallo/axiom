@@ -153,6 +153,8 @@ inline bool is_elementwise_op(ops::OpType op) {
     case OpType::IsInf:
     case OpType::IsFinite:
     case OpType::Conj:
+    case OpType::Real:
+    case OpType::Imag:
     // Activations (element-wise)
     case OpType::ReLU:
     case OpType::LeakyReLU:
@@ -333,10 +335,6 @@ enum class FusedPattern {
     SubMulAbs,      // |((a - b) * c)|
     ScaleShiftReLU, // relu(a * scale + bias)
 
-    // Special patterns
-    BiasReLU, // add bias then relu (same as AddReLU)
-    ExpSum,   // exp then sum (softmax helper)
-    Softmax,  // full softmax: exp(x - max) / sum(exp(x - max))
 };
 
 // Detect known fusion patterns
@@ -378,11 +376,6 @@ inline FusedPattern detect_pattern(const FusedOpChain &chain) {
             if (op2 == ops::OpType::ReLU)
                 return FusedPattern::ScaleShiftReLU;
         }
-
-        // Mul -> Add/Sub (FMA patterns)
-        if (op0 == ops::OpType::Multiply && op1 == ops::OpType::Add &&
-            op2 == ops::OpType::ReLU)
-            return FusedPattern::ScaleShiftReLU;
 
         // Add/Sub -> Mul -> activation
         if (op0 == ops::OpType::Add && op1 == ops::OpType::Multiply &&
