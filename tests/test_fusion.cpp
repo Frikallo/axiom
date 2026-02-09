@@ -44,8 +44,7 @@ TEST(Fusion, EagerParity) {
     {
         graph::EagerModeScope eager_scope;
         auto x2 = Tensor::from_data<float>(x.typed_data<float>(), {50, 50});
-        auto eager_result =
-            ops::sigmoid(ops::relu(ops::add(x2, x2)));
+        auto eager_result = ops::sigmoid(ops::relu(ops::add(x2, x2)));
         float eager_val = eager_result.item<float>({0, 0});
 
         ASSERT_NEAR(lazy_val, eager_val, 1e-5f);
@@ -58,8 +57,7 @@ TEST(Fusion, LongChain) {
     auto b = Tensor::full<float>({64, 64}, 2.0f);
     auto c = Tensor::full<float>({64, 64}, -0.5f);
 
-    auto result =
-        ops::tanh(ops::sigmoid(ops::add(ops::multiply(a, b), c)));
+    auto result = ops::tanh(ops::sigmoid(ops::add(ops::multiply(a, b), c)));
 
     float expected = std::tanh(1.0f / (1.0f + std::exp(-0.5f)));
     float val = result.item<float>({0, 0});
@@ -71,7 +69,7 @@ TEST(Fusion, ReductionBreaksChain) {
     auto x = Tensor::full<float>({4, 4}, 2.0f);
 
     auto y = ops::sqrt(x);
-    auto z = ops::sum(y);  // reduction breaks chain
+    auto z = ops::sum(y); // reduction breaks chain
     auto w = ops::exp(z);
 
     // Expected: exp(sum(sqrt(2) for 16 elements)) = exp(16 * sqrt(2))
