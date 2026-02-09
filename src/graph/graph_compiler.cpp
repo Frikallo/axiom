@@ -223,14 +223,29 @@ GraphCompiler::fusion_analysis(const std::vector<const GraphNode *> &sorted) {
                 std::vector<int> indices;
                 const auto *n = group.nodes[i];
                 for (const auto &inp : n->inputs) {
-                    if (i > 0 && inp.get() == group.nodes[i - 1]) {
-                        indices.push_back(-1);
+                    // Check if input is any chain node (not just previous)
+                    bool is_chain_internal = false;
+                    for (size_t ci = 0; ci < i; ++ci) {
+                        if (inp.get() == group.nodes[ci]) {
+                            is_chain_internal = true;
+                            break;
+                        }
+                    }
+                    if (is_chain_internal) {
+                        indices.push_back(-1); // chain-internal reference
                     } else {
+                        bool found = false;
                         for (size_t j = 0; j < foc.input_nodes.size(); ++j) {
                             if (foc.input_nodes[j].get() == inp.get()) {
                                 indices.push_back(static_cast<int>(j));
+                                found = true;
                                 break;
                             }
+                        }
+                        if (!found) {
+                            // Should not happen — indicates a graph structure
+                            // error. Push -1 as fallback to avoid short vector.
+                            indices.push_back(-1);
                         }
                     }
                 }

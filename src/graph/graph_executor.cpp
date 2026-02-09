@@ -390,20 +390,15 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
                                         std::vector<Tensor> &buffers) {
     // Collect external inputs (not chain-internal results)
     std::vector<Tensor> inputs;
-    std::unordered_set<int> chain_internal;
+    std::unordered_set<int> seen_slots;
 
     // For fused chains, inputs with index -1 are chain-internal
     for (const auto &per_op : step.input_slot_indices) {
         for (int s : per_op) {
             if (s >= 0 && s < static_cast<int>(buffers.size())) {
-                bool already = false;
-                for (const auto &t : inputs) {
-                    if (t.storage() == buffers[s].storage()) {
-                        already = true;
-                        break;
-                    }
-                }
-                if (!already) {
+                // Dedup by slot index (not storage pointer — arena-backed
+                // slots can share a Storage yet hold distinct data).
+                if (seen_slots.insert(s).second) {
                     inputs.push_back(buffers[s]);
                 }
             }

@@ -9,6 +9,7 @@
 #include "axiom/type_conversion.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <unordered_set>
 
@@ -19,29 +20,29 @@ namespace graph {
 thread_local std::vector<std::weak_ptr<GraphNode>>
     GraphRegistry::pending_nodes_;
 
-// Global settings
-static bool g_eager_mode = false;
-static size_t g_max_pending_nodes = 10000;
+// Global settings — atomic to avoid data races across threads
+static std::atomic<bool> g_eager_mode{false};
+static std::atomic<size_t> g_max_pending_nodes{10000};
 
 // Thread-local eager mode for EagerModeScope
 static thread_local bool tl_eager_mode = false;
 
 bool is_eager_mode_enabled() {
-    // Check environment variable first
-    static bool env_checked = false;
-    static bool env_eager = false;
-    if (!env_checked) {
+    // Check environment variable once (thread-safe static init per C++11)
+    static const bool env_eager = [] {
         const char *env = std::getenv("AXIOM_EAGER_MODE");
-        env_eager = (env != nullptr && std::string(env) == "1");
-        env_checked = true;
-    }
-    return env_eager || g_eager_mode || tl_eager_mode;
+        return env != nullptr && std::string(env) == "1";
+    }();
+    return env_eager || g_eager_mode.load(std::memory_order_relaxed) ||
+           tl_eager_mode;
 }
 
-size_t get_max_pending_nodes() { return g_max_pending_nodes; }
+size_t get_max_pending_nodes() {
+    return g_max_pending_nodes.load(std::memory_order_relaxed);
+}
 
 void set_max_pending_nodes(size_t max_nodes) {
-    g_max_pending_nodes = max_nodes;
+    g_max_pending_nodes.store(max_nodes, std::memory_order_relaxed);
 }
 
 // ============================================================================
@@ -408,7 +409,8 @@ Tensor GraphRegistry::create_lazy_unary(ops::OpType op, const Tensor &input,
     pending_nodes_.push_back(node);
 
     // Auto-materialize if too many pending nodes
-    if (pending_nodes_.size() > g_max_pending_nodes) {
+    if (pending_nodes_.size() >
+        g_max_pending_nodes.load(std::memory_order_relaxed)) {
         materialize(node.get());
     }
 
@@ -477,7 +479,8 @@ Tensor GraphRegistry::create_lazy_binary(ops::OpType op, const Tensor &lhs,
 
     pending_nodes_.push_back(node);
 
-    if (pending_nodes_.size() > g_max_pending_nodes) {
+    if (pending_nodes_.size() >
+        g_max_pending_nodes.load(std::memory_order_relaxed)) {
         materialize(node.get());
     }
 
@@ -526,7 +529,8 @@ Tensor GraphRegistry::create_lazy_reduction(ops::OpType op, const Tensor &input,
 
     pending_nodes_.push_back(node);
 
-    if (pending_nodes_.size() > g_max_pending_nodes) {
+    if (pending_nodes_.size() >
+        g_max_pending_nodes.load(std::memory_order_relaxed)) {
         materialize(node.get());
     }
 
@@ -592,7 +596,8 @@ Tensor GraphRegistry::create_lazy_matmul(const Tensor &a, const Tensor &b,
 
     pending_nodes_.push_back(node);
 
-    if (pending_nodes_.size() > g_max_pending_nodes) {
+    if (pending_nodes_.size() >
+        g_max_pending_nodes.load(std::memory_order_relaxed)) {
         materialize(node.get());
     }
 
@@ -717,6 +722,14 @@ void GraphRegistry::materialize(GraphNode *node) {
     node->cached_shape_ = result.shape();
     node->cached_strides_ = result.strides();
     node->is_materialized_ = true;
+
+    // Decrement ref_count for inputs — this node no longer needs them
+    // for fusion purposes since its result is now computed.
+    for (auto &inp : node->inputs) {
+        if (inp && !inp->is_constant && inp->ref_count > 0) {
+            inp->ref_count--;
+        }
+    }
 
     // Clean up pending nodes that are now materialized
     pending_nodes_.erase(std::remove_if(pending_nodes_.begin(),
