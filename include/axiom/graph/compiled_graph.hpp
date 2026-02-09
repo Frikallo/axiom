@@ -49,6 +49,7 @@ struct ExecutionStep {
     size_t total_elements = 0;
     Shape output_shape;
     DType output_dtype{};
+    DType chain_dtype{}; // For FusedReduction: dtype of the elementwise chain
     std::vector<AccessPattern> input_access;
 
     size_t tile_size = 0;

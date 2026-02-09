@@ -769,7 +769,9 @@ void GraphExecutor::execute_fused_reduction_fallback(
         step.input_slot_indices.begin() +
             static_cast<ptrdiff_t>(step.op_chain.size()));
     ew_step.device = step.device;
-    ew_step.output_dtype = step.output_dtype;
+    // Use chain_dtype for the elementwise chain, NOT output_dtype
+    // (e.g. mean(int32) has output_dtype=Float32 but chain operates on Int32)
+    ew_step.output_dtype = step.chain_dtype;
     // Determine output shape from the elementwise chain input
     if (!step.input_slot_indices.empty() &&
         !step.input_slot_indices[0].empty()) {
@@ -821,8 +823,15 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
         return;
     }
 
-    DType dtype = step.output_dtype;
-    size_t elem_size = dtype_size(dtype);
+    // Use chain_dtype for fn-ptr resolution — this is the dtype the
+    // elementwise chain operates on, which may differ from output_dtype
+    // (e.g. mean(int32) has output_dtype=Float32 but chain is Int32).
+    DType chain_dtype = step.chain_dtype;
+    // Fallback: if chain_dtype wasn't set, use output_dtype
+    if (chain_dtype == DType{})
+        chain_dtype = step.output_dtype;
+
+    size_t elem_size = dtype_size(chain_dtype);
     if (elem_size == 0) {
         execute_fused_reduction_fallback(step, plan, buffers);
         return;
@@ -848,24 +857,24 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
 
         if (is_unary_op(op)) {
             d.is_unary = true;
-            d.unary_fn = get_unary_fn(op, dtype);
+            d.unary_fn = get_unary_fn(op, chain_dtype);
             if (!d.unary_fn) {
-                execute_fused_generic(step, plan, buffers);
+                execute_fused_reduction_fallback(step, plan, buffers);
                 return;
             }
             d.input_slot_a = indices.empty() ? -1 : indices[0];
             d.input_slot_b = -2;
         } else if (is_binary_op(op)) {
             d.is_unary = false;
-            d.binary_fn = get_binary_fn(op, dtype);
+            d.binary_fn = get_binary_fn(op, chain_dtype);
             if (!d.binary_fn) {
-                execute_fused_generic(step, plan, buffers);
+                execute_fused_reduction_fallback(step, plan, buffers);
                 return;
             }
             d.input_slot_a = indices.empty() ? -1 : indices[0];
             d.input_slot_b = (indices.size() > 1) ? indices[1] : -1;
         } else {
-            execute_fused_generic(step, plan, buffers);
+            execute_fused_reduction_fallback(step, plan, buffers);
             return;
         }
 
@@ -910,8 +919,61 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
     if (is_mean)
         red_op = ops::OpType::Sum; // Mean = Sum / N
 
-    // We only support float32/float64 for fused reduction SIMD
-    bool use_simd = (dtype == DType::Float32 || dtype == DType::Float64);
+    bool use_simd =
+        (chain_dtype == DType::Float32 || chain_dtype == DType::Float64);
+
+    // Scalar reduction helper for integer types
+    auto scalar_reduce = [&](const void *data, size_t count) -> double {
+        double acc = 0.0;
+        if (chain_dtype == DType::Int32) {
+            const int32_t *p = static_cast<const int32_t *>(data);
+            if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean) {
+                int64_t s = 0;
+                for (size_t i = 0; i < count; ++i)
+                    s += p[i];
+                return static_cast<double>(s);
+            } else if (red_op == ops::OpType::Max) {
+                int32_t m = p[0];
+                for (size_t i = 1; i < count; ++i)
+                    m = std::max(m, p[i]);
+                return static_cast<double>(m);
+            } else if (red_op == ops::OpType::Min) {
+                int32_t m = p[0];
+                for (size_t i = 1; i < count; ++i)
+                    m = std::min(m, p[i]);
+                return static_cast<double>(m);
+            } else if (red_op == ops::OpType::Prod) {
+                int64_t m = 1;
+                for (size_t i = 0; i < count; ++i)
+                    m *= p[i];
+                return static_cast<double>(m);
+            }
+        } else if (chain_dtype == DType::Int64) {
+            const int64_t *p = static_cast<const int64_t *>(data);
+            if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean) {
+                int64_t s = 0;
+                for (size_t i = 0; i < count; ++i)
+                    s += p[i];
+                return static_cast<double>(s);
+            } else if (red_op == ops::OpType::Max) {
+                int64_t m = p[0];
+                for (size_t i = 1; i < count; ++i)
+                    m = std::max(m, p[i]);
+                return static_cast<double>(m);
+            } else if (red_op == ops::OpType::Min) {
+                int64_t m = p[0];
+                for (size_t i = 1; i < count; ++i)
+                    m = std::min(m, p[i]);
+                return static_cast<double>(m);
+            } else if (red_op == ops::OpType::Prod) {
+                int64_t m = 1;
+                for (size_t i = 0; i < count; ++i)
+                    m *= p[i];
+                return static_cast<double>(m);
+            }
+        }
+        return acc;
+    };
 
     // Process tile: run elementwise chain, then reduce tile
     auto process_tile_and_reduce = [&](size_t base, size_t count, void *tile_a,
@@ -945,7 +1007,7 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
 
         // Reduce the tile
         double tile_acc = 0.0;
-        if (use_simd && dtype == DType::Float32) {
+        if (use_simd && chain_dtype == DType::Float32) {
             const float *tile = static_cast<const float *>(prev);
             if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean)
                 tile_acc = simd::dispatch_reduce_sum(tile, count);
@@ -955,7 +1017,7 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
                 tile_acc = simd::dispatch_reduce_min(tile, count);
             else if (red_op == ops::OpType::Prod)
                 tile_acc = simd::dispatch_reduce_prod(tile, count);
-        } else if (use_simd && dtype == DType::Float64) {
+        } else if (use_simd && chain_dtype == DType::Float64) {
             const double *tile = static_cast<const double *>(prev);
             if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean)
                 tile_acc = simd::dispatch_reduce_sum(tile, count);
@@ -965,6 +1027,9 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
                 tile_acc = simd::dispatch_reduce_min(tile, count);
             else if (red_op == ops::OpType::Prod)
                 tile_acc = simd::dispatch_reduce_prod(tile, count);
+        } else {
+            // Scalar fallback for integer types
+            tile_acc = scalar_reduce(prev, count);
         }
         return tile_acc;
     };
@@ -1064,12 +1129,17 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
     if (is_mean)
         acc /= static_cast<double>(total);
 
-    // Store scalar result
-    Tensor result(step.output_shape, dtype, Device::CPU);
-    if (dtype == DType::Float32) {
+    // Store scalar result using the reduction output dtype
+    DType out_dtype = step.output_dtype;
+    Tensor result(step.output_shape, out_dtype, Device::CPU);
+    if (out_dtype == DType::Float32) {
         result.typed_data<float>()[0] = static_cast<float>(acc);
-    } else if (dtype == DType::Float64) {
+    } else if (out_dtype == DType::Float64) {
         result.typed_data<double>()[0] = acc;
+    } else if (out_dtype == DType::Int32) {
+        result.typed_data<int32_t>()[0] = static_cast<int32_t>(acc);
+    } else if (out_dtype == DType::Int64) {
+        result.typed_data<int64_t>()[0] = static_cast<int64_t>(acc);
     }
 
     if (step.output_slot >= 0 &&

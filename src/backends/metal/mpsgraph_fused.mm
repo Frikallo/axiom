@@ -46,8 +46,15 @@ static MPSDataType toMPS(DType dtype) {
     case DType::Bool:
         return MPSDataTypeBool;
     default:
-        return MPSDataTypeFloat32;
+        // Float64, Complex, BFloat16 are not supported by MPS.
+        // Return 0 as a sentinel — callers must check before using.
+        return static_cast<MPSDataType>(0);
     }
+}
+
+// Check if a dtype is supported for GPU fusion via MPS
+static bool is_mps_supported_dtype(DType dtype) {
+    return toMPS(dtype) != static_cast<MPSDataType>(0);
 }
 
 static MPSShape *toMPSShape(const Shape &shape) {
@@ -381,6 +388,10 @@ bool execute_gpu_fused_chain(const ExecutionStep &step,
         if (step.op_chain.empty())
             return false;
 
+        // Bail out for dtypes not supported by MPS (Float64, Complex, etc.)
+        if (!is_mps_supported_dtype(step.output_dtype))
+            return false;
+
         // Collect unique external input slots (not chain-internal -1)
         std::vector<int> external_slots;
         for (const auto &per_op : step.input_slot_indices) {
@@ -554,6 +565,10 @@ bool execute_gpu_fused_reduction(const ExecutionStep &step,
                                  std::vector<Tensor> &buffers) {
     @autoreleasepool {
         if (step.op_chain.empty())
+            return false;
+
+        // Bail out for dtypes not supported by MPS (Float64, Complex, etc.)
+        if (!is_mps_supported_dtype(step.output_dtype))
             return false;
 
         // Collect external inputs

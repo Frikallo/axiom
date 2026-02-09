@@ -740,7 +740,10 @@ size_t GraphRegistry::pending_node_count() {
 }
 
 void GraphRegistry::materialize_all() {
-    for (auto &wp : pending_nodes_) {
+    // Copy to local vector first — materialize() mutates pending_nodes_
+    // via erase-remove, so iterating the original is undefined behavior.
+    auto snapshot = pending_nodes_;
+    for (auto &wp : snapshot) {
         if (auto node = wp.lock()) {
             if (!node->is_materialized_) {
                 materialize(node.get());

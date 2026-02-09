@@ -1,4 +1,5 @@
 #include "axiom/graph/graph_compiler.hpp"
+#include "axiom/error.hpp"
 #include "axiom/graph/graph_node.hpp"
 
 #include <algorithm>
@@ -378,6 +379,7 @@ void GraphCompiler::memory_plan(CompiledGraph &plan) {
         size_t byte_size;
     };
     std::vector<FreeEntry> free_list;
+    std::unordered_set<size_t> freed_slots; // track already-freed slots
 
     int next_alloc = 0;
     plan.slot_to_allocation.resize(slots.size(), -1);
@@ -392,15 +394,18 @@ void GraphCompiler::memory_plan(CompiledGraph &plan) {
     for (int step_idx = 0; step_idx < static_cast<int>(plan.steps.size());
          ++step_idx) {
 
-        // Free slots whose last_use < step_idx
+        // Free slots whose last_use < step_idx (only once per slot)
         for (size_t i = 0; i < slots.size(); ++i) {
             if (slots[i].is_input)
                 continue;
+            if (freed_slots.count(i))
+                continue; // already freed
             if (plan.slot_to_allocation[i] >= 0 && slots[i].last_use >= 0 &&
                 slots[i].last_use < step_idx) {
                 // This slot is dead — put its allocation on the free list
                 free_list.push_back(
                     {plan.slot_to_allocation[i], slots[i].byte_size});
+                freed_slots.insert(i);
             }
         }
 
@@ -598,6 +603,9 @@ std::shared_ptr<CompiledGraph> GraphCompiler::compile(const GraphSignature &sig,
             for (size_t ni = 0; ni + 1 < group.nodes.size(); ++ni) {
                 step.op_chain.push_back(group.nodes[ni]->op_type);
             }
+            // chain_dtype = the dtype the elementwise ops operate on
+            // (may differ from output_dtype, e.g. mean(int32) → float32)
+            step.chain_dtype = group.nodes[0]->output_dtype;
             // The input of the whole chain determines total_elements
             // (the reduction collapses to scalar)
             if (!group.nodes.empty() && group.nodes.size() >= 2) {
@@ -654,7 +662,9 @@ std::shared_ptr<CompiledGraph> GraphCompiler::compile(const GraphSignature &sig,
                     } else {
                         // Node not yet assigned — it's an external input
                         // that should have been assigned above
-                        indices.push_back(-2); // error sentinel
+                        throw RuntimeError(
+                            "GraphCompiler: input node not found in "
+                            "node_to_slot map — graph is malformed");
                     }
                 }
             }
@@ -676,7 +686,7 @@ std::shared_ptr<CompiledGraph> GraphCompiler::compile(const GraphSignature &sig,
                         s < static_cast<int>(plan->buffer_slots.size())) {
                         const auto &slot = plan->buffer_slots[s];
                         if (slot.shape == step.output_shape &&
-                            slot.dtype == step.output_dtype && slot.is_input) {
+                            slot.dtype == step.output_dtype && !slot.is_input) {
                             step.can_inplace = true;
                             step.inplace_input_slot = s;
                             break;
