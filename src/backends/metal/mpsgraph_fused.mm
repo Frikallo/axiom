@@ -382,10 +382,11 @@ static Tensor ensureGPUContiguous(const Tensor &t) {
 // Build and execute a fused elementwise chain as a single MPSGraph
 // ============================================================================
 
-bool execute_gpu_fused_chain(const ExecutionStep &step,
+bool execute_gpu_fused_chain(const StepBase &step,
+                             const std::vector<ops::OpType> &op_chain,
                              std::vector<Tensor> &buffers) {
     @autoreleasepool {
-        if (step.op_chain.empty())
+        if (op_chain.empty())
             return false;
 
         // Bail out for dtypes not supported by MPS (Float64, Complex, etc.)
@@ -426,7 +427,7 @@ bool execute_gpu_fused_chain(const ExecutionStep &step,
 
         // Build cache key
         FusedChainCacheKey key;
-        key.ops = step.op_chain;
+        key.ops = op_chain;
         for (auto &t : inputs) {
             key.input_shapes.push_back(t.shape());
             key.input_dtypes.push_back(t.dtype());
@@ -471,8 +472,8 @@ bool execute_gpu_fused_chain(const ExecutionStep &step,
 
             // Walk the op chain, threading results through
             MPSGraphTensor *prev = nil;
-            for (size_t oi = 0; oi < step.op_chain.size(); ++oi) {
-                ops::OpType op = step.op_chain[oi];
+            for (size_t oi = 0; oi < op_chain.size(); ++oi) {
+                ops::OpType op = op_chain[oi];
                 const auto &indices = step.input_slot_indices[oi];
 
                 auto resolve = [&](int idx) -> MPSGraphTensor * {
@@ -561,7 +562,7 @@ bool execute_gpu_fused_chain(const ExecutionStep &step,
 // Build and execute a fused elementwise + reduction as single MPSGraph
 // ============================================================================
 
-bool execute_gpu_fused_reduction(const ExecutionStep &step,
+bool execute_gpu_fused_reduction(const FusedReductionStep &step,
                                  std::vector<Tensor> &buffers) {
     @autoreleasepool {
         if (step.op_chain.empty())
@@ -611,8 +612,9 @@ bool execute_gpu_fused_reduction(const ExecutionStep &step,
         }
         key.output_dtype = step.output_dtype;
         key.reduction_op = step.reduction_op;
-        key.reduction_axes = step.params.axes;
-        key.keep_dims = step.params.keep_dims;
+        const auto &rp = get_params<ReductionParams>(step.params);
+        key.reduction_axes = rp.axes;
+        key.keep_dims = rp.keep_dims;
 
         auto slot_to_input = [&](int slot) -> int {
             for (size_t i = 0; i < external_slots.size(); ++i) {
@@ -684,7 +686,8 @@ bool execute_gpu_fused_reduction(const ExecutionStep &step,
                 return false;
 
             // Build reduction axes
-            std::vector<int> axes = step.params.axes;
+            const auto &rp2 = get_params<ReductionParams>(step.params);
+            std::vector<int> axes = rp2.axes;
             if (axes.empty()) {
                 // Full reduction: all axes
                 // Infer rank from the first input

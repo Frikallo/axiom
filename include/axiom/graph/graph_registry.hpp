@@ -3,9 +3,9 @@
 #include <memory>
 #include <vector>
 
-#include "../dtype.hpp"
-#include "../operations.hpp"
-#include "../shape.hpp"
+#include "axiom/dtype.hpp"
+#include "axiom/operations.hpp"
+#include "axiom/shape.hpp"
 #include "graph_node.hpp"
 
 namespace axiom {
@@ -18,9 +18,7 @@ namespace graph {
 // Forward declarations for graph compiler infrastructure
 struct GraphSignature;
 struct CompiledGraph;
-class GraphCompiler;
 class GraphCache;
-class GraphExecutor;
 
 // Environment variable to disable lazy evaluation globally
 // Set AXIOM_EAGER_MODE=1 to disable lazy evaluation
@@ -48,12 +46,12 @@ class GraphRegistry {
   public:
     // Create a lazy tensor from a unary operation
     static Tensor create_lazy_unary(ops::OpType op, const Tensor &input,
-                                    const GraphNode::Params &params = {});
+                                    const OpParams &params = NoParams{});
 
     // Create a lazy tensor from a binary operation
     static Tensor create_lazy_binary(ops::OpType op, const Tensor &lhs,
                                      const Tensor &rhs,
-                                     const GraphNode::Params &params = {});
+                                     const OpParams &params = NoParams{});
 
     // Create a lazy tensor from a reduction operation
     static Tensor create_lazy_reduction(ops::OpType op, const Tensor &input,

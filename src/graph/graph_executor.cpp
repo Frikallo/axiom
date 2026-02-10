@@ -1,6 +1,7 @@
 #include "axiom/graph/graph_executor.hpp"
 #include "axiom/error.hpp"
 #include "axiom/graph/fused_kernel.hpp"
+#include "axiom/graph/fused_patterns.hpp"
 #include "axiom/graph/graph_node.hpp"
 #include "axiom/operations.hpp"
 #include "backends/cpu/simd/simd_dispatch.hpp"
@@ -21,11 +22,11 @@ namespace graph {
 // Tile size: 16K elements = 64KB for float32, fits in Apple M-series L1
 static constexpr size_t TILE_ELEMENTS = 16384;
 
+namespace {
+
 // ============================================================================
 // RAII guard to return arena to pool on scope exit
 // ============================================================================
-
-namespace {
 
 struct ArenaGuard {
     const CompiledGraph &plan;
@@ -36,14 +37,29 @@ struct ArenaGuard {
     }
 };
 
-} // namespace
+// Forward declarations for internal dispatch functions
+void execute_single_op(const SingleOpStep &step, std::vector<Tensor> &buffers);
+void execute_fused_known(const FusedKnownStep &step, const CompiledGraph &plan,
+                         std::vector<Tensor> &buffers);
+void execute_fused_generic(const FusedGenericStep &step,
+                           const CompiledGraph &plan,
+                           std::vector<Tensor> &buffers);
+void execute_matmul_activation(const MatMulActivationStep &step,
+                               std::vector<Tensor> &buffers);
+void execute_fused_reduction(const FusedReductionStep &step,
+                             const CompiledGraph &plan,
+                             std::vector<Tensor> &buffers);
+void execute_fused_reduction_fallback(const FusedReductionStep &step,
+                                      const CompiledGraph &plan,
+                                      std::vector<Tensor> &buffers);
+
+} // anonymous namespace
 
 // ============================================================================
 // Execute the full compiled plan
 // ============================================================================
 
-Tensor GraphExecutor::execute(const CompiledGraph &plan,
-                              const std::vector<Tensor> &inputs) {
+Tensor execute(const CompiledGraph &plan, const std::vector<Tensor> &inputs) {
     // Allocate buffer vector — one Tensor per slot
     std::vector<Tensor> buffers(plan.buffer_slots.size());
 
@@ -106,9 +122,24 @@ Tensor GraphExecutor::execute(const CompiledGraph &plan,
         buffers[i] = Tensor(slot.shape, slot.dtype, slot.device);
     }
 
-    // Execute each step
+    // Execute each step via std::visit
     for (const auto &step : plan.steps) {
-        execute_step(step, plan, buffers);
+        std::visit(
+            [&](const auto &s) {
+                using T = std::decay_t<decltype(s)>;
+                if constexpr (std::is_same_v<T, SingleOpStep>) {
+                    execute_single_op(s, buffers);
+                } else if constexpr (std::is_same_v<T, FusedKnownStep>) {
+                    execute_fused_known(s, plan, buffers);
+                } else if constexpr (std::is_same_v<T, FusedGenericStep>) {
+                    execute_fused_generic(s, plan, buffers);
+                } else if constexpr (std::is_same_v<T, MatMulActivationStep>) {
+                    execute_matmul_activation(s, buffers);
+                } else if constexpr (std::is_same_v<T, FusedReductionStep>) {
+                    execute_fused_reduction(s, plan, buffers);
+                }
+            },
+            step);
     }
 
     // Return the output
@@ -120,38 +151,13 @@ Tensor GraphExecutor::execute(const CompiledGraph &plan,
     throw RuntimeError("CompiledGraph has no valid output slot");
 }
 
-// ============================================================================
-// Step Dispatch
-// ============================================================================
-
-void GraphExecutor::execute_step(const ExecutionStep &step,
-                                 const CompiledGraph &plan,
-                                 std::vector<Tensor> &buffers) {
-    switch (step.kind) {
-    case ExecutionStep::Kind::SingleOp:
-        execute_single_op(step, buffers);
-        break;
-    case ExecutionStep::Kind::FusedKnown:
-        execute_fused_known(step, plan, buffers);
-        break;
-    case ExecutionStep::Kind::FusedGeneric:
-        execute_fused_generic(step, plan, buffers);
-        break;
-    case ExecutionStep::Kind::MatMulActivation:
-        execute_matmul_activation(step, buffers);
-        break;
-    case ExecutionStep::Kind::FusedReduction:
-        execute_fused_reduction(step, plan, buffers);
-        break;
-    }
-}
+namespace {
 
 // ============================================================================
 // SingleOp: dispatch via OperationRegistry (current behavior)
 // ============================================================================
 
-void GraphExecutor::execute_single_op(const ExecutionStep &step,
-                                      std::vector<Tensor> &buffers) {
+void execute_single_op(const SingleOpStep &step, std::vector<Tensor> &buffers) {
     Device device = step.device;
     ops::OpType op = step.op_type;
 
@@ -191,17 +197,20 @@ void GraphExecutor::execute_single_op(const ExecutionStep &step,
         result = operation->execute_binary(get_input(indices[0]),
                                            get_input(indices[1]));
     } else if (is_reduction_op(op)) {
-        result = operation->execute_reduction(
-            get_input(indices[0]), step.params.axes, step.params.keep_dims);
+        const auto &rp = get_params<ReductionParams>(step.params);
+        result = operation->execute_reduction(get_input(indices[0]), rp.axes,
+                                              rp.keep_dims);
     } else if (op == ops::OpType::MatMul || op == ops::OpType::BatchMatMul) {
-        result = operation->execute_matmul(
-            get_input(indices[0]), get_input(indices[1]),
-            step.params.transpose_a, step.params.transpose_b);
+        const auto &mp = get_params<MatMulParams>(step.params);
+        result = operation->execute_matmul(get_input(indices[0]),
+                                           get_input(indices[1]),
+                                           mp.transpose_a, mp.transpose_b);
     } else if (op == ops::OpType::Softmax || op == ops::OpType::LogSoftmax) {
-        result = operation->execute_reduction(get_input(indices[0]),
-                                              {step.params.axis}, false);
+        const auto &ap = get_params<ActivationParams>(step.params);
+        result = operation->execute_reduction(get_input(indices[0]), {ap.axis},
+                                              false);
     } else {
-        throw RuntimeError("Unsupported op type in GraphExecutor::SingleOp");
+        throw RuntimeError("Unsupported op type in execute_single_op");
     }
 
     if (step.output_slot >= 0 &&
@@ -218,176 +227,8 @@ void GraphExecutor::execute_single_op(const ExecutionStep &step,
 // spawn overhead is only amortized at larger sizes (~1M+ elements).
 static constexpr size_t FUSED_KNOWN_MIN_PARALLEL = 524288;
 
-// Helper to check if dtype is supported for SIMD fused patterns
-static bool is_fused_simd_dtype(DType dtype) {
-    return dtype == DType::Float32 || dtype == DType::Float64 ||
-           dtype == DType::Int32 || dtype == DType::Int64;
-}
-
-static bool is_integer_pattern_supported(FusedPattern pattern) {
-    switch (pattern) {
-    case FusedPattern::AddReLU:
-    case FusedPattern::SubAbs:
-    case FusedPattern::AddSquare:
-    case FusedPattern::SubSquare:
-    case FusedPattern::MulAdd:
-        return true;
-    default:
-        return false;
-    }
-}
-
-// Execute a known fused pattern using optimized SIMD kernels.
-// off/cnt allow processing a sub-range for parallel dispatch.
-static bool dispatch_fused_simd(FusedPattern pattern,
-                                const std::vector<Tensor> &inputs,
-                                Tensor &result, size_t off = 0,
-                                size_t cnt = 0) {
-    if (inputs.empty())
-        return false;
-
-    DType dtype = inputs[0].dtype();
-    if (cnt == 0)
-        cnt = inputs[0].size();
-
-    bool is_integer = (dtype == DType::Int32 || dtype == DType::Int64);
-    if (is_integer && !is_integer_pattern_supported(pattern))
-        return false;
-
-#define DISPATCH_BINARY(PATTERN, DISPATCH_FN)                                  \
-    case FusedPattern::PATTERN:                                                \
-        if (inputs.size() >= 2) {                                              \
-            if (dtype == DType::Float32) {                                     \
-                simd::DISPATCH_FN<float>(inputs[0].typed_data<float>() + off,  \
-                                         inputs[1].typed_data<float>() + off,  \
-                                         result.typed_data<float>() + off,     \
-                                         cnt);                                 \
-                return true;                                                   \
-            } else if (dtype == DType::Float64) {                              \
-                simd::DISPATCH_FN<double>(                                     \
-                    inputs[0].typed_data<double>() + off,                      \
-                    inputs[1].typed_data<double>() + off,                      \
-                    result.typed_data<double>() + off, cnt);                   \
-                return true;                                                   \
-            }                                                                  \
-        }                                                                      \
-        break
-
-#define DISPATCH_BINARY_WITH_INT(PATTERN, DISPATCH_FN)                         \
-    case FusedPattern::PATTERN:                                                \
-        if (inputs.size() >= 2) {                                              \
-            if (dtype == DType::Float32) {                                     \
-                simd::DISPATCH_FN<float>(inputs[0].typed_data<float>() + off,  \
-                                         inputs[1].typed_data<float>() + off,  \
-                                         result.typed_data<float>() + off,     \
-                                         cnt);                                 \
-                return true;                                                   \
-            } else if (dtype == DType::Float64) {                              \
-                simd::DISPATCH_FN<double>(                                     \
-                    inputs[0].typed_data<double>() + off,                      \
-                    inputs[1].typed_data<double>() + off,                      \
-                    result.typed_data<double>() + off, cnt);                   \
-                return true;                                                   \
-            } else if (dtype == DType::Int32) {                                \
-                simd::DISPATCH_FN<int32_t>(                                    \
-                    inputs[0].typed_data<int32_t>() + off,                     \
-                    inputs[1].typed_data<int32_t>() + off,                     \
-                    result.typed_data<int32_t>() + off, cnt);                  \
-                return true;                                                   \
-            } else if (dtype == DType::Int64) {                                \
-                simd::DISPATCH_FN<int64_t>(                                    \
-                    inputs[0].typed_data<int64_t>() + off,                     \
-                    inputs[1].typed_data<int64_t>() + off,                     \
-                    result.typed_data<int64_t>() + off, cnt);                  \
-                return true;                                                   \
-            }                                                                  \
-        }                                                                      \
-        break
-
-#define DISPATCH_TERNARY(PATTERN, DISPATCH_FN)                                 \
-    case FusedPattern::PATTERN:                                                \
-        if (inputs.size() >= 3) {                                              \
-            if (dtype == DType::Float32) {                                     \
-                simd::DISPATCH_FN<float>(inputs[0].typed_data<float>() + off,  \
-                                         inputs[1].typed_data<float>() + off,  \
-                                         inputs[2].typed_data<float>() + off,  \
-                                         result.typed_data<float>() + off,     \
-                                         cnt);                                 \
-                return true;                                                   \
-            } else if (dtype == DType::Float64) {                              \
-                simd::DISPATCH_FN<double>(                                     \
-                    inputs[0].typed_data<double>() + off,                      \
-                    inputs[1].typed_data<double>() + off,                      \
-                    inputs[2].typed_data<double>() + off,                      \
-                    result.typed_data<double>() + off, cnt);                   \
-                return true;                                                   \
-            }                                                                  \
-        }                                                                      \
-        break
-
-#define DISPATCH_TERNARY_WITH_INT(PATTERN, DISPATCH_FN)                        \
-    case FusedPattern::PATTERN:                                                \
-        if (inputs.size() >= 3) {                                              \
-            if (dtype == DType::Float32) {                                     \
-                simd::DISPATCH_FN<float>(inputs[0].typed_data<float>() + off,  \
-                                         inputs[1].typed_data<float>() + off,  \
-                                         inputs[2].typed_data<float>() + off,  \
-                                         result.typed_data<float>() + off,     \
-                                         cnt);                                 \
-                return true;                                                   \
-            } else if (dtype == DType::Float64) {                              \
-                simd::DISPATCH_FN<double>(                                     \
-                    inputs[0].typed_data<double>() + off,                      \
-                    inputs[1].typed_data<double>() + off,                      \
-                    inputs[2].typed_data<double>() + off,                      \
-                    result.typed_data<double>() + off, cnt);                   \
-                return true;                                                   \
-            } else if (dtype == DType::Int32) {                                \
-                simd::DISPATCH_FN<int32_t>(                                    \
-                    inputs[0].typed_data<int32_t>() + off,                     \
-                    inputs[1].typed_data<int32_t>() + off,                     \
-                    inputs[2].typed_data<int32_t>() + off,                     \
-                    result.typed_data<int32_t>() + off, cnt);                  \
-                return true;                                                   \
-            } else if (dtype == DType::Int64) {                                \
-                simd::DISPATCH_FN<int64_t>(                                    \
-                    inputs[0].typed_data<int64_t>() + off,                     \
-                    inputs[1].typed_data<int64_t>() + off,                     \
-                    inputs[2].typed_data<int64_t>() + off,                     \
-                    result.typed_data<int64_t>() + off, cnt);                  \
-                return true;                                                   \
-            }                                                                  \
-        }                                                                      \
-        break
-
-    switch (pattern) {
-        DISPATCH_BINARY_WITH_INT(AddReLU, dispatch_fused_add_relu);
-        DISPATCH_BINARY_WITH_INT(SubAbs, dispatch_fused_sub_abs);
-        DISPATCH_BINARY_WITH_INT(AddSquare, dispatch_fused_add_square);
-        DISPATCH_BINARY_WITH_INT(SubSquare, dispatch_fused_sub_square);
-        DISPATCH_BINARY(MulReLU, dispatch_fused_mul_relu);
-        DISPATCH_BINARY(AddSigmoid, dispatch_fused_add_sigmoid);
-        DISPATCH_BINARY(MulSigmoid, dispatch_fused_mul_sigmoid);
-        DISPATCH_TERNARY_WITH_INT(MulAdd, dispatch_fused_mul_add);
-        DISPATCH_TERNARY(MulSub, dispatch_fused_mul_sub);
-        DISPATCH_TERNARY(ScaleShiftReLU, dispatch_fused_scale_shift_relu);
-        DISPATCH_TERNARY(AddMulReLU, dispatch_fused_add_mul_relu);
-        DISPATCH_TERNARY(SubMulAbs, dispatch_fused_sub_mul_abs);
-    default:
-        break;
-    }
-
-#undef DISPATCH_BINARY
-#undef DISPATCH_BINARY_WITH_INT
-#undef DISPATCH_TERNARY
-#undef DISPATCH_TERNARY_WITH_INT
-
-    return false;
-}
-
-void GraphExecutor::execute_fused_known(const ExecutionStep &step,
-                                        const CompiledGraph &plan,
-                                        std::vector<Tensor> &buffers) {
+void execute_fused_known(const FusedKnownStep &step, const CompiledGraph &plan,
+                         std::vector<Tensor> &buffers) {
     // Collect external inputs (not chain-internal results)
     std::vector<Tensor> inputs;
     std::unordered_set<int> seen_slots;
@@ -409,18 +250,26 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
 #ifdef AXIOM_METAL_SUPPORT
         // Try GPU fused path (single MPSGraph for entire chain)
         if (step.device == Device::GPU &&
-            execute_gpu_fused_chain(step, buffers))
+            execute_gpu_fused_chain(step, step.op_chain, buffers))
             return;
 #endif
         // Fallback to generic
-        execute_fused_generic(step, plan, buffers);
+        FusedGenericStep generic_step;
+        static_cast<StepBase &>(generic_step) =
+            static_cast<const StepBase &>(step);
+        generic_step.op_chain = step.op_chain;
+        execute_fused_generic(generic_step, plan, buffers);
         return;
     }
 
     // Check inputs are contiguous and same size as output (no broadcast)
     for (const auto &t : inputs) {
         if (!t.is_contiguous() || t.size() != step.total_elements) {
-            execute_fused_generic(step, plan, buffers);
+            FusedGenericStep generic_step;
+            static_cast<StepBase &>(generic_step) =
+                static_cast<const StepBase &>(step);
+            generic_step.op_chain = step.op_chain;
+            execute_fused_generic(generic_step, plan, buffers);
             return;
         }
     }
@@ -443,8 +292,8 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
         for (ptrdiff_t ci = 0; ci < nchunks; ++ci) {
             size_t start = static_cast<size_t>(ci) * chunk;
             size_t count = std::min(chunk, n - start);
-            if (!dispatch_fused_simd(step.pattern, inputs, result, start,
-                                     count)) {
+            if (!dispatch_fused_pattern(step.pattern, inputs, result, start,
+                                        count)) {
                 ok.store(false, std::memory_order_relaxed);
             }
         }
@@ -453,14 +302,17 @@ void GraphExecutor::execute_fused_known(const ExecutionStep &step,
             return;
         }
     } else {
-        if (dispatch_fused_simd(step.pattern, inputs, result)) {
+        if (dispatch_fused_pattern(step.pattern, inputs, result)) {
             buffers[step.output_slot] = result;
             return;
         }
     }
 
     // Fallback
-    execute_fused_generic(step, plan, buffers);
+    FusedGenericStep generic_step;
+    static_cast<StepBase &>(generic_step) = static_cast<const StepBase &>(step);
+    generic_step.op_chain = step.op_chain;
+    execute_fused_generic(generic_step, plan, buffers);
 }
 
 // ============================================================================
@@ -475,7 +327,7 @@ struct alignas(64) TileBuffer {
 // Attempt the tiled fused loop. Returns false if any op in the chain
 // lacks a fn-ptr (unsupported dtype/op), in which case the caller
 // falls back to OperationRegistry dispatch.
-static bool try_tiled_fused_loop(const ExecutionStep &step,
+static bool try_tiled_fused_loop(const FusedGenericStep &step,
                                  std::vector<Tensor> &buffers) {
     if (step.device != Device::CPU)
         return false;
@@ -615,16 +467,17 @@ static bool try_tiled_fused_loop(const ExecutionStep &step,
     return true;
 }
 
-void GraphExecutor::execute_fused_generic(const ExecutionStep &step,
-                                          const CompiledGraph & /*plan*/,
-                                          std::vector<Tensor> &buffers) {
+void execute_fused_generic(const FusedGenericStep &step,
+                           const CompiledGraph & /*plan*/,
+                           std::vector<Tensor> &buffers) {
     // Try the fast tiled path first
     if (try_tiled_fused_loop(step, buffers))
         return;
 
 #ifdef AXIOM_METAL_SUPPORT
     // Try GPU fused path before falling back to op-by-op
-    if (step.device == Device::GPU && execute_gpu_fused_chain(step, buffers))
+    if (step.device == Device::GPU &&
+        execute_gpu_fused_chain(step, step.op_chain, buffers))
         return;
 #endif
 
@@ -680,11 +533,15 @@ void GraphExecutor::execute_fused_generic(const ExecutionStep &step,
 // MatMulActivation: matmul + in-place activation via devirtualized fn-ptr
 // ============================================================================
 
-void GraphExecutor::execute_matmul_activation(const ExecutionStep &step,
-                                              std::vector<Tensor> &buffers) {
+void execute_matmul_activation(const MatMulActivationStep &step,
+                               std::vector<Tensor> &buffers) {
     if (step.op_chain.size() < 2) {
         // Fallback: just execute as single matmul
-        execute_single_op(step, buffers);
+        SingleOpStep single;
+        static_cast<StepBase &>(single) = static_cast<const StepBase &>(step);
+        single.op_type = step.op_type;
+        single.params = step.params;
+        execute_single_op(single, buffers);
         return;
     }
 
@@ -716,9 +573,10 @@ void GraphExecutor::execute_matmul_activation(const ExecutionStep &step,
         return t;
     };
 
-    Tensor result = operation->execute_matmul(
-        get_buf(mm_indices[0]), get_buf(mm_indices[1]), step.params.transpose_a,
-        step.params.transpose_b);
+    const auto &mp = get_params<MatMulParams>(step.params);
+    Tensor result = operation->execute_matmul(get_buf(mm_indices[0]),
+                                              get_buf(mm_indices[1]),
+                                              mp.transpose_a, mp.transpose_b);
 
     // Apply activation in-place using devirtualized fn-ptr
     ops::OpType act_op = step.op_chain[1];
@@ -750,12 +608,11 @@ void GraphExecutor::execute_matmul_activation(const ExecutionStep &step,
 // ============================================================================
 
 // Fallback for FusedReduction: execute elementwise chain, then reduce
-void GraphExecutor::execute_fused_reduction_fallback(
-    const ExecutionStep &step, const CompiledGraph &plan,
-    std::vector<Tensor> &buffers) {
+void execute_fused_reduction_fallback(const FusedReductionStep &step,
+                                      const CompiledGraph &plan,
+                                      std::vector<Tensor> &buffers) {
     // Build a temporary step for just the elementwise chain
-    ExecutionStep ew_step;
-    ew_step.kind = ExecutionStep::Kind::FusedGeneric;
+    FusedGenericStep ew_step;
     ew_step.op_chain = step.op_chain;
     // input_slot_indices: only the elementwise ops' indices
     // (excl. the reduction's input which is the chain output)
@@ -782,7 +639,7 @@ void GraphExecutor::execute_fused_reduction_fallback(
     buffers.emplace_back();
     ew_step.output_slot = temp_slot;
 
-    GraphExecutor::execute_fused_generic(ew_step, plan, buffers);
+    execute_fused_generic(ew_step, plan, buffers);
 
     // Now execute the reduction on the elementwise result
     Tensor ew_result = buffers[temp_slot];
@@ -796,8 +653,9 @@ void GraphExecutor::execute_fused_reduction_fallback(
         buffers.pop_back(); // remove temporary slot
         throw DeviceError("Reduction operation not available for any device");
     }
-    Tensor result = operation->execute_reduction(ew_result, step.params.axes,
-                                                 step.params.keep_dims);
+    const auto &rp = get_params<ReductionParams>(step.params);
+    Tensor result =
+        operation->execute_reduction(ew_result, rp.axes, rp.keep_dims);
     if (step.output_slot >= 0 &&
         step.output_slot < static_cast<int>(buffers.size())) {
         buffers[step.output_slot] = result;
@@ -805,9 +663,9 @@ void GraphExecutor::execute_fused_reduction_fallback(
     buffers.pop_back(); // remove temporary slot
 }
 
-void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
-                                            const CompiledGraph &plan,
-                                            std::vector<Tensor> &buffers) {
+void execute_fused_reduction(const FusedReductionStep &step,
+                             const CompiledGraph &plan,
+                             std::vector<Tensor> &buffers) {
     if (step.device != Device::CPU) {
 #ifdef AXIOM_METAL_SUPPORT
         // Try GPU fused reduction (single MPSGraph for chain + reduction)
@@ -896,7 +754,11 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
     // step.total_elements was set to the elementwise chain input size
     size_t total = step.total_elements;
     if (total == 0) {
-        execute_fused_generic(step, plan, buffers);
+        FusedGenericStep generic_step;
+        static_cast<StepBase &>(generic_step) =
+            static_cast<const StepBase &>(step);
+        generic_step.op_chain = step.op_chain;
+        execute_fused_generic(generic_step, plan, buffers);
         return;
     }
 
@@ -1144,6 +1006,8 @@ void GraphExecutor::execute_fused_reduction(const ExecutionStep &step,
         buffers[step.output_slot] = result;
     }
 }
+
+} // anonymous namespace
 
 } // namespace graph
 } // namespace axiom

@@ -2,8 +2,8 @@
 
 #include <cstddef>
 
-#include "../dtype.hpp"
-#include "../operations.hpp"
+#include "axiom/dtype.hpp"
+#include "axiom/operations.hpp"
 
 namespace axiom {
 namespace graph {

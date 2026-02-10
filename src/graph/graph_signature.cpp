@@ -136,23 +136,30 @@ GraphSignature compute_signature(const GraphNode *root) {
             }
         }
 
-        // Hash params
-        // Axes
-        h = fnv_hash_u64(h, node->params.axes.size());
-        for (int ax : node->params.axes) {
-            h = fnv_hash_i32(h, ax);
-        }
-        h = fnv_hash_bool(h, node->params.keep_dims);
-        h = fnv_hash_bool(h, node->params.transpose_a);
-        h = fnv_hash_bool(h, node->params.transpose_b);
-        h = fnv_hash_float(h, node->params.alpha);
-        h = fnv_hash_i32(h, node->params.axis);
-
-        // new_shape
-        h = fnv_hash_u64(h, node->params.new_shape.size());
-        for (auto dim : node->params.new_shape) {
-            h = fnv_hash_u64(h, dim);
-        }
+        // Hash params (visit the variant)
+        h = fnv_hash_u64(h, node->params.index()); // variant index
+        std::visit(
+            [&](const auto &p) {
+                using T = std::decay_t<decltype(p)>;
+                if constexpr (std::is_same_v<T, ReductionParams>) {
+                    h = fnv_hash_u64(h, p.axes.size());
+                    for (int ax : p.axes)
+                        h = fnv_hash_i32(h, ax);
+                    h = fnv_hash_bool(h, p.keep_dims);
+                } else if constexpr (std::is_same_v<T, MatMulParams>) {
+                    h = fnv_hash_bool(h, p.transpose_a);
+                    h = fnv_hash_bool(h, p.transpose_b);
+                } else if constexpr (std::is_same_v<T, ActivationParams>) {
+                    h = fnv_hash_float(h, p.alpha);
+                    h = fnv_hash_i32(h, p.axis);
+                } else if constexpr (std::is_same_v<T, ReshapeParams>) {
+                    h = fnv_hash_u64(h, p.new_shape.size());
+                    for (auto dim : p.new_shape)
+                        h = fnv_hash_u64(h, dim);
+                }
+                // NoParams: nothing to hash
+            },
+            node->params);
     }
 
     return GraphSignature{h};

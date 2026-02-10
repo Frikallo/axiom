@@ -1,5 +1,6 @@
 #include "axiom/graph/graph_compiler.hpp"
 #include "axiom/error.hpp"
+#include "axiom/graph/fused_patterns.hpp"
 #include "axiom/graph/graph_node.hpp"
 
 #include <algorithm>
@@ -10,12 +11,13 @@
 namespace axiom {
 namespace graph {
 
+namespace {
+
 // ============================================================================
 // Topological Sort (iterative)
 // ============================================================================
 
-std::vector<const GraphNode *>
-GraphCompiler::topological_sort(const GraphNode *root) {
+std::vector<const GraphNode *> topological_sort(const GraphNode *root) {
     std::vector<const GraphNode *> result;
     std::unordered_set<const GraphNode *> visited;
     std::vector<std::pair<const GraphNode *, size_t>> stack;
@@ -59,8 +61,9 @@ GraphCompiler::topological_sort(const GraphNode *root) {
 // Dead Code Elimination
 // ============================================================================
 
-std::vector<const GraphNode *> GraphCompiler::dead_code_elimination(
-    const std::vector<const GraphNode *> &sorted, const GraphNode *root) {
+std::vector<const GraphNode *>
+dead_code_elimination(const std::vector<const GraphNode *> &sorted,
+                      const GraphNode *root) {
 
     // Walk backward from root to mark reachable nodes
     std::unordered_set<const GraphNode *> reachable;
@@ -136,8 +139,15 @@ static bool can_fuse_pair(const GraphNode *producer,
     return true;
 }
 
-std::vector<GraphCompiler::FusionGroup>
-GraphCompiler::fusion_analysis(const std::vector<const GraphNode *> &sorted) {
+struct FusionGroup {
+    std::vector<const GraphNode *> nodes;
+    FusedPattern pattern;
+    bool is_fused;
+    bool is_fused_reduction = false;
+};
+
+std::vector<FusionGroup>
+fusion_analysis(const std::vector<const GraphNode *> &sorted) {
 
     std::unordered_set<const GraphNode *> assigned;
     std::vector<FusionGroup> groups;
@@ -311,9 +321,13 @@ GraphCompiler::fusion_analysis(const std::vector<const GraphNode *> &sorted) {
                 // Check: red is a single-node full reduction (all axes)
                 if (red.nodes.size() == 1 &&
                     is_reduction_op(red.nodes[0]->op_type) &&
-                    red.nodes[0]->params.axes.empty() && // full reduction
-                    ew.is_fused &&                       // elementwise chain
-                    !ew.nodes.empty() && ew.nodes.back()->ref_count <= 1) {
+                    std::holds_alternative<ReductionParams>(
+                        red.nodes[0]->params) &&
+                    get_params<ReductionParams>(red.nodes[0]->params)
+                        .axes.empty() && // full reduction
+                    ew.is_fused &&       // elementwise chain
+                    !ew.nodes.empty() &&
+                    ew.nodes.back()->ref_count <= 1) {
 
                     // All ops in chain must produce the same dtype
                     // (mixed chains like float->bool can't be tiled)
@@ -359,16 +373,16 @@ GraphCompiler::fusion_analysis(const std::vector<const GraphNode *> &sorted) {
 // Memory Planning
 // ============================================================================
 
-void GraphCompiler::memory_plan(CompiledGraph &plan) {
+void memory_plan(CompiledGraph &plan) {
     auto &slots = plan.buffer_slots;
 
     // Compute liveness: first_use and last_use for each slot
     for (int step_idx = 0; step_idx < static_cast<int>(plan.steps.size());
          ++step_idx) {
-        const auto &step = plan.steps[step_idx];
+        const auto &base = step_base(plan.steps[step_idx]);
 
         // Output slot is produced here
-        int out = step.output_slot;
+        int out = base.output_slot;
         if (out >= 0 && out < static_cast<int>(slots.size())) {
             if (slots[out].first_use < 0)
                 slots[out].first_use = step_idx;
@@ -376,7 +390,7 @@ void GraphCompiler::memory_plan(CompiledGraph &plan) {
         }
 
         // Input slots are read here
-        for (const auto &per_op : step.input_slot_indices) {
+        for (const auto &per_op : base.input_slot_indices) {
             for (int s : per_op) {
                 if (s >= 0 && s < static_cast<int>(slots.size())) {
                     if (slots[s].first_use < 0)
@@ -425,7 +439,7 @@ void GraphCompiler::memory_plan(CompiledGraph &plan) {
         }
 
         // Allocate for output slot of this step
-        int out = plan.steps[step_idx].output_slot;
+        int out = step_base(plan.steps[step_idx]).output_slot;
         if (out >= 0 && !slots[out].is_input &&
             plan.slot_to_allocation[out] < 0) {
             size_t needed = slots[out].byte_size;
@@ -467,57 +481,60 @@ void GraphCompiler::memory_plan(CompiledGraph &plan) {
 // Loop Parameter Computation
 // ============================================================================
 
-void GraphCompiler::compute_loop_params(CompiledGraph &plan) {
+void compute_loop_params(CompiledGraph &plan) {
     for (auto &step : plan.steps) {
-        step.total_elements = ShapeUtils::size(step.output_shape);
+        auto &base = step_base(step);
+        base.total_elements = ShapeUtils::size(base.output_shape);
 
         // L1 tile size: ~16K float32 elements (64KB per buffer)
         // Apple M-series L1 is 192KB, 2 buffers = 128KB
-        size_t elem_size = dtype_size(step.output_dtype);
+        size_t elem_size = dtype_size(base.output_dtype);
         if (elem_size > 0) {
-            step.tile_size = (64 * 1024) / elem_size;
-            if (step.tile_size == 0)
-                step.tile_size = 1024;
+            base.tile_size = (64 * 1024) / elem_size;
+            if (base.tile_size == 0)
+                base.tile_size = 1024;
         } else {
-            step.tile_size = 16384;
+            base.tile_size = 16384;
         }
 
         // Classify input access patterns
-        step.input_access.clear();
-        for (const auto &per_op : step.input_slot_indices) {
+        base.input_access.clear();
+        for (const auto &per_op : base.input_slot_indices) {
             for (int slot_idx : per_op) {
                 if (slot_idx < 0 ||
                     slot_idx >= static_cast<int>(plan.buffer_slots.size())) {
-                    step.input_access.push_back(AccessPattern::Contiguous);
+                    base.input_access.push_back(AccessPattern::Contiguous);
                     continue;
                 }
                 const auto &slot = plan.buffer_slots[slot_idx];
-                if (slot.shape == step.output_shape) {
+                if (slot.shape == base.output_shape) {
                     // Check strides for contiguity
                     auto expected = ShapeUtils::calculate_strides(
                         slot.shape,
                         static_cast<int64_t>(dtype_size(slot.dtype)));
                     if (slot.strides == expected) {
-                        step.input_access.push_back(AccessPattern::Contiguous);
+                        base.input_access.push_back(AccessPattern::Contiguous);
                     } else {
-                        step.input_access.push_back(AccessPattern::Strided);
+                        base.input_access.push_back(AccessPattern::Strided);
                     }
                 } else if (ShapeUtils::size(slot.shape) == 1) {
-                    step.input_access.push_back(AccessPattern::ScalarBroadcast);
+                    base.input_access.push_back(AccessPattern::ScalarBroadcast);
                 } else {
-                    step.input_access.push_back(AccessPattern::Broadcast);
+                    base.input_access.push_back(AccessPattern::Broadcast);
                 }
             }
         }
     }
 }
 
+} // anonymous namespace
+
 // ============================================================================
 // Main Compile Pipeline
 // ============================================================================
 
-std::shared_ptr<CompiledGraph> GraphCompiler::compile(const GraphSignature &sig,
-                                                      const GraphNode *root) {
+std::shared_ptr<CompiledGraph> compile(const GraphSignature &sig,
+                                       const GraphNode *root) {
     auto plan = std::make_shared<CompiledGraph>();
     plan->signature = sig;
 
@@ -601,97 +618,104 @@ std::shared_ptr<CompiledGraph> GraphCompiler::compile(const GraphSignature &sig,
             }
         }
 
-        ExecutionStep step;
-        step.output_slot = out_slot;
-        step.output_shape = last->output_shape;
-        step.output_dtype = last->output_dtype;
-        step.device = last->target_device;
-        step.total_elements = ShapeUtils::size(last->output_shape);
+        // Helper: populate common StepBase fields
+        auto fill_base = [&](StepBase &base) {
+            base.output_slot = out_slot;
+            base.output_shape = last->output_shape;
+            base.output_dtype = last->output_dtype;
+            base.device = last->target_device;
+            base.total_elements = ShapeUtils::size(last->output_shape);
+        };
+
+        // Helper: build input slot indices for each op in the chain
+        auto build_input_indices = [&](StepBase &base,
+                                       size_t op_count =
+                                           0 /* 0 = all nodes */) {
+            size_t count = (op_count > 0) ? op_count : group.nodes.size();
+            for (size_t i = 0; i < count; ++i) {
+                const auto *n = group.nodes[i];
+                std::vector<int> indices;
+                for (const auto &inp : n->inputs) {
+                    if (i > 0 && inp.get() == group.nodes[i - 1]) {
+                        indices.push_back(-1);
+                    } else {
+                        auto it = node_to_slot.find(inp.get());
+                        if (it != node_to_slot.end()) {
+                            indices.push_back(it->second);
+                        } else {
+                            throw RuntimeError("GraphCompiler: input node not "
+                                               "found in node_to_slot map — "
+                                               "graph is malformed");
+                        }
+                    }
+                }
+                base.input_slot_indices.push_back(indices);
+            }
+        };
+
+        ExecutionStep step_var;
 
         if (group.is_fused_reduction) {
             // Elementwise chain + full reduction
-            step.kind = ExecutionStep::Kind::FusedReduction;
+            FusedReductionStep step;
+            fill_base(step);
             const auto *red_node = group.nodes.back();
             step.reduction_op = red_node->op_type;
             step.params = red_node->params;
-            // op_chain includes the elementwise ops (excl. reduction)
             for (size_t ni = 0; ni + 1 < group.nodes.size(); ++ni) {
                 step.op_chain.push_back(group.nodes[ni]->op_type);
             }
-            // chain_dtype = the dtype the elementwise ops operate on
-            // (may differ from output_dtype, e.g. mean(int32) → float32)
             step.chain_dtype = group.nodes[0]->output_dtype;
-            // The input of the whole chain determines total_elements
-            // (the reduction collapses to scalar)
-            if (!group.nodes.empty() && group.nodes.size() >= 2) {
+            if (group.nodes.size() >= 2) {
                 const auto *first = group.nodes[0];
                 step.total_elements = ShapeUtils::size(first->output_shape);
             }
+            build_input_indices(step);
+            step_var = std::move(step);
         } else if (group.is_fused && group.nodes.size() == 2 &&
                    (group.nodes[0]->op_type == ops::OpType::MatMul ||
                     group.nodes[0]->op_type == ops::OpType::BatchMatMul) &&
                    is_unary_op(group.nodes[1]->op_type)) {
             // MatMul + activation fusion
-            step.kind = ExecutionStep::Kind::MatMulActivation;
+            MatMulActivationStep step;
+            fill_base(step);
             step.op_type = group.nodes[0]->op_type;
             step.params = group.nodes[0]->params;
             for (const auto *n : group.nodes) {
                 step.op_chain.push_back(n->op_type);
             }
+            build_input_indices(step);
+            step_var = std::move(step);
         } else if (group.is_fused && group.pattern != FusedPattern::None) {
             // Known SIMD pattern
-            step.kind = ExecutionStep::Kind::FusedKnown;
+            FusedKnownStep step;
+            fill_base(step);
             step.pattern = group.pattern;
             for (const auto *n : group.nodes) {
                 step.op_chain.push_back(n->op_type);
             }
+            build_input_indices(step);
+            step_var = std::move(step);
         } else if (group.is_fused) {
             // Generic fused
-            step.kind = ExecutionStep::Kind::FusedGeneric;
-            step.pattern = FusedPattern::None;
+            FusedGenericStep step;
+            fill_base(step);
             for (const auto *n : group.nodes) {
                 step.op_chain.push_back(n->op_type);
             }
-        } else if (group.nodes.size() == 1) {
-            step.kind = ExecutionStep::Kind::SingleOp;
+            build_input_indices(step);
+            step_var = std::move(step);
+        } else {
+            // Single op
+            SingleOpStep step;
+            fill_base(step);
             step.op_type = group.nodes[0]->op_type;
             step.params = group.nodes[0]->params;
+            build_input_indices(step);
+            step_var = std::move(step);
         }
 
-        // Build input slot indices for each op in the chain
-        std::unordered_set<const GraphNode *> chain_set(group.nodes.begin(),
-                                                        group.nodes.end());
-
-        for (size_t i = 0; i < group.nodes.size(); ++i) {
-            const auto *n = group.nodes[i];
-            std::vector<int> indices;
-
-            for (const auto &inp : n->inputs) {
-                if (i > 0 && inp.get() == group.nodes[i - 1]) {
-                    // Previous result in chain
-                    indices.push_back(-1);
-                } else {
-                    auto it = node_to_slot.find(inp.get());
-                    if (it != node_to_slot.end()) {
-                        indices.push_back(it->second);
-                    } else {
-                        // Node not yet assigned — it's an external input
-                        // that should have been assigned above
-                        throw RuntimeError(
-                            "GraphCompiler: input node not found in "
-                            "node_to_slot map — graph is malformed");
-                    }
-                }
-            }
-            step.input_slot_indices.push_back(indices);
-        }
-
-        // For single ops, copy params
-        if (group.nodes.size() == 1) {
-            step.params = group.nodes[0]->params;
-        }
-
-        plan->steps.push_back(std::move(step));
+        plan->steps.push_back(std::move(step_var));
     }
 
     // Set output slot to the slot of the root node

@@ -3,12 +3,13 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <variant>
 #include <vector>
 
-#include "../dtype.hpp"
-#include "../operations.hpp"
-#include "../shape.hpp"
-#include "../storage.hpp"
+#include "axiom/dtype.hpp"
+#include "axiom/operations.hpp"
+#include "axiom/shape.hpp"
+#include "axiom/storage.hpp"
 #include "graph_node.hpp"
 #include "graph_signature.hpp"
 
@@ -22,38 +23,69 @@ enum class AccessPattern : uint8_t {
     ScalarBroadcast
 };
 
-struct ExecutionStep {
-    enum class Kind : uint8_t {
-        SingleOp,         // Dispatch via OperationRegistry
-        FusedKnown,       // Matched HWY SIMD pattern
-        FusedGeneric,     // Generic fused loop with fn-ptr dispatch
-        MatMulActivation, // MatMul + activation fused
-        FusedReduction    // Elementwise chain + full reduction
-    };
+// ============================================================================
+// ExecutionStep: variant of typed step structs
+// ============================================================================
 
-    Kind kind{};
-    ops::OpType op_type{};      // For SingleOp
-    ops::OpType reduction_op{}; // For FusedReduction
-    GraphNode::Params params;
-    Device device = Device::CPU;
-    FusedPattern pattern = FusedPattern::None; // For FusedKnown
-
-    // Chain of ops for fused steps
-    std::vector<ops::OpType> op_chain;
-
-    // Per-op: which buffer slots are inputs
-    // -1 means "use result of previous op in chain"
-    std::vector<std::vector<int>> input_slot_indices;
-
+struct StepBase {
     int output_slot = -1;
     size_t total_elements = 0;
     Shape output_shape;
     DType output_dtype{};
-    DType chain_dtype{}; // For FusedReduction: dtype of the elementwise chain
+    Device device = Device::CPU;
+    std::vector<std::vector<int>> input_slot_indices;
     std::vector<AccessPattern> input_access;
-
     size_t tile_size = 0;
 };
+
+struct SingleOpStep : StepBase {
+    ops::OpType op_type{};
+    OpParams params;
+};
+
+struct FusedKnownStep : StepBase {
+    FusedPattern pattern = FusedPattern::None;
+    std::vector<ops::OpType> op_chain;
+};
+
+struct FusedGenericStep : StepBase {
+    std::vector<ops::OpType> op_chain;
+};
+
+struct MatMulActivationStep : StepBase {
+    ops::OpType op_type{}; // MatMul or BatchMatMul
+    OpParams params;
+    std::vector<ops::OpType> op_chain;
+};
+
+struct FusedReductionStep : StepBase {
+    ops::OpType reduction_op{};
+    DType chain_dtype{};
+    OpParams params;
+    std::vector<ops::OpType> op_chain;
+};
+
+using ExecutionStep =
+    std::variant<SingleOpStep, FusedKnownStep, FusedGenericStep,
+                 MatMulActivationStep, FusedReductionStep>;
+
+// Visitor to access common StepBase fields from any variant alternative
+inline const StepBase &step_base(const ExecutionStep &step) {
+    return std::visit(
+        [](const auto &s) -> const StepBase & {
+            return static_cast<const StepBase &>(s);
+        },
+        step);
+}
+
+inline StepBase &step_base(ExecutionStep &step) {
+    return std::visit(
+        [](auto &s) -> StepBase & { return static_cast<StepBase &>(s); }, step);
+}
+
+// ============================================================================
+// Buffer and arena types
+// ============================================================================
 
 struct BufferSlot {
     size_t byte_size;

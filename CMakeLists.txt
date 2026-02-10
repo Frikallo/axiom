@@ -292,6 +292,7 @@ set(AXIOM_SOURCES
     src/graph/graph_cache.cpp
     src/graph/graph_executor.cpp
     src/graph/fused_kernel.cpp
+    src/graph/fused_patterns.cpp
 
     # CPU backend
     src/backends/cpu/cpu_storage.cpp

@@ -213,35 +213,6 @@ Shape infer_matmul_shape(const Shape &a, const Shape &b, bool transpose_a,
 // Dtype Inference
 // ============================================================================
 
-// Check if an operation is a comparison (returns bool)
-static bool is_comparison_op(ops::OpType op) {
-    using ops::OpType;
-    switch (op) {
-    case OpType::Equal:
-    case OpType::NotEqual:
-    case OpType::Less:
-    case OpType::LessEqual:
-    case OpType::Greater:
-    case OpType::GreaterEqual:
-        return true;
-    default:
-        return false;
-    }
-}
-
-// Check if an operation is a logical op (returns bool)
-static bool is_logical_op(ops::OpType op) {
-    using ops::OpType;
-    switch (op) {
-    case OpType::LogicalAnd:
-    case OpType::LogicalOr:
-    case OpType::LogicalXor:
-        return true;
-    default:
-        return false;
-    }
-}
-
 DType infer_binary_dtype(DType lhs, DType rhs) {
     // Use ops::promote_types for consistency with eager execution path
     return ops::promote_types(lhs, rhs);
@@ -368,7 +339,7 @@ static Tensor create_materialized_tensor(GraphNode *node) {
 }
 
 Tensor GraphRegistry::create_lazy_unary(ops::OpType op, const Tensor &input,
-                                        const GraphNode::Params &params) {
+                                        const OpParams &params) {
     // In eager mode, execute immediately and return a materialized tensor
     if (is_eager_mode_enabled()) {
         auto node = std::make_shared<GraphNode>();
@@ -419,7 +390,7 @@ Tensor GraphRegistry::create_lazy_unary(ops::OpType op, const Tensor &input,
 
 Tensor GraphRegistry::create_lazy_binary(ops::OpType op, const Tensor &lhs,
                                          const Tensor &rhs,
-                                         const GraphNode::Params &params) {
+                                         const OpParams &params) {
     if (is_eager_mode_enabled()) {
         auto node = std::make_shared<GraphNode>();
         node->op_type = op;
@@ -493,8 +464,7 @@ Tensor GraphRegistry::create_lazy_reduction(ops::OpType op, const Tensor &input,
     if (is_eager_mode_enabled()) {
         auto node = std::make_shared<GraphNode>();
         node->op_type = op;
-        node->params.axes = axes;
-        node->params.keep_dims = keep_dims;
+        node->params = ReductionParams{axes, keep_dims};
         node->output_shape =
             infer_reduction_shape(input.shape(), axes, keep_dims, op);
         node->output_dtype = infer_reduction_dtype(op, input.dtype());
@@ -512,8 +482,7 @@ Tensor GraphRegistry::create_lazy_reduction(ops::OpType op, const Tensor &input,
 
     auto node = std::make_shared<GraphNode>();
     node->op_type = op;
-    node->params.axes = axes;
-    node->params.keep_dims = keep_dims;
+    node->params = ReductionParams{axes, keep_dims};
     node->output_shape =
         infer_reduction_shape(input.shape(), axes, keep_dims, op);
     node->output_dtype = infer_reduction_dtype(op, input.dtype());
@@ -542,8 +511,7 @@ Tensor GraphRegistry::create_lazy_matmul(const Tensor &a, const Tensor &b,
     if (is_eager_mode_enabled()) {
         auto node = std::make_shared<GraphNode>();
         node->op_type = ops::OpType::MatMul;
-        node->params.transpose_a = transpose_a;
-        node->params.transpose_b = transpose_b;
+        node->params = MatMulParams{transpose_a, transpose_b};
         node->output_shape =
             infer_matmul_shape(a.shape(), b.shape(), transpose_a, transpose_b);
         node->output_dtype = infer_binary_dtype(a.dtype(), b.dtype());
@@ -569,8 +537,7 @@ Tensor GraphRegistry::create_lazy_matmul(const Tensor &a, const Tensor &b,
 
     auto node = std::make_shared<GraphNode>();
     node->op_type = ops::OpType::MatMul;
-    node->params.transpose_a = transpose_a;
-    node->params.transpose_b = transpose_b;
+    node->params = MatMulParams{transpose_a, transpose_b};
     node->output_shape =
         infer_matmul_shape(a.shape(), b.shape(), transpose_a, transpose_b);
     node->output_dtype = infer_binary_dtype(a.dtype(), b.dtype());
@@ -715,7 +682,7 @@ void GraphRegistry::materialize(GraphNode *node) {
     auto inputs = collect_constant_inputs(node, *plan);
 
     // Execute the compiled plan (hot path — no graph walking)
-    auto result = GraphExecutor::execute(*plan, inputs);
+    auto result = execute(*plan, inputs);
 
     // Store result back into node
     node->cached_result_ = result.storage();

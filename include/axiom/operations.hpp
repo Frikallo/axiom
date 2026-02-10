@@ -175,7 +175,9 @@ enum class OpType {
     AvgPool2D,
     AvgPool3D,
     AdaptiveMaxPool2D,
-    AdaptiveAvgPool2D
+    AdaptiveAvgPool2D,
+
+    _Count // Must be last — used for traits table sizing
 };
 
 class Operation {

@@ -2,10 +2,27 @@
 #include <axiom/axiom.hpp>
 #include <chrono>
 #include <iostream>
+#include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace axiom;
+
+using BenchFn = Tensor (*)(const Tensor &, const Tensor &);
+
+static BenchFn get_bench_fn(const std::string &name) {
+    static const std::unordered_map<std::string, BenchFn> fns = {
+        {"add", ops::add},
+        {"sub", ops::subtract},
+        {"mul", ops::multiply},
+        {"div", ops::divide},
+    };
+    auto it = fns.find(name);
+    if (it == fns.end())
+        throw std::runtime_error("Unknown op: " + name);
+    return it->second;
+}
 
 struct BenchResult {
     std::string op;
@@ -16,33 +33,18 @@ BenchResult benchmark_op(const std::string& op, size_t n, int warmup = 3,
                          int iterations = 10) {
     auto A = Tensor::randn({n, n}, DType::Float32, Device::CPU);
     auto B = Tensor::randn({n, n}, DType::Float32, Device::CPU);
+    BenchFn fn = get_bench_fn(op);
 
     // Warmup
     for (int i = 0; i < warmup; i++) {
-        Tensor C;
-        if (op == "add")
-            C = A + B;
-        else if (op == "sub")
-            C = A - B;
-        else if (op == "mul")
-            C = A * B;
-        else if (op == "div")
-            C = A / B;
+        Tensor C = fn(A, B);
         (void)C.data();  // Force materialization of lazy tensor
     }
 
     // Benchmark
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; i++) {
-        Tensor C;
-        if (op == "add")
-            C = A + B;
-        else if (op == "sub")
-            C = A - B;
-        else if (op == "mul")
-            C = A * B;
-        else if (op == "div")
-            C = A / B;
+        Tensor C = fn(A, B);
         (void)C.data();  // Force materialization of lazy tensor
     }
     auto end = std::chrono::high_resolution_clock::now();

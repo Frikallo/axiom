@@ -25,7 +25,7 @@ GraphCache::get_or_compile(const GraphSignature &sig, const GraphNode *root) {
     }
 
     // Phase 2: compile without lock
-    auto compiled = GraphCompiler::compile(sig, root);
+    auto compiled = compile(sig, root);
 
     // Phase 3: insert under lock
     {
