@@ -40,7 +40,7 @@ static void BM_BinaryAdd_Float(benchmark::State &state) {
     axiom::Tensor c;
 
     for (auto _ : state) {
-        c = axiom::ops::add(a, b);
+        c = a + b;
         benchmark::DoNotOptimize(c.data());
     }
 
@@ -242,7 +242,7 @@ static void BM_BinaryAdd_Double(benchmark::State &state) {
     axiom::Tensor c;
 
     for (auto _ : state) {
-        c = axiom::ops::add(a, b);
+        c = a + b;
         benchmark::DoNotOptimize(c.data());
     }
 

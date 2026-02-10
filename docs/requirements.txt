@@ -1,3 +1,5 @@
 sphinx
 pydata-sphinx-theme
 myst-parser
+sphinx-design
+sphinx-copybutton
