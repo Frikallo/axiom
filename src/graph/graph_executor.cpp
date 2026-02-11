@@ -926,8 +926,9 @@ void execute_fused_reduction(const FusedReductionStep &step,
                 acc += process_tile_and_reduce(base, count, la.data, lb.data);
             }
         } else if (red_op == ops::OpType::Max) {
-#pragma omp parallel reduction(max : acc)
+#pragma omp parallel
             {
+                double thread_max = -std::numeric_limits<double>::infinity();
                 TileBuffer la, lb;
 #pragma omp for schedule(static)
                 for (ptrdiff_t ti = 0; ti < num_tiles; ++ti) {
@@ -935,13 +936,19 @@ void execute_fused_reduction(const FusedReductionStep &step,
                     size_t count = std::min(tile_size, total - base);
                     double v =
                         process_tile_and_reduce(base, count, la.data, lb.data);
-                    if (v > acc)
-                        acc = v;
+                    if (v > thread_max)
+                        thread_max = v;
+                }
+#pragma omp critical
+                {
+                    if (thread_max > acc)
+                        acc = thread_max;
                 }
             }
         } else if (red_op == ops::OpType::Min) {
-#pragma omp parallel reduction(min : acc)
+#pragma omp parallel
             {
+                double thread_min = std::numeric_limits<double>::infinity();
                 TileBuffer la, lb;
 #pragma omp for schedule(static)
                 for (ptrdiff_t ti = 0; ti < num_tiles; ++ti) {
@@ -949,8 +956,13 @@ void execute_fused_reduction(const FusedReductionStep &step,
                     size_t count = std::min(tile_size, total - base);
                     double v =
                         process_tile_and_reduce(base, count, la.data, lb.data);
-                    if (v < acc)
-                        acc = v;
+                    if (v < thread_min)
+                        thread_min = v;
+                }
+#pragma omp critical
+                {
+                    if (thread_min < acc)
+                        acc = thread_min;
                 }
             }
         } else {
