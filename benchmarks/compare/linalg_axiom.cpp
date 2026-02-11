@@ -25,6 +25,7 @@ BenchResult benchmark_op(const std::string& op, size_t n, int warmup = 2,
         auto R = Tensor::randn({n, n}, DType::Float32, Device::CPU);
         A = R.matmul(R.transpose()) +
             Tensor::eye(n, DType::Float32, Device::CPU) * static_cast<float>(n);
+        (void)A.data();  // Force materialization of lazy tensor
         B = Tensor::randn({n, 1}, DType::Float32, Device::CPU);
     } else {
         A = Tensor::randn({n, n}, DType::Float32, Device::CPU);
@@ -33,41 +34,51 @@ BenchResult benchmark_op(const std::string& op, size_t n, int warmup = 2,
 
     // Warmup
     for (int i = 0; i < warmup; i++) {
+        Tensor result_tensor;
         if (op == "svd") {
-            auto result = linalg::svd(A);
+            auto [U, S, Vt] = linalg::svd(A);
+            result_tensor = U;
         } else if (op == "qr") {
-            auto result = linalg::qr(A);
+            auto [Q, R] = linalg::qr(A);
+            result_tensor = Q;
         } else if (op == "solve") {
-            auto X = linalg::solve(A, B);
+            result_tensor = linalg::solve(A, B);
         } else if (op == "cholesky") {
-            auto L = linalg::cholesky(A);
+            result_tensor = linalg::cholesky(A);
         } else if (op == "eig") {
-            auto result = linalg::eig(A);
+            auto [vals, vecs] = linalg::eig(A);
+            result_tensor = vals;
         } else if (op == "inv") {
-            auto Ainv = linalg::inv(A);
+            result_tensor = linalg::inv(A);
         } else if (op == "det") {
-            auto d = linalg::det(A);
+            result_tensor = linalg::det(A);
         }
+        (void)result_tensor.data();  // Force materialization
     }
 
     // Benchmark
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; i++) {
+        Tensor result_tensor;
         if (op == "svd") {
-            auto result = linalg::svd(A);
+            auto [U, S, Vt] = linalg::svd(A);
+            result_tensor = U;
         } else if (op == "qr") {
-            auto result = linalg::qr(A);
+            auto [Q, R] = linalg::qr(A);
+            result_tensor = Q;
         } else if (op == "solve") {
-            auto X = linalg::solve(A, B);
+            result_tensor = linalg::solve(A, B);
         } else if (op == "cholesky") {
-            auto L = linalg::cholesky(A);
+            result_tensor = linalg::cholesky(A);
         } else if (op == "eig") {
-            auto result = linalg::eig(A);
+            auto [vals, vecs] = linalg::eig(A);
+            result_tensor = vals;
         } else if (op == "inv") {
-            auto Ainv = linalg::inv(A);
+            result_tensor = linalg::inv(A);
         } else if (op == "det") {
-            auto d = linalg::det(A);
+            result_tensor = linalg::det(A);
         }
+        (void)result_tensor.data();  // Force materialization
     }
     auto end = std::chrono::high_resolution_clock::now();
 

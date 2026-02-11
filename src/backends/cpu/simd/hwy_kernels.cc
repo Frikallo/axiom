@@ -1,9 +1,3 @@
-// hwy_kernels.cc - Highway SIMD kernel exports
-//
-// This file includes hwy_kernels-inl.h which gets compiled for each target
-// architecture via HWY_FOREACH_TARGET. Then we export the dispatch functions
-// that select the best implementation at runtime.
-
 #include "backends/cpu/simd/hwy_kernels-inl.h"
 
 // Include once after foreach_target for HWY_EXPORT macros
@@ -42,6 +36,22 @@ HWY_EXPORT(BinaryPowD);
 HWY_EXPORT(BinaryAtan2D);
 HWY_EXPORT(BinaryHypotD);
 HWY_EXPORT(BinaryFmodD);
+
+// Scalar-broadcast binary operations - float
+HWY_EXPORT(BinaryAddScalarLhsF);
+HWY_EXPORT(BinarySubScalarLhsF);
+HWY_EXPORT(BinarySubScalarRhsF);
+HWY_EXPORT(BinaryMulScalarLhsF);
+HWY_EXPORT(BinaryDivScalarLhsF);
+HWY_EXPORT(BinaryDivScalarRhsF);
+
+// Scalar-broadcast binary operations - double
+HWY_EXPORT(BinaryAddScalarLhsD);
+HWY_EXPORT(BinarySubScalarLhsD);
+HWY_EXPORT(BinarySubScalarRhsD);
+HWY_EXPORT(BinaryMulScalarLhsD);
+HWY_EXPORT(BinaryDivScalarLhsD);
+HWY_EXPORT(BinaryDivScalarRhsD);
 
 // Unary operations - float
 HWY_EXPORT(UnaryNegF);
@@ -790,180 +800,201 @@ void dispatch_activation_leaky_relu<double>(const double* input, double* output,
 }
 
 // ============================================================================
+// Scalar-broadcast dispatch functions
+// ============================================================================
+
+// Add: scalar + vec (commutative, works for both LHS and RHS)
+void dispatch_scalar_add_f(float s, const float *b, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryAddScalarLhsF)(s, b, r, n);
+}
+void dispatch_scalar_add_d(double s, const double *b, double *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryAddScalarLhsD)(s, b, r, n);
+}
+
+// Sub: scalar - vec
+void dispatch_scalar_sub_lhs_f(float s, const float *b, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinarySubScalarLhsF)(s, b, r, n);
+}
+void dispatch_scalar_sub_lhs_d(double s, const double *b, double *r,
+                                size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinarySubScalarLhsD)(s, b, r, n);
+}
+// Sub: vec - scalar
+void dispatch_scalar_sub_rhs_f(const float *a, float s, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinarySubScalarRhsF)(a, s, r, n);
+}
+void dispatch_scalar_sub_rhs_d(const double *a, double s, double *r,
+                                size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinarySubScalarRhsD)(a, s, r, n);
+}
+
+// Mul: scalar * vec (commutative)
+void dispatch_scalar_mul_f(float s, const float *b, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryMulScalarLhsF)(s, b, r, n);
+}
+void dispatch_scalar_mul_d(double s, const double *b, double *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryMulScalarLhsD)(s, b, r, n);
+}
+
+// Div: scalar / vec
+void dispatch_scalar_div_lhs_f(float s, const float *b, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryDivScalarLhsF)(s, b, r, n);
+}
+void dispatch_scalar_div_lhs_d(double s, const double *b, double *r,
+                                size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryDivScalarLhsD)(s, b, r, n);
+}
+// Div: vec / scalar
+void dispatch_scalar_div_rhs_f(const float *a, float s, float *r, size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryDivScalarRhsF)(a, s, r, n);
+}
+void dispatch_scalar_div_rhs_d(const double *a, double s, double *r,
+                                size_t n) {
+    HWY_DYNAMIC_DISPATCH(BinaryDivScalarRhsD)(a, s, r, n);
+}
+
+// ============================================================================
 // Integer type support (scalar fallback - SIMD dispatch uses float/double)
 // ============================================================================
 
-// Helper macros for scalar integer loops
-#define SCALAR_BINARY_OP(name, op) \
-    template <> \
-    void dispatch_binary_##name<int32_t>(const int32_t* a, const int32_t* b, int32_t* result, size_t n) { \
-        for (size_t i = 0; i < n; ++i) result[i] = op; \
-    } \
-    template <> \
-    void dispatch_binary_##name<int64_t>(const int64_t* a, const int64_t* b, int64_t* result, size_t n) { \
-        for (size_t i = 0; i < n; ++i) result[i] = op; \
+// Generate scalar binary op specializations for a single type
+#define SCALAR_BINARY_OP_T(T, name, op)                                        \
+    template <>                                                                \
+    void dispatch_binary_##name<T>(const T *a, const T *b, T *result,          \
+                                   size_t n) {                                 \
+        for (size_t i = 0; i < n; ++i)                                         \
+            result[i] = op;                                                    \
     }
 
-SCALAR_BINARY_OP(add, a[i] + b[i])
-SCALAR_BINARY_OP(sub, a[i] - b[i])
-SCALAR_BINARY_OP(mul, a[i] * b[i])
-SCALAR_BINARY_OP(div, a[i] / b[i])
-SCALAR_BINARY_OP(max, (a[i] > b[i] ? a[i] : b[i]))
-SCALAR_BINARY_OP(min, (a[i] < b[i] ? a[i] : b[i]))
+// Generate all 6 basic binary ops for a type
+#define SCALAR_BINARY_OPS_FOR_TYPE(T)                                          \
+    SCALAR_BINARY_OP_T(T, add, a[i] + b[i])                                   \
+    SCALAR_BINARY_OP_T(T, sub, a[i] - b[i])                                   \
+    SCALAR_BINARY_OP_T(T, mul, a[i] * b[i])                                   \
+    SCALAR_BINARY_OP_T(T, div, a[i] / b[i])                                   \
+    SCALAR_BINARY_OP_T(T, max, (a[i] > b[i] ? a[i] : b[i]))                  \
+    SCALAR_BINARY_OP_T(T, min, (a[i] < b[i] ? a[i] : b[i]))
 
-#undef SCALAR_BINARY_OP
-
-// Sign for integers
-template <>
-void dispatch_unary_sign<int32_t>(const int32_t* input, int32_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = (input[i] > 0) ? 1 : ((input[i] < 0) ? -1 : 0);
+// Generate scalar unary op specialization for a single type
+#define SCALAR_UNARY_OP_T(T, name, op)                                         \
+    template <>                                                                \
+    void dispatch_unary_##name<T>(const T *input, T *output, size_t n) {       \
+        for (size_t i = 0; i < n; ++i)                                         \
+            output[i] = op;                                                    \
     }
-}
 
-template <>
-void dispatch_unary_sign<int64_t>(const int64_t* input, int64_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = (input[i] > 0) ? 1 : ((input[i] < 0) ? -1 : 0);
+// Generate scalar activation op specialization
+#define SCALAR_ACTIVATION_T(T, name, op)                                       \
+    template <>                                                                \
+    void dispatch_activation_##name<T>(const T *input, T *output, size_t n) {  \
+        for (size_t i = 0; i < n; ++i)                                         \
+            output[i] = op;                                                    \
     }
-}
 
-// Square for integers
-template <>
-void dispatch_unary_square<int32_t>(const int32_t* input, int32_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = input[i] * input[i];
+// Generate scalar reduction specialization
+#define SCALAR_REDUCE_T(T, name, init, accum)                                  \
+    template <>                                                                \
+    T dispatch_reduce_##name<T>(const T *data, size_t n) {                     \
+        if (n == 0)                                                            \
+            return init;                                                       \
+        T result = init;                                                       \
+        for (size_t i = 0; i < n; ++i) {                                       \
+            accum;                                                             \
+        }                                                                      \
+        return result;                                                         \
     }
-}
 
-template <>
-void dispatch_unary_square<int64_t>(const int64_t* input, int64_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = input[i] * input[i];
-    }
-}
+// Generate all basic unary/activation ops for a signed integer type
+#define SCALAR_SIGNED_UNARY_OPS(T)                                             \
+    SCALAR_UNARY_OP_T(T, neg, -input[i])                                       \
+    SCALAR_UNARY_OP_T(T, abs, (input[i] < 0 ? -input[i] : input[i]))          \
+    SCALAR_UNARY_OP_T(T, sign,                                                 \
+                       ((input[i] > 0) ? T(1)                                  \
+                                       : ((input[i] < 0) ? T(-1) : T(0))))    \
+    SCALAR_UNARY_OP_T(T, square, input[i] * input[i])                          \
+    SCALAR_UNARY_OP_T(T, floor, input[i])                                      \
+    SCALAR_UNARY_OP_T(T, ceil, input[i])                                       \
+    SCALAR_UNARY_OP_T(T, round, input[i])                                      \
+    SCALAR_UNARY_OP_T(T, trunc, input[i])                                      \
+    SCALAR_ACTIVATION_T(T, relu, (input[i] > 0 ? input[i] : T(0)))
 
-// ReLU for integers
-template <>
-void dispatch_activation_relu<int32_t>(const int32_t* input, int32_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = input[i] > 0 ? input[i] : 0;
-    }
-}
+// Generate all basic unary/activation ops for an unsigned integer type
+#define SCALAR_UNSIGNED_UNARY_OPS(T)                                           \
+    SCALAR_UNARY_OP_T(T, neg, static_cast<T>(-input[i]))                       \
+    SCALAR_UNARY_OP_T(T, abs, input[i])                                        \
+    SCALAR_UNARY_OP_T(T, sign, (input[i] > 0 ? T(1) : T(0)))                  \
+    SCALAR_UNARY_OP_T(T, square, input[i] * input[i])                          \
+    SCALAR_UNARY_OP_T(T, floor, input[i])                                      \
+    SCALAR_UNARY_OP_T(T, ceil, input[i])                                       \
+    SCALAR_UNARY_OP_T(T, round, input[i])                                      \
+    SCALAR_UNARY_OP_T(T, trunc, input[i])                                      \
+    SCALAR_ACTIVATION_T(T, relu, input[i])
 
-template <>
-void dispatch_activation_relu<int64_t>(const int64_t* input, int64_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = input[i] > 0 ? input[i] : 0;
+// Generate reduction ops for a type
+#define SCALAR_REDUCE_OPS(T)                                                   \
+    SCALAR_REDUCE_T(T, sum, T(0), result += data[i])                           \
+    SCALAR_REDUCE_T(T, prod, T(1), result *= data[i])                          \
+    template <>                                                                \
+    T dispatch_reduce_max<T>(const T *data, size_t n) {                        \
+        if (n == 0)                                                            \
+            return T(0);                                                       \
+        T result = data[0];                                                    \
+        for (size_t i = 1; i < n; ++i) {                                       \
+            if (data[i] > result)                                              \
+                result = data[i];                                              \
+        }                                                                      \
+        return result;                                                         \
+    }                                                                          \
+    template <>                                                                \
+    T dispatch_reduce_min<T>(const T *data, size_t n) {                        \
+        if (n == 0)                                                            \
+            return T(0);                                                       \
+        T result = data[0];                                                    \
+        for (size_t i = 1; i < n; ++i) {                                       \
+            if (data[i] < result)                                              \
+                result = data[i];                                              \
+        }                                                                      \
+        return result;                                                         \
     }
-}
 
-// Abs for integers
-template <>
-void dispatch_unary_abs<int32_t>(const int32_t* input, int32_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = input[i] < 0 ? -input[i] : input[i];
-    }
-}
+// --- Int32 / Int64 (existing, now generated via macros) ---
+SCALAR_BINARY_OPS_FOR_TYPE(int32_t)
+SCALAR_BINARY_OPS_FOR_TYPE(int64_t)
+SCALAR_SIGNED_UNARY_OPS(int32_t)
+SCALAR_SIGNED_UNARY_OPS(int64_t)
+SCALAR_REDUCE_OPS(int32_t)
+SCALAR_REDUCE_OPS(int64_t)
 
-template <>
-void dispatch_unary_abs<int64_t>(const int64_t* input, int64_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = input[i] < 0 ? -input[i] : input[i];
-    }
-}
+// --- Int8 / Int16 ---
+SCALAR_BINARY_OPS_FOR_TYPE(int8_t)
+SCALAR_BINARY_OPS_FOR_TYPE(int16_t)
+SCALAR_SIGNED_UNARY_OPS(int8_t)
+SCALAR_SIGNED_UNARY_OPS(int16_t)
+SCALAR_REDUCE_OPS(int8_t)
+SCALAR_REDUCE_OPS(int16_t)
 
-// Neg for integers
-template <>
-void dispatch_unary_neg<int32_t>(const int32_t* input, int32_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = -input[i];
-    }
-}
+// --- UInt8 / UInt16 / UInt32 / UInt64 ---
+SCALAR_BINARY_OPS_FOR_TYPE(uint8_t)
+SCALAR_BINARY_OPS_FOR_TYPE(uint16_t)
+SCALAR_BINARY_OPS_FOR_TYPE(uint32_t)
+SCALAR_BINARY_OPS_FOR_TYPE(uint64_t)
+SCALAR_UNSIGNED_UNARY_OPS(uint8_t)
+SCALAR_UNSIGNED_UNARY_OPS(uint16_t)
+SCALAR_UNSIGNED_UNARY_OPS(uint32_t)
+SCALAR_UNSIGNED_UNARY_OPS(uint64_t)
+SCALAR_REDUCE_OPS(uint8_t)
+SCALAR_REDUCE_OPS(uint16_t)
+SCALAR_REDUCE_OPS(uint32_t)
+SCALAR_REDUCE_OPS(uint64_t)
 
-template <>
-void dispatch_unary_neg<int64_t>(const int64_t* input, int64_t* output, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        output[i] = -input[i];
-    }
-}
-
-// Reductions for integers
-template <>
-int32_t dispatch_reduce_sum<int32_t>(const int32_t* data, size_t n) {
-    int32_t result = 0;
-    for (size_t i = 0; i < n; ++i) {
-        result += data[i];
-    }
-    return result;
-}
-
-template <>
-int64_t dispatch_reduce_sum<int64_t>(const int64_t* data, size_t n) {
-    int64_t result = 0;
-    for (size_t i = 0; i < n; ++i) {
-        result += data[i];
-    }
-    return result;
-}
-
-template <>
-int32_t dispatch_reduce_max<int32_t>(const int32_t* data, size_t n) {
-    if (n == 0) return 0;
-    int32_t result = data[0];
-    for (size_t i = 1; i < n; ++i) {
-        if (data[i] > result) result = data[i];
-    }
-    return result;
-}
-
-template <>
-int64_t dispatch_reduce_max<int64_t>(const int64_t* data, size_t n) {
-    if (n == 0) return 0;
-    int64_t result = data[0];
-    for (size_t i = 1; i < n; ++i) {
-        if (data[i] > result) result = data[i];
-    }
-    return result;
-}
-
-template <>
-int32_t dispatch_reduce_min<int32_t>(const int32_t* data, size_t n) {
-    if (n == 0) return 0;
-    int32_t result = data[0];
-    for (size_t i = 1; i < n; ++i) {
-        if (data[i] < result) result = data[i];
-    }
-    return result;
-}
-
-template <>
-int64_t dispatch_reduce_min<int64_t>(const int64_t* data, size_t n) {
-    if (n == 0) return 0;
-    int64_t result = data[0];
-    for (size_t i = 1; i < n; ++i) {
-        if (data[i] < result) result = data[i];
-    }
-    return result;
-}
-
-template <>
-int32_t dispatch_reduce_prod<int32_t>(const int32_t* data, size_t n) {
-    int32_t result = 1;
-    for (size_t i = 0; i < n; ++i) {
-        result *= data[i];
-    }
-    return result;
-}
-
-template <>
-int64_t dispatch_reduce_prod<int64_t>(const int64_t* data, size_t n) {
-    int64_t result = 1;
-    for (size_t i = 0; i < n; ++i) {
-        result *= data[i];
-    }
-    return result;
-}
+#undef SCALAR_BINARY_OP_T
+#undef SCALAR_BINARY_OPS_FOR_TYPE
+#undef SCALAR_UNARY_OP_T
+#undef SCALAR_ACTIVATION_T
+#undef SCALAR_REDUCE_T
+#undef SCALAR_SIGNED_UNARY_OPS
+#undef SCALAR_UNSIGNED_UNARY_OPS
+#undef SCALAR_REDUCE_OPS
 
 }  // namespace simd
 }  // namespace axiom

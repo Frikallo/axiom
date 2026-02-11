@@ -16,54 +16,59 @@ BenchResult benchmark_op(const std::string& op, size_t n, int warmup = 3,
                          int iterations = 10) {
     // Use positive values for ops that need them (log, sqrt)
     auto A = Tensor::rand({n, n}, DType::Float32, Device::CPU) + 0.1f;
+    (void)A.data();  // Force materialization of lazy tensor
 
     // Warmup
     for (int i = 0; i < warmup; i++) {
+        Tensor C;
         if (op == "exp")
-            auto C = ops::exp(A);
+            C = ops::exp(A);
         else if (op == "log")
-            auto C = ops::log(A);
+            C = ops::log(A);
         else if (op == "sqrt")
-            auto C = ops::sqrt(A);
+            C = ops::sqrt(A);
         else if (op == "sin")
-            auto C = ops::sin(A);
+            C = ops::sin(A);
         else if (op == "cos")
-            auto C = ops::cos(A);
+            C = ops::cos(A);
         else if (op == "tanh")
-            auto C = ops::tanh(A);
+            C = ops::tanh(A);
         else if (op == "abs")
-            auto C = ops::abs(A);
+            C = ops::abs(A);
         else if (op == "neg")
-            auto C = -A;
+            C = -A;
         else if (op == "relu")
-            auto C = ops::relu(A);
+            C = ops::relu(A);
         else if (op == "sigmoid")
-            auto C = ops::sigmoid(A);
+            C = ops::sigmoid(A);
+        (void)C.data();  // Force materialization of lazy tensor
     }
 
     // Benchmark
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; i++) {
+        Tensor C;
         if (op == "exp")
-            auto C = ops::exp(A);
+            C = ops::exp(A);
         else if (op == "log")
-            auto C = ops::log(A);
+            C = ops::log(A);
         else if (op == "sqrt")
-            auto C = ops::sqrt(A);
+            C = ops::sqrt(A);
         else if (op == "sin")
-            auto C = ops::sin(A);
+            C = ops::sin(A);
         else if (op == "cos")
-            auto C = ops::cos(A);
+            C = ops::cos(A);
         else if (op == "tanh")
-            auto C = ops::tanh(A);
+            C = ops::tanh(A);
         else if (op == "abs")
-            auto C = ops::abs(A);
+            C = ops::abs(A);
         else if (op == "neg")
-            auto C = -A;
+            C = -A;
         else if (op == "relu")
-            auto C = ops::relu(A);
+            C = ops::relu(A);
         else if (op == "sigmoid")
-            auto C = ops::sigmoid(A);
+            C = ops::sigmoid(A);
+        (void)C.data();  // Force materialization of lazy tensor
     }
     auto end = std::chrono::high_resolution_clock::now();
 

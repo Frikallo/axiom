@@ -5,13 +5,17 @@
 #include <cstring>
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 
 #include "axiom/einops.hpp"
 #include "axiom/error.hpp"
+#include "axiom/graph/graph_node.hpp"
+#include "axiom/graph/graph_registry.hpp"
 #include "axiom/io/io.hpp"
 #include "axiom/linalg.hpp"
 #include "axiom/numeric.hpp"
 #include "axiom/operations.hpp"
+#include "axiom/parallel.hpp"
 #include "axiom/random.hpp"
 #include "axiom/system.hpp"
 
@@ -37,6 +41,21 @@ template <typename T> std::string vec_to_string(const std::vector<T> &vec) {
 
 size_t Tensor::calculate_storage_size() const { return size() * itemsize(); }
 
+void Tensor::copy_with_layout_conversion(Tensor &dst) const {
+    for (size_t i = 0; i < size(); ++i) {
+        auto indices = ShapeUtils::unravel_index(i, shape_);
+        size_t src_byte_offset = ShapeUtils::linear_index(indices, strides_);
+        size_t dst_byte_offset =
+            ShapeUtils::linear_index(indices, dst.strides_);
+
+        std::memcpy(static_cast<uint8_t *>(dst.storage_->data()) +
+                        dst_byte_offset,
+                    static_cast<const uint8_t *>(storage_->data()) + offset_ +
+                        src_byte_offset,
+                    itemsize());
+    }
+}
+
 void Tensor::validate_indices(const std::vector<size_t> &indices) const {
     if (indices.size() != ndim()) {
         throw ShapeError(
@@ -50,7 +69,7 @@ void Tensor::validate_indices(const std::vector<size_t> &indices) const {
     }
 }
 
-void Tensor::update_contiguity_flags() {
+void Tensor::update_contiguity_flags() const {
     if (shape_.empty()) {
         flags_.c_contiguous = true;
         flags_.f_contiguous = true;
@@ -137,10 +156,28 @@ Tensor::Tensor(std::shared_ptr<Storage> storage, const Shape &shape,
     flags_.owndata = (offset_ == 0);
 }
 
+// Constructor for lazy tensors
+Tensor::Tensor(std::shared_ptr<graph::GraphNode> lazy_node)
+    : storage_(nullptr), offset_(0), flags_(),
+      memory_order_(MemoryOrder::RowMajor), lazy_node_(std::move(lazy_node)) {
+    if (!lazy_node_) {
+        throw MemoryError("Lazy node cannot be null");
+    }
+    // Copy metadata from node (no allocation yet)
+    shape_ = lazy_node_->output_shape;
+    dtype_ = lazy_node_->output_dtype;
+    // Calculate expected strides (will be verified on materialization)
+    strides_ = ShapeUtils::calculate_strides(shape_, dtype_size(dtype_),
+                                             MemoryOrder::RowMajor);
+    flags_.owndata = false;
+    flags_.writeable = false; // Lazy tensors are read-only until materialized
+    update_contiguity_flags();
+}
+
 Tensor::Tensor(const Tensor &other)
     : storage_(other.storage_), shape_(other.shape_), strides_(other.strides_),
       dtype_(other.dtype_), offset_(other.offset_), flags_(other.flags_),
-      memory_order_(other.memory_order_) {}
+      memory_order_(other.memory_order_), lazy_node_(other.lazy_node_) {}
 
 Tensor &Tensor::operator=(const Tensor &other) {
     if (this != &other) {
@@ -151,6 +188,7 @@ Tensor &Tensor::operator=(const Tensor &other) {
         offset_ = other.offset_;
         flags_ = other.flags_;
         memory_order_ = other.memory_order_;
+        lazy_node_ = other.lazy_node_;
     }
     return *this;
 }
@@ -159,7 +197,8 @@ Tensor::Tensor(Tensor &&other) noexcept
     : storage_(std::move(other.storage_)), shape_(std::move(other.shape_)),
       strides_(std::move(other.strides_)), dtype_(other.dtype_),
       offset_(other.offset_), flags_(other.flags_),
-      memory_order_(other.memory_order_) {}
+      memory_order_(other.memory_order_),
+      lazy_node_(std::move(other.lazy_node_)) {}
 
 Tensor &Tensor::operator=(Tensor &&other) noexcept {
     if (this != &other) {
@@ -170,11 +209,77 @@ Tensor &Tensor::operator=(Tensor &&other) noexcept {
         offset_ = other.offset_;
         flags_ = other.flags_;
         memory_order_ = other.memory_order_;
+        lazy_node_ = std::move(other.lazy_node_);
     }
     return *this;
 }
 
+// ============================================================================
+// Core attribute accessors that handle lazy tensors
+// ============================================================================
+
+const Shape &Tensor::shape() const {
+    // Shape is available from lazy node without materialization
+    if (lazy_node_) {
+        return lazy_node_->output_shape;
+    }
+    return shape_;
+}
+
+const Strides &Tensor::strides() const {
+    materialize_if_needed();
+    return strides_;
+}
+
+DType Tensor::dtype() const {
+    // Dtype is available from lazy node without materialization
+    if (lazy_node_) {
+        return lazy_node_->output_dtype;
+    }
+    return dtype_;
+}
+
+Device Tensor::device() const {
+    // Device is available from lazy node without materialization
+    if (lazy_node_) {
+        return lazy_node_->target_device;
+    }
+    if (!storage_) {
+        return Device::CPU;
+    }
+    return storage_->device();
+}
+
+// ============================================================================
+// Lazy Evaluation - Materialization
+// ============================================================================
+
+void Tensor::materialize_if_needed() const {
+    if (!lazy_node_)
+        return;
+
+    if (!lazy_node_->is_materialized_) {
+        graph::GraphRegistry::materialize(lazy_node_.get());
+    }
+
+    // Copy result from node to tensor (fields are mutable for lazy init)
+    storage_ = lazy_node_->cached_result_;
+    shape_ = lazy_node_->cached_shape_;
+    strides_ = lazy_node_->cached_strides_;
+    dtype_ = lazy_node_->output_dtype;
+    offset_ = 0;
+    flags_.owndata = true;
+    flags_.writeable = true;
+    lazy_node_ = nullptr;
+    update_contiguity_flags();
+}
+
+// ============================================================================
+// Data Access
+// ============================================================================
+
 void *Tensor::data() {
+    materialize_if_needed();
     if (!storage_) {
         return nullptr;
     }
@@ -190,6 +295,7 @@ void *Tensor::data() {
 }
 
 const void *Tensor::data() const {
+    materialize_if_needed();
     if (!storage_) {
         return nullptr;
     }
@@ -206,6 +312,9 @@ const void *Tensor::data() const {
 }
 
 Tensor Tensor::slice(const std::vector<Slice> &slice_args) const {
+    // Materialize lazy tensors before slicing
+    materialize_if_needed();
+
     if (slice_args.size() > ndim()) {
         throw IndexError("Too many indices for tensor: got " +
                          std::to_string(slice_args.size()) +
@@ -266,6 +375,9 @@ Tensor Tensor::slice(const std::vector<Slice> &slice_args) const {
 }
 
 Tensor Tensor::operator[](std::initializer_list<Index> indices) const {
+    // Materialize lazy tensors before indexing
+    materialize_if_needed();
+
     if (indices.size() > ndim()) {
         throw IndexError("Too many indices for tensor: got " +
                          std::to_string(indices.size()) + " but tensor has " +
@@ -353,6 +465,9 @@ void recursive_copy(uint8_t *dst, const uint8_t *src, const Shape &shape,
 }
 
 Tensor Tensor::ascontiguousarray() const {
+    // Materialize lazy tensors before making contiguous
+    materialize_if_needed();
+
     if (is_c_contiguous()) {
         return *this;
     }
@@ -360,9 +475,71 @@ Tensor Tensor::ascontiguousarray() const {
     auto new_tensor = Tensor(shape_, dtype_, device(), MemoryOrder::RowMajor);
 
     if (device() == Device::CPU) {
-        recursive_copy(static_cast<uint8_t *>(new_tensor.data()),
-                       static_cast<const uint8_t *>(this->data()), shape_,
-                       new_tensor.strides(), this->strides(), itemsize(), 0);
+        // Fast path: 2D non-contiguous (e.g., transposed matrix)
+        // Use cache-blocked copy to avoid cache thrashing
+        if (ndim() == 2 && shape_[0] > 1 && shape_[1] > 1) {
+            size_t rows = shape_[0];
+            size_t cols = shape_[1];
+            size_t isize = itemsize();
+            int64_t src_row_stride = strides_[0];
+            int64_t src_col_stride = strides_[1];
+            int64_t dst_row_stride = new_tensor.strides()[0];
+
+            constexpr size_t BLOCK = 8;
+            const uint8_t *src = static_cast<const uint8_t *>(this->data());
+            uint8_t *dst = static_cast<uint8_t *>(new_tensor.data());
+
+#ifdef AXIOM_USE_OPENMP
+            if (parallel::should_parallelize(rows * cols)) {
+                ptrdiff_t nbi =
+                    static_cast<ptrdiff_t>((rows + BLOCK - 1) / BLOCK);
+                ptrdiff_t nbj =
+                    static_cast<ptrdiff_t>((cols + BLOCK - 1) / BLOCK);
+#pragma omp parallel for collapse(2) schedule(static)
+                for (ptrdiff_t bi = 0; bi < nbi; ++bi) {
+                    for (ptrdiff_t bj = 0; bj < nbj; ++bj) {
+                        size_t i0 = static_cast<size_t>(bi) * BLOCK;
+                        size_t j0 = static_cast<size_t>(bj) * BLOCK;
+                        size_t i1 = std::min(i0 + BLOCK, rows);
+                        size_t j1 = std::min(j0 + BLOCK, cols);
+                        for (size_t i = i0; i < i1; ++i) {
+                            for (size_t j = j0; j < j1; ++j) {
+                                std::memcpy(dst + i * dst_row_stride +
+                                                static_cast<int64_t>(j) *
+                                                    static_cast<int64_t>(isize),
+                                            src + i * src_row_stride +
+                                                j * src_col_stride,
+                                            isize);
+                            }
+                        }
+                    }
+                }
+            } else
+#endif
+            {
+                for (size_t bi = 0; bi < rows; bi += BLOCK) {
+                    for (size_t bj = 0; bj < cols; bj += BLOCK) {
+                        size_t i1 = std::min(bi + BLOCK, rows);
+                        size_t j1 = std::min(bj + BLOCK, cols);
+                        for (size_t i = bi; i < i1; ++i) {
+                            for (size_t j = bj; j < j1; ++j) {
+                                std::memcpy(dst + i * dst_row_stride +
+                                                static_cast<int64_t>(j) *
+                                                    static_cast<int64_t>(isize),
+                                            src + i * src_row_stride +
+                                                j * src_col_stride,
+                                            isize);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            recursive_copy(static_cast<uint8_t *>(new_tensor.data()),
+                           static_cast<const uint8_t *>(this->data()), shape_,
+                           new_tensor.strides(), this->strides(), itemsize(),
+                           0);
+        }
     } else {
         new_tensor.storage_->copy_from(*storage_);
     }
@@ -371,6 +548,9 @@ Tensor Tensor::ascontiguousarray() const {
 }
 
 Tensor Tensor::asfortranarray() const {
+    // Materialize lazy tensors before making contiguous
+    materialize_if_needed();
+
     if (is_f_contiguous()) {
         return *this;
     }
@@ -389,6 +569,9 @@ Tensor Tensor::asfortranarray() const {
 }
 
 Tensor Tensor::reshape(const Shape &new_shape, MemoryOrder order) const {
+    // Materialize lazy tensors before reshape
+    materialize_if_needed();
+
     Shape validated_shape = reshape_shape(shape_, new_shape);
 
     bool can_view = false;
@@ -447,6 +630,9 @@ Tensor Tensor::reduce(const std::string &pattern, const std::string &reduction,
 }
 
 Tensor Tensor::transpose() const {
+    // Materialize lazy tensors before transpose
+    materialize_if_needed();
+
     if (ndim() < 2) {
         return *this;
     }
@@ -461,6 +647,9 @@ Tensor Tensor::transpose() const {
 }
 
 Tensor Tensor::transpose(const std::vector<int> &axes) const {
+    // Materialize lazy tensors before transpose
+    materialize_if_needed();
+
     if (axes.size() != ndim()) {
         throw ShapeError("Number of axes (" + std::to_string(axes.size()) +
                          ") must match tensor dimensions (" +
@@ -486,6 +675,9 @@ Tensor Tensor::transpose(const std::vector<int> &axes) const {
 }
 
 Tensor Tensor::squeeze(int axis) const {
+    // Materialize lazy tensors before squeeze
+    materialize_if_needed();
+
     Shape new_shape;
     Strides new_strides;
 
@@ -522,6 +714,9 @@ Tensor Tensor::squeeze(int axis) const {
 }
 
 Tensor Tensor::unsqueeze(int axis) const {
+    // Materialize lazy tensors before unsqueeze
+    materialize_if_needed();
+
     Shape new_shape = unsqueeze_shape(shape_, axis);
 
     Strides new_strides = strides_;
@@ -533,6 +728,9 @@ Tensor Tensor::unsqueeze(int axis) const {
 }
 
 Tensor Tensor::view(const Shape &new_shape) const {
+    // Materialize lazy tensors before view
+    materialize_if_needed();
+
     if (ShapeUtils::size(new_shape) != size()) {
         throw ShapeError::invalid_reshape(size(), ShapeUtils::size(new_shape));
     }
@@ -547,6 +745,9 @@ Tensor Tensor::view(const Shape &new_shape) const {
 }
 
 Tensor Tensor::flatten(int start_dim, int end_dim) const {
+    // Materialize lazy tensors before flatten
+    materialize_if_needed();
+
     // Normalize negative indices
     int ndims = static_cast<int>(ndim());
     if (start_dim < 0)
@@ -721,6 +922,9 @@ Tensor Tensor::moveaxis(int source, int destination) const {
 Tensor Tensor::flip(int axis) const { return flip(std::vector<int>{axis}); }
 
 Tensor Tensor::flip(const std::vector<int> &axes) const {
+    // Materialize lazy tensors before flip
+    materialize_if_needed();
+
     int ndims = static_cast<int>(ndim());
 
     // Normalize and validate axes
@@ -777,6 +981,9 @@ Tensor Tensor::rot90(int k, const std::vector<int> &axes) const {
 }
 
 Tensor Tensor::roll(int64_t shift, int axis) const {
+    // Materialize lazy tensors before roll
+    materialize_if_needed();
+
     if (axis == -1) {
         // Roll over flattened tensor, then reshape back
         auto flat = flatten();
@@ -947,6 +1154,9 @@ Tensor Tensor::trace(int offset, int axis1, int axis2) const {
 }
 
 Tensor Tensor::expand(const Shape &new_shape) const {
+    // Materialize lazy tensors before expand
+    materialize_if_needed();
+
     // expand creates a view by setting stride to 0 for expanded dimensions
     // Only dimensions of size 1 can be expanded
 
@@ -996,6 +1206,9 @@ Tensor Tensor::expand(const Shape &new_shape) const {
 }
 
 Tensor Tensor::repeat(const std::vector<size_t> &repeats) const {
+    // Materialize lazy tensors before repeat
+    materialize_if_needed();
+
     // repeat actually copies data
     // Each dimension is repeated by the corresponding factor
 
@@ -1327,19 +1540,7 @@ Tensor Tensor::copy(MemoryOrder order) const {
     auto new_tensor = Tensor(shape_, dtype_, device(), order);
 
     if (device() == Device::CPU && order != memory_order_) {
-        for (size_t i = 0; i < size(); ++i) {
-            auto indices = ShapeUtils::unravel_index(i, shape_);
-            size_t src_byte_offset =
-                ShapeUtils::linear_index(indices, strides_);
-            size_t dst_byte_offset =
-                ShapeUtils::linear_index(indices, new_tensor.strides_);
-
-            std::memcpy(static_cast<uint8_t *>(new_tensor.storage_->data()) +
-                            dst_byte_offset,
-                        static_cast<const uint8_t *>(storage_->data()) +
-                            offset_ + src_byte_offset,
-                        itemsize());
-        }
+        copy_with_layout_conversion(new_tensor);
     } else {
         new_tensor.storage_->copy_from(*storage_);
     }
@@ -1352,23 +1553,14 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
         return *this;
     }
 
+    // Materialize lazy tensors before device transfer
+    materialize_if_needed();
+
     auto new_tensor = Tensor(shape_, dtype_, target_device, order);
 
     if (order != memory_order_ && device() == Device::CPU &&
         target_device == Device::CPU) {
-        for (size_t i = 0; i < size(); ++i) {
-            auto indices = ShapeUtils::unravel_index(i, shape_);
-            size_t src_byte_offset =
-                ShapeUtils::linear_index(indices, strides_);
-            size_t dst_byte_offset =
-                ShapeUtils::linear_index(indices, new_tensor.strides_);
-
-            std::memcpy(static_cast<uint8_t *>(new_tensor.storage_->data()) +
-                            dst_byte_offset,
-                        static_cast<const uint8_t *>(storage_->data()) +
-                            offset_ + src_byte_offset,
-                        itemsize());
-        }
+        copy_with_layout_conversion(new_tensor);
     } else {
         new_tensor.storage_->copy_from(*storage_);
     }
@@ -1389,6 +1581,9 @@ Tensor Tensor::cpu() const {
 Tensor Tensor::gpu() const { return to(Device::GPU, memory_order_); }
 
 Tensor Tensor::astype(DType new_dtype) const {
+    // Materialize lazy tensors before type conversion
+    materialize_if_needed();
+
     if (new_dtype == dtype_) {
         return *this;
     }

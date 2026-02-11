@@ -6,3 +6,5 @@ pytorch-ref/
 *.npy
 __pycache__/
 venv/
+_build/
+Testing/Temporary/

@@ -285,12 +285,22 @@ set(AXIOM_SOURCES
     src/tensor/system.cpp
     src/tensor/indexing.cpp
 
+    # Lazy evaluation, operator fusion, and graph compiler
+    src/graph/graph_registry.cpp
+    src/graph/graph_signature.cpp
+    src/graph/graph_compiler.cpp
+    src/graph/graph_cache.cpp
+    src/graph/graph_executor.cpp
+    src/graph/fused_kernel.cpp
+    src/graph/fused_patterns.cpp
+
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
     src/backends/cpu/cpu_operations.cpp
 
     # SIMD kernels (Highway)
     src/backends/cpu/simd/hwy_kernels.cc
+    src/backends/cpu/simd/hwy_fused_kernels.cc
 
     # BLAS backend abstraction (always included)
     src/backends/cpu/blas/blas_backend.cpp
@@ -336,6 +346,7 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
+        src/backends/metal/mpsgraph_fused.mm
         src/backends/metal/graph_cache.mm
         src/backends/metal/kernels.metal
     )
@@ -345,6 +356,7 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
+        src/backends/metal/mpsgraph_fused.mm
         src/backends/metal/graph_cache.mm
         src/backends/metal/kernels.metal
         PROPERTIES

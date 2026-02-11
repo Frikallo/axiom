@@ -467,7 +467,8 @@ For portable distributions, Axiom can dynamically link BLAS at runtime.
 
 Axiom is building toward a future where prototyping in Python and deploying in C++ requires zero mental overhead. The API parity is intentional—your NumPy code translates line-by-line.
 
-- **Lazy Evaluation** *(in development)* — Expression graph compilation for automatic kernel fusion and memory optimization
+- **Lazy Evaluation & Graph Compiler** — Expression graph with deferred execution, automatic operator fusion (12 SIMD-fused patterns + generic tiled fusion), compiled graph caching, and arena-pooled buffer reuse. Foundation for autograd and JIT compilation.
+- **Autograd** *(planned)* — Reverse-mode automatic differentiation over the expression graph
 - **ONNX Runtime Integration** — Load and run ONNX models directly
 - **Quantization Toolkit** — INT8/INT4 quantization for edge deployment
 - **Custom Op Registration** — Extend Axiom with your own kernels
