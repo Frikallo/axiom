@@ -12,12 +12,19 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <unordered_set>
 
 #include "axiom/parallel.hpp"
 
 namespace axiom {
 namespace graph {
+
+// Opt-in debug logging for fusion fallbacks (set AXIOM_DEBUG_FUSION=1)
+static bool debug_fusion() {
+    static const bool enabled = std::getenv("AXIOM_DEBUG_FUSION") != nullptr;
+    return enabled;
+}
 
 // Tile size: 16K elements = 64KB for float32, fits in Apple M-series L1
 static constexpr size_t TILE_ELEMENTS = 16384;
@@ -36,6 +43,162 @@ struct ArenaGuard {
             plan.release_arena(std::move(arena));
     }
 };
+
+// Describes a single op in a fused chain with resolved fn-ptrs.
+// Shared by FusedGeneric and FusedReduction execution paths.
+struct FusedOpDesc {
+    bool is_unary;
+    UnaryFn unary_fn;
+    BinaryFn binary_fn;
+    int input_slot_a; // -1 = previous result
+    int input_slot_b; // -1 = previous result, -2 = N/A
+};
+
+// Resolve fn-ptrs for every op in a chain. Returns empty vector on failure
+// (unsupported op or missing fn-ptr for the given dtype).
+std::vector<FusedOpDesc>
+resolve_chain_fn_ptrs(const std::vector<ops::OpType> &op_chain,
+                      const std::vector<std::vector<int>> &input_slot_indices,
+                      DType dtype) {
+    std::vector<FusedOpDesc> descs;
+    descs.reserve(op_chain.size());
+
+    for (size_t i = 0; i < op_chain.size(); ++i) {
+        ops::OpType op = op_chain[i];
+        const auto &indices = input_slot_indices[i];
+        FusedOpDesc d{};
+
+        if (is_unary_op(op)) {
+            d.is_unary = true;
+            d.unary_fn = get_unary_fn(op, dtype);
+            if (!d.unary_fn)
+                return {};
+            d.input_slot_a = indices.empty() ? -1 : indices[0];
+            d.input_slot_b = -2;
+        } else if (is_binary_op(op)) {
+            d.is_unary = false;
+            d.binary_fn = get_binary_fn(op, dtype);
+            if (!d.binary_fn)
+                return {};
+            d.input_slot_a = indices.empty() ? -1 : indices[0];
+            d.input_slot_b = (indices.size() > 1) ? indices[1] : -1;
+        } else {
+            return {};
+        }
+
+        descs.push_back(d);
+    }
+    return descs;
+}
+
+// Scalar reduction over a contiguous integer buffer. Returns result as double.
+double scalar_reduce_tile(const void *data, size_t count, DType dtype,
+                          ops::OpType red_op) {
+    if (dtype == DType::Int32) {
+        const int32_t *p = static_cast<const int32_t *>(data);
+        if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean) {
+            int64_t s = 0;
+            for (size_t i = 0; i < count; ++i)
+                s += p[i];
+            return static_cast<double>(s);
+        } else if (red_op == ops::OpType::Max) {
+            int32_t m = p[0];
+            for (size_t i = 1; i < count; ++i)
+                m = std::max(m, p[i]);
+            return static_cast<double>(m);
+        } else if (red_op == ops::OpType::Min) {
+            int32_t m = p[0];
+            for (size_t i = 1; i < count; ++i)
+                m = std::min(m, p[i]);
+            return static_cast<double>(m);
+        } else if (red_op == ops::OpType::Prod) {
+            int64_t m = 1;
+            for (size_t i = 0; i < count; ++i)
+                m *= p[i];
+            return static_cast<double>(m);
+        }
+    } else if (dtype == DType::Int64) {
+        const int64_t *p = static_cast<const int64_t *>(data);
+        if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean) {
+            int64_t s = 0;
+            for (size_t i = 0; i < count; ++i)
+                s += p[i];
+            return static_cast<double>(s);
+        } else if (red_op == ops::OpType::Max) {
+            int64_t m = p[0];
+            for (size_t i = 1; i < count; ++i)
+                m = std::max(m, p[i]);
+            return static_cast<double>(m);
+        } else if (red_op == ops::OpType::Min) {
+            int64_t m = p[0];
+            for (size_t i = 1; i < count; ++i)
+                m = std::min(m, p[i]);
+            return static_cast<double>(m);
+        } else if (red_op == ops::OpType::Prod) {
+            int64_t m = 1;
+            for (size_t i = 0; i < count; ++i)
+                m *= p[i];
+            return static_cast<double>(m);
+        }
+    }
+    return 0.0;
+}
+
+// Reduce a tile using SIMD (float types) or scalar (integer types).
+double reduce_tile(const void *data, size_t count, DType dtype,
+                   ops::OpType red_op) {
+    if (dtype == DType::Float32) {
+        const float *tile = static_cast<const float *>(data);
+        if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean)
+            return simd::dispatch_reduce_sum(tile, count);
+        if (red_op == ops::OpType::Max)
+            return simd::dispatch_reduce_max(tile, count);
+        if (red_op == ops::OpType::Min)
+            return simd::dispatch_reduce_min(tile, count);
+        if (red_op == ops::OpType::Prod)
+            return simd::dispatch_reduce_prod(tile, count);
+    } else if (dtype == DType::Float64) {
+        const double *tile = static_cast<const double *>(data);
+        if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean)
+            return simd::dispatch_reduce_sum(tile, count);
+        if (red_op == ops::OpType::Max)
+            return simd::dispatch_reduce_max(tile, count);
+        if (red_op == ops::OpType::Min)
+            return simd::dispatch_reduce_min(tile, count);
+        if (red_op == ops::OpType::Prod)
+            return simd::dispatch_reduce_prod(tile, count);
+    }
+    return scalar_reduce_tile(data, count, dtype, red_op);
+}
+
+// Store a double accumulator into a scalar tensor of the given dtype.
+void store_scalar_result(Tensor &result, double acc) {
+    DType dt = result.dtype();
+    if (dt == DType::Float32)
+        result.typed_data<float>()[0] = static_cast<float>(acc);
+    else if (dt == DType::Float64)
+        result.typed_data<double>()[0] = acc;
+    else if (dt == DType::Int32)
+        result.typed_data<int32_t>()[0] = static_cast<int32_t>(acc);
+    else if (dt == DType::Int64)
+        result.typed_data<int64_t>()[0] = static_cast<int64_t>(acc);
+}
+
+// Check that all external input slots are contiguous and match expected size.
+bool inputs_are_contiguous(const std::vector<std::vector<int>> &slot_indices,
+                           const std::vector<Tensor> &buffers,
+                           size_t expected_size) {
+    for (const auto &per_op : slot_indices) {
+        for (int s : per_op) {
+            if (s >= 0 && s < static_cast<int>(buffers.size())) {
+                if (!buffers[s].is_contiguous() ||
+                    buffers[s].size() != expected_size)
+                    return false;
+            }
+        }
+    }
+    return true;
+}
 
 // Forward declarations for internal dispatch functions
 void execute_single_op(const SingleOpStep &step, std::vector<Tensor> &buffers);
@@ -224,7 +387,7 @@ void execute_single_op(const SingleOpStep &step, std::vector<Tensor> &buffers) {
 // ============================================================================
 
 // FusedKnown SIMD kernels do minimal work per call, so OpenMP thread
-// spawn overhead is only amortized at larger sizes (~1M+ elements).
+// spawn overhead is only amortized at larger sizes (~512K+ elements).
 static constexpr size_t FUSED_KNOWN_MIN_PARALLEL = 524288;
 
 void execute_fused_known(const FusedKnownStep &step, const CompiledGraph &plan,
@@ -254,6 +417,9 @@ void execute_fused_known(const FusedKnownStep &step, const CompiledGraph &plan,
             return;
 #endif
         // Fallback to generic
+        if (debug_fusion())
+            std::fprintf(stderr, "[axiom:fusion] FusedKnown -> generic: "
+                                 "unsupported dtype or non-CPU device\n");
         FusedGenericStep generic_step;
         static_cast<StepBase &>(generic_step) =
             static_cast<const StepBase &>(step);
@@ -265,6 +431,9 @@ void execute_fused_known(const FusedKnownStep &step, const CompiledGraph &plan,
     // Check inputs are contiguous and same size as output (no broadcast)
     for (const auto &t : inputs) {
         if (!t.is_contiguous() || t.size() != step.total_elements) {
+            if (debug_fusion())
+                std::fprintf(stderr, "[axiom:fusion] FusedKnown -> generic: "
+                                     "non-contiguous or broadcast input\n");
             FusedGenericStep generic_step;
             static_cast<StepBase &>(generic_step) =
                 static_cast<const StepBase &>(step);
@@ -309,6 +478,10 @@ void execute_fused_known(const FusedKnownStep &step, const CompiledGraph &plan,
     }
 
     // Fallback
+    if (debug_fusion())
+        std::fprintf(stderr,
+                     "[axiom:fusion] FusedKnown -> generic: SIMD dispatch "
+                     "failed for pattern\n");
     FusedGenericStep generic_step;
     static_cast<StepBase &>(generic_step) = static_cast<const StepBase &>(step);
     generic_step.op_chain = step.op_chain;
@@ -337,56 +510,14 @@ static bool try_tiled_fused_loop(const FusedGenericStep &step,
     if (elem_size == 0)
         return false;
 
-    // Resolve all function pointers up front
-    struct OpDesc {
-        bool is_unary;
-        UnaryFn unary_fn;
-        BinaryFn binary_fn;
-        int input_slot_a; // -1 = previous result
-        int input_slot_b; // -1 = previous result, -2 = N/A
-    };
+    auto descs =
+        resolve_chain_fn_ptrs(step.op_chain, step.input_slot_indices, dtype);
+    if (descs.empty() && !step.op_chain.empty())
+        return false;
 
-    std::vector<OpDesc> descs;
-    descs.reserve(step.op_chain.size());
-
-    for (size_t i = 0; i < step.op_chain.size(); ++i) {
-        ops::OpType op = step.op_chain[i];
-        const auto &indices = step.input_slot_indices[i];
-        OpDesc d{};
-
-        if (is_unary_op(op)) {
-            d.is_unary = true;
-            d.unary_fn = get_unary_fn(op, dtype);
-            if (!d.unary_fn)
-                return false;
-            d.input_slot_a = indices.empty() ? -1 : indices[0];
-            d.input_slot_b = -2;
-        } else if (is_binary_op(op)) {
-            d.is_unary = false;
-            d.binary_fn = get_binary_fn(op, dtype);
-            if (!d.binary_fn)
-                return false;
-            d.input_slot_a = indices.empty() ? -1 : indices[0];
-            d.input_slot_b = (indices.size() > 1) ? indices[1] : -1;
-        } else {
-            return false; // unsupported op kind in chain
-        }
-
-        descs.push_back(d);
-    }
-
-    // All fn-ptrs resolved — proceed with tiled loop
-
-    // Check inputs are contiguous and match output size (no broadcast)
-    for (const auto &per_op : step.input_slot_indices) {
-        for (int s : per_op) {
-            if (s >= 0 && s < static_cast<int>(buffers.size())) {
-                if (!buffers[s].is_contiguous() ||
-                    buffers[s].size() != step.total_elements)
-                    return false;
-            }
-        }
-    }
+    if (!inputs_are_contiguous(step.input_slot_indices, buffers,
+                               step.total_elements))
+        return false;
 
     size_t total = step.total_elements;
     size_t tile_size = std::min(TILE_ELEMENTS, total);
@@ -482,6 +613,9 @@ void execute_fused_generic(const FusedGenericStep &step,
 #endif
 
     // Fallback: sequential op-by-op via OperationRegistry
+    if (debug_fusion())
+        std::fprintf(stderr, "[axiom:fusion] FusedGeneric -> op-by-op: "
+                             "tiled loop and GPU paths unavailable\n");
     Device device = step.device;
     Tensor current;
 
@@ -693,61 +827,18 @@ void execute_fused_reduction(const FusedReductionStep &step,
     }
 
     // Resolve fn-ptrs for the elementwise chain (excl. reduction)
-    struct OpDesc {
-        bool is_unary;
-        UnaryFn unary_fn;
-        BinaryFn binary_fn;
-        int input_slot_a;
-        int input_slot_b;
-    };
-
-    std::vector<OpDesc> descs;
-    descs.reserve(step.op_chain.size());
-
-    // The op_chain contains only the elementwise ops (reduction is separate)
-    for (size_t i = 0; i < step.op_chain.size(); ++i) {
-        ops::OpType op = step.op_chain[i];
-        const auto &indices = step.input_slot_indices[i];
-        OpDesc d{};
-
-        if (is_unary_op(op)) {
-            d.is_unary = true;
-            d.unary_fn = get_unary_fn(op, chain_dtype);
-            if (!d.unary_fn) {
-                execute_fused_reduction_fallback(step, plan, buffers);
-                return;
-            }
-            d.input_slot_a = indices.empty() ? -1 : indices[0];
-            d.input_slot_b = -2;
-        } else if (is_binary_op(op)) {
-            d.is_unary = false;
-            d.binary_fn = get_binary_fn(op, chain_dtype);
-            if (!d.binary_fn) {
-                execute_fused_reduction_fallback(step, plan, buffers);
-                return;
-            }
-            d.input_slot_a = indices.empty() ? -1 : indices[0];
-            d.input_slot_b = (indices.size() > 1) ? indices[1] : -1;
-        } else {
-            execute_fused_reduction_fallback(step, plan, buffers);
-            return;
-        }
-
-        descs.push_back(d);
+    auto descs = resolve_chain_fn_ptrs(step.op_chain, step.input_slot_indices,
+                                       chain_dtype);
+    if (descs.empty() && !step.op_chain.empty()) {
+        execute_fused_reduction_fallback(step, plan, buffers);
+        return;
     }
 
-    // Check inputs are contiguous and match the elementwise chain size
-    // (broadcast inputs would require coordinate remapping, not supported)
-    for (const auto &per_op : step.input_slot_indices) {
-        for (int s : per_op) {
-            if (s >= 0 && s < static_cast<int>(buffers.size())) {
-                if (!buffers[s].is_contiguous() ||
-                    buffers[s].size() != step.total_elements) {
-                    execute_fused_reduction_fallback(step, plan, buffers);
-                    return;
-                }
-            }
-        }
+    // Check inputs are contiguous (broadcast would need coordinate remapping)
+    if (!inputs_are_contiguous(step.input_slot_indices, buffers,
+                               step.total_elements)) {
+        execute_fused_reduction_fallback(step, plan, buffers);
+        return;
     }
 
     // Determine the input element count (the reduction input, not output)
@@ -778,63 +869,7 @@ void execute_fused_reduction(const FusedReductionStep &step,
     if (is_mean)
         red_op = ops::OpType::Sum; // Mean = Sum / N
 
-    bool use_simd =
-        (chain_dtype == DType::Float32 || chain_dtype == DType::Float64);
-
-    // Scalar reduction helper for integer types
-    auto scalar_reduce = [&](const void *data, size_t count) -> double {
-        double acc = 0.0;
-        if (chain_dtype == DType::Int32) {
-            const int32_t *p = static_cast<const int32_t *>(data);
-            if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean) {
-                int64_t s = 0;
-                for (size_t i = 0; i < count; ++i)
-                    s += p[i];
-                return static_cast<double>(s);
-            } else if (red_op == ops::OpType::Max) {
-                int32_t m = p[0];
-                for (size_t i = 1; i < count; ++i)
-                    m = std::max(m, p[i]);
-                return static_cast<double>(m);
-            } else if (red_op == ops::OpType::Min) {
-                int32_t m = p[0];
-                for (size_t i = 1; i < count; ++i)
-                    m = std::min(m, p[i]);
-                return static_cast<double>(m);
-            } else if (red_op == ops::OpType::Prod) {
-                int64_t m = 1;
-                for (size_t i = 0; i < count; ++i)
-                    m *= p[i];
-                return static_cast<double>(m);
-            }
-        } else if (chain_dtype == DType::Int64) {
-            const int64_t *p = static_cast<const int64_t *>(data);
-            if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean) {
-                int64_t s = 0;
-                for (size_t i = 0; i < count; ++i)
-                    s += p[i];
-                return static_cast<double>(s);
-            } else if (red_op == ops::OpType::Max) {
-                int64_t m = p[0];
-                for (size_t i = 1; i < count; ++i)
-                    m = std::max(m, p[i]);
-                return static_cast<double>(m);
-            } else if (red_op == ops::OpType::Min) {
-                int64_t m = p[0];
-                for (size_t i = 1; i < count; ++i)
-                    m = std::min(m, p[i]);
-                return static_cast<double>(m);
-            } else if (red_op == ops::OpType::Prod) {
-                int64_t m = 1;
-                for (size_t i = 0; i < count; ++i)
-                    m *= p[i];
-                return static_cast<double>(m);
-            }
-        }
-        return acc;
-    };
-
-    // Process tile: run elementwise chain, then reduce tile
+    // Process tile: run elementwise chain, then reduce the result
     auto process_tile_and_reduce = [&](size_t base, size_t count, void *tile_a,
                                        void *tile_b) -> double {
         void *prev = nullptr;
@@ -842,7 +877,6 @@ void execute_fused_reduction(const FusedReductionStep &step,
 
         for (size_t oi = 0; oi < descs.size(); ++oi) {
             const auto &d = descs[oi];
-            // All ops write to tile buffer (never directly to output)
             void *dst = prev_is_a ? tile_b : tile_a;
 
             if (d.is_unary) {
@@ -864,33 +898,7 @@ void execute_fused_reduction(const FusedReductionStep &step,
             prev_is_a = !prev_is_a;
         }
 
-        // Reduce the tile
-        double tile_acc = 0.0;
-        if (use_simd && chain_dtype == DType::Float32) {
-            const float *tile = static_cast<const float *>(prev);
-            if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean)
-                tile_acc = simd::dispatch_reduce_sum(tile, count);
-            else if (red_op == ops::OpType::Max)
-                tile_acc = simd::dispatch_reduce_max(tile, count);
-            else if (red_op == ops::OpType::Min)
-                tile_acc = simd::dispatch_reduce_min(tile, count);
-            else if (red_op == ops::OpType::Prod)
-                tile_acc = simd::dispatch_reduce_prod(tile, count);
-        } else if (use_simd && chain_dtype == DType::Float64) {
-            const double *tile = static_cast<const double *>(prev);
-            if (red_op == ops::OpType::Sum || red_op == ops::OpType::Mean)
-                tile_acc = simd::dispatch_reduce_sum(tile, count);
-            else if (red_op == ops::OpType::Max)
-                tile_acc = simd::dispatch_reduce_max(tile, count);
-            else if (red_op == ops::OpType::Min)
-                tile_acc = simd::dispatch_reduce_min(tile, count);
-            else if (red_op == ops::OpType::Prod)
-                tile_acc = simd::dispatch_reduce_prod(tile, count);
-        } else {
-            // Scalar fallback for integer types
-            tile_acc = scalar_reduce(prev, count);
-        }
-        return tile_acc;
+        return reduce_tile(prev, count, chain_dtype, red_op);
     };
 
     double acc = 0.0;
@@ -918,49 +926,33 @@ void execute_fused_reduction(const FusedReductionStep &step,
                 acc += process_tile_and_reduce(base, count, la.data, lb.data);
             }
         } else if (red_op == ops::OpType::Max) {
-            double local_max = acc;
-#pragma omp parallel
+#pragma omp parallel reduction(max : acc)
             {
-                double thread_max = acc;
                 TileBuffer la, lb;
-#pragma omp for schedule(static) nowait
+#pragma omp for schedule(static)
                 for (ptrdiff_t ti = 0; ti < num_tiles; ++ti) {
                     size_t base = static_cast<size_t>(ti) * tile_size;
                     size_t count = std::min(tile_size, total - base);
                     double v =
                         process_tile_and_reduce(base, count, la.data, lb.data);
-                    if (v > thread_max)
-                        thread_max = v;
-                }
-#pragma omp critical
-                {
-                    if (thread_max > local_max)
-                        local_max = thread_max;
+                    if (v > acc)
+                        acc = v;
                 }
             }
-            acc = local_max;
         } else if (red_op == ops::OpType::Min) {
-            double local_min = acc;
-#pragma omp parallel
+#pragma omp parallel reduction(min : acc)
             {
-                double thread_min = acc;
                 TileBuffer la, lb;
-#pragma omp for schedule(static) nowait
+#pragma omp for schedule(static)
                 for (ptrdiff_t ti = 0; ti < num_tiles; ++ti) {
                     size_t base = static_cast<size_t>(ti) * tile_size;
                     size_t count = std::min(tile_size, total - base);
                     double v =
                         process_tile_and_reduce(base, count, la.data, lb.data);
-                    if (v < thread_min)
-                        thread_min = v;
-                }
-#pragma omp critical
-                {
-                    if (thread_min < local_min)
-                        local_min = thread_min;
+                    if (v < acc)
+                        acc = v;
                 }
             }
-            acc = local_min;
         } else {
             // Prod: sequential to avoid floating-point ordering issues
             TileBuffer la, lb;
@@ -988,18 +980,8 @@ void execute_fused_reduction(const FusedReductionStep &step,
     if (is_mean)
         acc /= static_cast<double>(total);
 
-    // Store scalar result using the reduction output dtype
-    DType out_dtype = step.output_dtype;
-    Tensor result(step.output_shape, out_dtype, Device::CPU);
-    if (out_dtype == DType::Float32) {
-        result.typed_data<float>()[0] = static_cast<float>(acc);
-    } else if (out_dtype == DType::Float64) {
-        result.typed_data<double>()[0] = acc;
-    } else if (out_dtype == DType::Int32) {
-        result.typed_data<int32_t>()[0] = static_cast<int32_t>(acc);
-    } else if (out_dtype == DType::Int64) {
-        result.typed_data<int64_t>()[0] = static_cast<int64_t>(acc);
-    }
+    Tensor result(step.output_shape, step.output_dtype, Device::CPU);
+    store_scalar_result(result, acc);
 
     if (step.output_slot >= 0 &&
         step.output_slot < static_cast<int>(buffers.size())) {

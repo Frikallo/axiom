@@ -486,15 +486,19 @@ void compute_loop_params(CompiledGraph &plan) {
         auto &base = step_base(step);
         base.total_elements = ShapeUtils::size(base.output_shape);
 
-        // L1 tile size: ~16K float32 elements (64KB per buffer)
-        // Apple M-series L1 is 192KB, 2 buffers = 128KB
+        // Target ~64KB per tile buffer to fit in L1 cache
+        // (Apple M-series L1 = 192KB; 2 tile buffers = 128KB with headroom)
+        static constexpr size_t L1_TILE_BYTES = 64 * 1024;
+        static constexpr size_t MIN_TILE_ELEMENTS = 1024;
+        static constexpr size_t DEFAULT_TILE_ELEMENTS = 16384;
+
         size_t elem_size = dtype_size(base.output_dtype);
         if (elem_size > 0) {
-            base.tile_size = (64 * 1024) / elem_size;
+            base.tile_size = L1_TILE_BYTES / elem_size;
             if (base.tile_size == 0)
-                base.tile_size = 1024;
+                base.tile_size = MIN_TILE_ELEMENTS;
         } else {
-            base.tile_size = 16384;
+            base.tile_size = DEFAULT_TILE_ELEMENTS;
         }
 
         // Classify input access patterns

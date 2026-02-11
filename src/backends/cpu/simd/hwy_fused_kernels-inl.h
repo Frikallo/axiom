@@ -281,32 +281,12 @@ FusedSubMulAbsImpl(const T *HWY_RESTRICT a, const T *HWY_RESTRICT b,
 }
 
 // ============================================================================
-// Integer SIMD Kernels
+// Integer-Specific SIMD Kernels
+// (AddReLU, AddSquare, SubSquare reuse the float templates above —
+//  only SubAbs and MulAdd differ for integer types)
 // ============================================================================
 
-// Integer AddReLU: max(a + b, 0) - uses saturating add where available
-template <typename T>
-HWY_NOINLINE void FusedAddReLUIntImpl(const T *HWY_RESTRICT a,
-                                      const T *HWY_RESTRICT b,
-                                      T *HWY_RESTRICT result, size_t n) {
-    const hn::ScalableTag<T> d;
-    const size_t N = hn::Lanes(d);
-    const auto zero = hn::Zero(d);
-    size_t i = 0;
-
-    for (; i + N <= n; i += N) {
-        const auto va = hn::LoadU(d, a + i);
-        const auto vb = hn::LoadU(d, b + i);
-        const auto sum = hn::Add(va, vb);
-        hn::StoreU(hn::Max(sum, zero), d, result + i);
-    }
-    for (; i < n; ++i) {
-        T sum = a[i] + b[i];
-        result[i] = sum > T(0) ? sum : T(0);
-    }
-}
-
-// Integer SubAbs: abs(a - b)
+// Integer SubAbs: abs(a - b) — scalar tail avoids std::abs on signed integers
 template <typename T>
 HWY_NOINLINE void FusedSubAbsIntImpl(const T *HWY_RESTRICT a,
                                      const T *HWY_RESTRICT b,
@@ -327,7 +307,7 @@ HWY_NOINLINE void FusedSubAbsIntImpl(const T *HWY_RESTRICT a,
     }
 }
 
-// Integer MulAdd: a * b + c
+// Integer MulAdd: a * b + c — no FMA intrinsic for integers
 template <typename T>
 HWY_NOINLINE void
 FusedMulAddIntImpl(const T *HWY_RESTRICT a, const T *HWY_RESTRICT b,
@@ -345,48 +325,6 @@ FusedMulAddIntImpl(const T *HWY_RESTRICT a, const T *HWY_RESTRICT b,
     }
     for (; i < n; ++i) {
         result[i] = a[i] * b[i] + c[i];
-    }
-}
-
-// Integer AddSquare: (a + b)^2
-template <typename T>
-HWY_NOINLINE void FusedAddSquareIntImpl(const T *HWY_RESTRICT a,
-                                        const T *HWY_RESTRICT b,
-                                        T *HWY_RESTRICT result, size_t n) {
-    const hn::ScalableTag<T> d;
-    const size_t N = hn::Lanes(d);
-    size_t i = 0;
-
-    for (; i + N <= n; i += N) {
-        const auto va = hn::LoadU(d, a + i);
-        const auto vb = hn::LoadU(d, b + i);
-        const auto sum = hn::Add(va, vb);
-        hn::StoreU(hn::Mul(sum, sum), d, result + i);
-    }
-    for (; i < n; ++i) {
-        T sum = a[i] + b[i];
-        result[i] = sum * sum;
-    }
-}
-
-// Integer SubSquare: (a - b)^2
-template <typename T>
-HWY_NOINLINE void FusedSubSquareIntImpl(const T *HWY_RESTRICT a,
-                                        const T *HWY_RESTRICT b,
-                                        T *HWY_RESTRICT result, size_t n) {
-    const hn::ScalableTag<T> d;
-    const size_t N = hn::Lanes(d);
-    size_t i = 0;
-
-    for (; i + N <= n; i += N) {
-        const auto va = hn::LoadU(d, a + i);
-        const auto vb = hn::LoadU(d, b + i);
-        const auto diff = hn::Sub(va, vb);
-        hn::StoreU(hn::Mul(diff, diff), d, result + i);
-    }
-    for (; i < n; ++i) {
-        T diff = a[i] - b[i];
-        result[i] = diff * diff;
     }
 }
 
@@ -520,10 +458,11 @@ HWY_NOINLINE void FusedSubMulAbsD(const double *a, const double *b,
     FusedSubMulAbsImpl(a, b, c, result, n);
 }
 
-// Int32 wrappers
+// Int32 wrappers (reuse generic templates; only SubAbs and MulAdd need Int
+// variants)
 HWY_NOINLINE void FusedAddReLUI32(const int32_t *a, const int32_t *b,
                                   int32_t *result, size_t n) {
-    FusedAddReLUIntImpl(a, b, result, n);
+    FusedAddReLUImpl(a, b, result, n);
 }
 
 HWY_NOINLINE void FusedSubAbsI32(const int32_t *a, const int32_t *b,
@@ -538,18 +477,18 @@ HWY_NOINLINE void FusedMulAddI32(const int32_t *a, const int32_t *b,
 
 HWY_NOINLINE void FusedAddSquareI32(const int32_t *a, const int32_t *b,
                                     int32_t *result, size_t n) {
-    FusedAddSquareIntImpl(a, b, result, n);
+    FusedAddSquareImpl(a, b, result, n);
 }
 
 HWY_NOINLINE void FusedSubSquareI32(const int32_t *a, const int32_t *b,
                                     int32_t *result, size_t n) {
-    FusedSubSquareIntImpl(a, b, result, n);
+    FusedSubSquareImpl(a, b, result, n);
 }
 
 // Int64 wrappers
 HWY_NOINLINE void FusedAddReLUI64(const int64_t *a, const int64_t *b,
                                   int64_t *result, size_t n) {
-    FusedAddReLUIntImpl(a, b, result, n);
+    FusedAddReLUImpl(a, b, result, n);
 }
 
 HWY_NOINLINE void FusedSubAbsI64(const int64_t *a, const int64_t *b,
@@ -564,12 +503,12 @@ HWY_NOINLINE void FusedMulAddI64(const int64_t *a, const int64_t *b,
 
 HWY_NOINLINE void FusedAddSquareI64(const int64_t *a, const int64_t *b,
                                     int64_t *result, size_t n) {
-    FusedAddSquareIntImpl(a, b, result, n);
+    FusedAddSquareImpl(a, b, result, n);
 }
 
 HWY_NOINLINE void FusedSubSquareI64(const int64_t *a, const int64_t *b,
                                     int64_t *result, size_t n) {
-    FusedSubSquareIntImpl(a, b, result, n);
+    FusedSubSquareImpl(a, b, result, n);
 }
 
 } // namespace HWY_NAMESPACE

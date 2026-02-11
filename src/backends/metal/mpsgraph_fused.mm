@@ -91,6 +91,29 @@ static void encodeMPSGraphAsync(
     stream.increment_batch();
 }
 
+// Collect unique external input slot indices from a fused step's input mapping.
+// Slots with index -1 are chain-internal and skipped.
+static std::vector<int>
+collect_external_slots(const std::vector<std::vector<int>> &slot_indices) {
+    std::vector<int> external_slots;
+    for (const auto &per_op : slot_indices) {
+        for (int s : per_op) {
+            if (s >= 0) {
+                bool found = false;
+                for (int e : external_slots) {
+                    if (e == s) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                    external_slots.push_back(s);
+            }
+        }
+    }
+    return external_slots;
+}
+
 // ============================================================================
 // OpType -> MPSGraph operation mapping
 // ============================================================================
@@ -393,23 +416,7 @@ bool execute_gpu_fused_chain(const StepBase &step,
         if (!is_mps_supported_dtype(step.output_dtype))
             return false;
 
-        // Collect unique external input slots (not chain-internal -1)
-        std::vector<int> external_slots;
-        for (const auto &per_op : step.input_slot_indices) {
-            for (int s : per_op) {
-                if (s >= 0) {
-                    bool found = false;
-                    for (int e : external_slots) {
-                        if (e == s) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found)
-                        external_slots.push_back(s);
-                }
-            }
-        }
+        auto external_slots = collect_external_slots(step.input_slot_indices);
 
         // Ensure GPU inputs are available and contiguous
         std::vector<Tensor> inputs;
@@ -572,23 +579,7 @@ bool execute_gpu_fused_reduction(const FusedReductionStep &step,
         if (!is_mps_supported_dtype(step.output_dtype))
             return false;
 
-        // Collect external inputs
-        std::vector<int> external_slots;
-        for (const auto &per_op : step.input_slot_indices) {
-            for (int s : per_op) {
-                if (s >= 0) {
-                    bool found = false;
-                    for (int e : external_slots) {
-                        if (e == s) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found)
-                        external_slots.push_back(s);
-                }
-            }
-        }
+        auto external_slots = collect_external_slots(step.input_slot_indices);
 
         std::vector<Tensor> inputs;
         inputs.reserve(external_slots.size());

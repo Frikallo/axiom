@@ -304,28 +304,14 @@ static std::shared_ptr<GraphNode> make_constant_node(const Tensor &t) {
 // GraphRegistry Implementation
 // ============================================================================
 
-// Helper to check if a tensor is lazy
-static bool tensor_is_lazy(const Tensor &t);
-
-// Helper to get lazy node from tensor
-static std::shared_ptr<GraphNode> get_lazy_node(const Tensor &t);
-
-// Helper to create tensor from lazy node
-static Tensor create_tensor_from_node(std::shared_ptr<GraphNode> node);
-
-// Forward declarations - these will be implemented after Tensor modifications
-extern bool tensor_is_lazy_impl(const Tensor &t);
-extern std::shared_ptr<GraphNode> get_lazy_node_impl(const Tensor &t);
-extern Tensor create_tensor_from_node_impl(std::shared_ptr<GraphNode> node);
-
-static bool tensor_is_lazy(const Tensor &t) { return tensor_is_lazy_impl(t); }
+static bool tensor_is_lazy(const Tensor &t) { return t.is_lazy(); }
 
 static std::shared_ptr<GraphNode> get_lazy_node(const Tensor &t) {
-    return get_lazy_node_impl(t);
+    return t.lazy_node();
 }
 
 static Tensor create_tensor_from_node(std::shared_ptr<GraphNode> node) {
-    return create_tensor_from_node_impl(std::move(node));
+    return Tensor(std::move(node));
 }
 
 // Helper to create a tensor from a materialized node (returns proper tensor,

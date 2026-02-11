@@ -26,25 +26,6 @@
 
 namespace axiom {
 
-// ============================================================================
-// Lazy Evaluation Helper Functions (used by GraphRegistry)
-// ============================================================================
-
-namespace graph {
-
-// Implementation of helper functions declared in graph_registry.cpp
-bool tensor_is_lazy_impl(const Tensor &t) { return t.is_lazy(); }
-
-std::shared_ptr<GraphNode> get_lazy_node_impl(const Tensor &t) {
-    return t.lazy_node();
-}
-
-Tensor create_tensor_from_node_impl(std::shared_ptr<GraphNode> node) {
-    return Tensor(std::move(node));
-}
-
-} // namespace graph
-
 template <typename T> std::string vec_to_string(const std::vector<T> &vec) {
     std::stringstream ss;
     ss << "[";
@@ -60,6 +41,21 @@ template <typename T> std::string vec_to_string(const std::vector<T> &vec) {
 
 size_t Tensor::calculate_storage_size() const { return size() * itemsize(); }
 
+void Tensor::copy_with_layout_conversion(Tensor &dst) const {
+    for (size_t i = 0; i < size(); ++i) {
+        auto indices = ShapeUtils::unravel_index(i, shape_);
+        size_t src_byte_offset = ShapeUtils::linear_index(indices, strides_);
+        size_t dst_byte_offset =
+            ShapeUtils::linear_index(indices, dst.strides_);
+
+        std::memcpy(static_cast<uint8_t *>(dst.storage_->data()) +
+                        dst_byte_offset,
+                    static_cast<const uint8_t *>(storage_->data()) + offset_ +
+                        src_byte_offset,
+                    itemsize());
+    }
+}
+
 void Tensor::validate_indices(const std::vector<size_t> &indices) const {
     if (indices.size() != ndim()) {
         throw ShapeError(
@@ -73,7 +69,7 @@ void Tensor::validate_indices(const std::vector<size_t> &indices) const {
     }
 }
 
-void Tensor::update_contiguity_flags() {
+void Tensor::update_contiguity_flags() const {
     if (shape_.empty()) {
         flags_.c_contiguous = true;
         flags_.f_contiguous = true;
@@ -262,35 +258,20 @@ void Tensor::materialize_if_needed() const {
     if (!lazy_node_)
         return;
 
-    if (lazy_node_->is_materialized_) {
-        // Copy cached result from node to tensor
-        Tensor *mutable_this = const_cast<Tensor *>(this);
-        mutable_this->storage_ = lazy_node_->cached_result_;
-        mutable_this->shape_ = lazy_node_->cached_shape_;
-        mutable_this->strides_ = lazy_node_->cached_strides_;
-        mutable_this->dtype_ = lazy_node_->output_dtype;
-        mutable_this->offset_ = 0;
-        mutable_this->flags_.owndata = true;
-        mutable_this->flags_.writeable = true;
-        mutable_this->lazy_node_ = nullptr;
-        mutable_this->update_contiguity_flags();
-        return;
+    if (!lazy_node_->is_materialized_) {
+        graph::GraphRegistry::materialize(lazy_node_.get());
     }
 
-    // Materialize the computation graph
-    graph::GraphRegistry::materialize(lazy_node_.get());
-
-    // Copy result from node to tensor
-    Tensor *mutable_this = const_cast<Tensor *>(this);
-    mutable_this->storage_ = lazy_node_->cached_result_;
-    mutable_this->shape_ = lazy_node_->cached_shape_;
-    mutable_this->strides_ = lazy_node_->cached_strides_;
-    mutable_this->dtype_ = lazy_node_->output_dtype;
-    mutable_this->offset_ = 0;
-    mutable_this->flags_.owndata = true;
-    mutable_this->flags_.writeable = true;
-    mutable_this->lazy_node_ = nullptr;
-    mutable_this->update_contiguity_flags();
+    // Copy result from node to tensor (fields are mutable for lazy init)
+    storage_ = lazy_node_->cached_result_;
+    shape_ = lazy_node_->cached_shape_;
+    strides_ = lazy_node_->cached_strides_;
+    dtype_ = lazy_node_->output_dtype;
+    offset_ = 0;
+    flags_.owndata = true;
+    flags_.writeable = true;
+    lazy_node_ = nullptr;
+    update_contiguity_flags();
 }
 
 // ============================================================================
@@ -1559,19 +1540,7 @@ Tensor Tensor::copy(MemoryOrder order) const {
     auto new_tensor = Tensor(shape_, dtype_, device(), order);
 
     if (device() == Device::CPU && order != memory_order_) {
-        for (size_t i = 0; i < size(); ++i) {
-            auto indices = ShapeUtils::unravel_index(i, shape_);
-            size_t src_byte_offset =
-                ShapeUtils::linear_index(indices, strides_);
-            size_t dst_byte_offset =
-                ShapeUtils::linear_index(indices, new_tensor.strides_);
-
-            std::memcpy(static_cast<uint8_t *>(new_tensor.storage_->data()) +
-                            dst_byte_offset,
-                        static_cast<const uint8_t *>(storage_->data()) +
-                            offset_ + src_byte_offset,
-                        itemsize());
-        }
+        copy_with_layout_conversion(new_tensor);
     } else {
         new_tensor.storage_->copy_from(*storage_);
     }
@@ -1591,19 +1560,7 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
 
     if (order != memory_order_ && device() == Device::CPU &&
         target_device == Device::CPU) {
-        for (size_t i = 0; i < size(); ++i) {
-            auto indices = ShapeUtils::unravel_index(i, shape_);
-            size_t src_byte_offset =
-                ShapeUtils::linear_index(indices, strides_);
-            size_t dst_byte_offset =
-                ShapeUtils::linear_index(indices, new_tensor.strides_);
-
-            std::memcpy(static_cast<uint8_t *>(new_tensor.storage_->data()) +
-                            dst_byte_offset,
-                        static_cast<const uint8_t *>(storage_->data()) +
-                            offset_ + src_byte_offset,
-                        itemsize());
-        }
+        copy_with_layout_conversion(new_tensor);
     } else {
         new_tensor.storage_->copy_from(*storage_);
     }

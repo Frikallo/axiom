@@ -39,26 +39,33 @@ struct TensorFlags {
 
 class Tensor {
   private:
-    std::shared_ptr<Storage> storage_;
-    Shape shape_;
-    Strides strides_;
-    DType dtype_;
-    size_t offset_;
-    TensorFlags flags_;
+    // These fields are mutable to support lazy materialization: when a lazy
+    // tensor is first accessed via a const method (e.g. data(), strides()),
+    // materialize_if_needed() populates them from the computed graph result.
+    // This is the standard C++ pattern for lazy initialization in const
+    // context.
+    mutable std::shared_ptr<Storage> storage_;
+    mutable Shape shape_;
+    mutable Strides strides_;
+    mutable DType dtype_;
+    mutable size_t offset_;
+    mutable TensorFlags flags_;
     MemoryOrder memory_order_;
 
-    // Lazy evaluation support: optional graph node for deferred computation
     // If non-null, this tensor represents a lazy computation that hasn't
     // been executed yet. When data is accessed, materialize_if_needed()
-    // executes the computation graph and populates storage_.
-    std::shared_ptr<graph::GraphNode> lazy_node_;
+    // executes the computation graph and populates the fields above.
+    mutable std::shared_ptr<graph::GraphNode> lazy_node_;
 
     size_t calculate_storage_size() const;
     void validate_indices(const std::vector<size_t> &indices) const;
-    void update_contiguity_flags();
+    void update_contiguity_flags() const;
 
     // Ensure tensor is materialized before data access
     void materialize_if_needed() const;
+
+    // Element-wise copy between different memory layouts (C vs Fortran order)
+    void copy_with_layout_conversion(Tensor &dst) const;
 
   public:
     // Constructors

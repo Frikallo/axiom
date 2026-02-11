@@ -1344,10 +1344,16 @@ Tensor relu(const Tensor &input) {
 }
 
 Tensor leaky_relu(const Tensor &input, float negative_slope) {
-    // For non-default slopes, we need a custom implementation
-    // For now, use the registered default (0.01)
-    (void)negative_slope; // TODO: support custom slopes
-    return execute_unary_operation(OpType::LeakyReLU, input);
+    static constexpr float DEFAULT_SLOPE = 0.01f;
+    if (negative_slope == DEFAULT_SLOPE) {
+        return execute_unary_operation(OpType::LeakyReLU, input);
+    }
+    // Custom slope: leaky_relu(x) = relu(x) - slope * relu(-x)
+    auto pos = relu(input);
+    auto neg_part = relu(negate(input));
+    auto scaled_neg = multiply(
+        Tensor::full(input.shape(), negative_slope, input.device()), neg_part);
+    return subtract(pos, scaled_neg);
 }
 
 Tensor silu(const Tensor &input) {
