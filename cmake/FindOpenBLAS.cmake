@@ -12,15 +12,19 @@
 #   OPENBLAS_ROOT         - Hint for the installation prefix
 #   OpenBLAS_ROOT         - Alternative hint for the installation prefix
 
-# Check for environment variable hints
+# Check for environment variable and cache variable hints
 if(DEFINED ENV{OPENBLAS_HOME})
     set(_openblas_hints $ENV{OPENBLAS_HOME})
 elseif(DEFINED ENV{OpenBLAS_HOME})
     set(_openblas_hints $ENV{OpenBLAS_HOME})
+elseif(DEFINED ENV{OpenBLAS_DIR})
+    set(_openblas_hints $ENV{OpenBLAS_DIR})
 elseif(DEFINED OPENBLAS_ROOT)
     set(_openblas_hints ${OPENBLAS_ROOT})
 elseif(DEFINED OpenBLAS_ROOT)
     set(_openblas_hints ${OpenBLAS_ROOT})
+elseif(DEFINED OpenBLAS_DIR)
+    set(_openblas_hints ${OpenBLAS_DIR})
 endif()
 
 # Common search paths

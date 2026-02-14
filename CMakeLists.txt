@@ -473,19 +473,29 @@ if(APPLE AND AXIOM_HAS_METAL)
 endif()
 
 # BLAS backend linking
+# For distribution builds, link BLAS/LAPACK privately so consumers only need -laxiom.
+# The defines are always private since they're only used in src/, not public headers.
 if(AXIOM_HAS_ACCELERATE)
     target_link_libraries(axiom PUBLIC ${ACCELERATE_FRAMEWORK})
-    target_compile_definitions(axiom PUBLIC AXIOM_USE_ACCELERATE)
+    target_compile_definitions(axiom PRIVATE AXIOM_USE_ACCELERATE)
 endif()
 
 if(AXIOM_HAS_OPENBLAS)
-    target_link_libraries(axiom PUBLIC OpenBLAS::OpenBLAS)
-    target_compile_definitions(axiom PUBLIC AXIOM_USE_OPENBLAS)
+    if(AXIOM_DIST_BUILD)
+        target_link_libraries(axiom PRIVATE OpenBLAS::OpenBLAS)
+    else()
+        target_link_libraries(axiom PUBLIC OpenBLAS::OpenBLAS)
+    endif()
+    target_compile_definitions(axiom PRIVATE AXIOM_USE_OPENBLAS)
     # On Linux, LAPACKE (C interface) is a separate library from OpenBLAS
     if(UNIX AND NOT APPLE)
         find_library(LAPACKE_LIBRARY lapacke)
         if(LAPACKE_LIBRARY)
-            target_link_libraries(axiom PUBLIC ${LAPACKE_LIBRARY})
+            if(AXIOM_DIST_BUILD)
+                target_link_libraries(axiom PRIVATE ${LAPACKE_LIBRARY})
+            else()
+                target_link_libraries(axiom PUBLIC ${LAPACKE_LIBRARY})
+            endif()
             message(STATUS "LAPACKE: found at ${LAPACKE_LIBRARY}")
         else()
             message(WARNING "LAPACKE library not found - linear algebra operations may fail")
