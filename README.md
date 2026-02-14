@@ -1,3 +1,7 @@
+# Axiom
+
+![axiom](assets/axiomcpp.png)
+
 **Axiom** is an open-source, high-performance C++ tensor library that brings NumPy and PyTorch simplicity to native code. With state-of-the-art SIMD vectorization, BLAS acceleration, and Metal GPU support, Axiom delivers HPC-grade performance while maintaining an intuitive API that feels natural to Python developers.
 
 [![macOS](https://github.com/frikallo/axiom/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/frikallo/axiom/actions/workflows/ci-macos.yml)
