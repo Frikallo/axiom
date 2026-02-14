@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Axiom
-    VERSION 0.3.0
+    VERSION 0.1.0
     DESCRIPTION "High-Performance Cross-Platform Tensor Library"
     LANGUAGES CXX
 )
@@ -624,6 +624,25 @@ install(
         "${CMAKE_CURRENT_BINARY_DIR}/AxiomConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Axiom
 )
+
+# Install license and third-party notices
+install(
+    FILES LICENSE ThirdPartyNotices.txt
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/axiom
+)
+
+# pkg-config support (Unix only)
+if(UNIX)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/axiom.pc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/axiom.pc"
+        @ONLY
+    )
+    install(
+        FILES "${CMAKE_CURRENT_BINARY_DIR}/axiom.pc"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+    )
+endif()
 
 # ============================================================================
 # Configuration Summary

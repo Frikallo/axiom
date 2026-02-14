@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. v0.3.0)'
+        description: 'Tag to build (e.g. v0.1.0)'
         required: true
 
 concurrency:
@@ -62,7 +62,7 @@ jobs:
         fi
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-    # ── macOS Setup ──────────────────────────────────────────────────────
+    # -- macOS Setup -----------------------------------------------------------
     - name: Setup macOS
       if: startsWith(matrix.os, 'macos')
       run: |
@@ -74,14 +74,14 @@ jobs:
       with:
         xcode-version: latest-stable
 
-    # ── Linux Setup ──────────────────────────────────────────────────────
+    # -- Linux Setup -----------------------------------------------------------
     - name: Setup Linux
       if: matrix.os == 'linux-x64'
       run: |
         sudo apt-get update
         sudo apt-get install -y ninja-build libopenblas-dev liblapacke-dev
 
-    # ── Windows Setup ────────────────────────────────────────────────────
+    # -- Windows Setup ---------------------------------------------------------
     - name: Setup Windows
       if: matrix.os == 'windows-x64'
       shell: pwsh
@@ -95,7 +95,7 @@ jobs:
         echo "OpenBLAS_DIR=C:\OpenBLAS" >> $env:GITHUB_ENV
         echo "C:\OpenBLAS\bin" >> $env:GITHUB_PATH
 
-    # ── Install Python + NumPy (for test fixtures) ───────────────────────
+    # -- Install Python + NumPy (for test fixtures) ----------------------------
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
@@ -104,7 +104,7 @@ jobs:
     - name: Install NumPy
       run: pip install numpy
 
-    # ── Generate test fixtures ───────────────────────────────────────────
+    # -- Generate test fixtures ------------------------------------------------
     - name: Generate Test Fixtures
       shell: bash
       run: |
@@ -112,7 +112,7 @@ jobs:
           python tests/fixtures/generate_npy_fixtures.py
         fi
 
-    # ── Configure ────────────────────────────────────────────────────────
+    # -- Configure -------------------------------------------------------------
     - name: Configure (Unix)
       if: runner.os != 'Windows'
       run: |
@@ -138,11 +138,11 @@ jobs:
           -DAXIOM_BLAS_BACKEND=openblas `
           -DOpenBLAS_DIR=$env:OpenBLAS_DIR
 
-    # ── Build ────────────────────────────────────────────────────────────
+    # -- Build -----------------------------------------------------------------
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }}
 
-    # ── Test ─────────────────────────────────────────────────────────────
+    # -- Test ------------------------------------------------------------------
     - name: Run Tests
       shell: bash
       env:
@@ -151,11 +151,11 @@ jobs:
         cd build
         ctest --output-on-failure -C ${{ env.BUILD_TYPE }}
 
-    # ── Install ──────────────────────────────────────────────────────────
+    # -- Install ---------------------------------------------------------------
     - name: Install
       run: cmake --install build --config ${{ env.BUILD_TYPE }}
 
-    # ── Verify Bundle ────────────────────────────────────────────────────
+    # -- Verify Bundle ---------------------------------------------------------
     - name: Verify Bundle (macOS)
       if: startsWith(matrix.os, 'macos')
       run: |
@@ -184,7 +184,7 @@ jobs:
         echo "Checking library dependencies:"
         dumpbin /dependents install/bin/axiom.dll 2>$null || echo "dumpbin not available"
 
-    # ── Package ──────────────────────────────────────────────────────────
+    # -- Package ---------------------------------------------------------------
     - name: Create Package (Unix)
       if: runner.os != 'Windows'
       run: |
@@ -204,14 +204,12 @@ jobs:
         path: axiom-${{ steps.version.outputs.version }}-${{ matrix.os }}.*
 
   # ============================================================================
-  # Create GitHub Release
+  # Collect Artifacts, Source Tarball, and Checksums
   # ============================================================================
-  release:
-    name: Create Release
+  collect-artifacts:
+    name: Collect Artifacts
     needs: build-and-test
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
     - name: Checkout
@@ -253,57 +251,8 @@ jobs:
         sha256sum * > checksums.txt
         cat checksums.txt
 
-    - name: Generate Release Notes
-      run: |
-        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-        VERSION=${{ steps.version.outputs.version }}
-
-        cat > release_notes.md <<EOF
-        ## Downloads
-
-        | Platform | Package |
-        |----------|---------|
-        | macOS (Apple Silicon) | \`axiom-${VERSION}-macos-arm64.tar.gz\` |
-        | Linux (x64) | \`axiom-${VERSION}-linux-x64.tar.gz\` |
-        | Windows (x64) | \`axiom-${VERSION}-windows-x64.zip\` |
-        | Source | \`axiom-${VERSION}.tar.gz\` |
-
-        ## Bundled Dependencies
-
-        Distribution packages include all required dependencies:
-        - **macOS**: \`libomp.dylib\` for OpenMP parallelization (Accelerate is a system framework)
-        - **Linux**: OpenBLAS + libgomp
-        - **Windows**: OpenBLAS + OpenMP runtime (vcomp140.dll)
-
-        ## Installation
-
-        \`\`\`bash
-        # Extract to desired location
-        tar -xzf axiom-${VERSION}-<platform>.tar.gz -C /usr/local
-
-        # Or for local installation
-        tar -xzf axiom-${VERSION}-<platform>.tar.gz -C ~/.local
-        \`\`\`
-        EOF
-
-        # Strip leading whitespace from heredoc (GitHub Actions indentation)
-        sed -i 's/^        //' release_notes.md
-
-        if [ -n "$PREV_TAG" ]; then
-          echo "" >> release_notes.md
-          echo "## Changes since $PREV_TAG" >> release_notes.md
-          echo "" >> release_notes.md
-          git log --pretty=format:"- %s" "$PREV_TAG..HEAD" >> release_notes.md
-        fi
-
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
+    - name: Upload Release Artifacts
+      uses: actions/upload-artifact@v4
       with:
-        tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
-        body_path: release_notes.md
-        files: |
-          release/*
-        draft: false
-        prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        name: release-artifacts
+        path: release/*
