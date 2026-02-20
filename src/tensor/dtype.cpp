@@ -24,6 +24,8 @@ std::string dtype_name(DType dtype) {
         return "uint64";
     case DType::Float16:
         return "float16";
+    case DType::BFloat16:
+        return "bfloat16";
     case DType::Float32:
         return "float32";
     case DType::Float64:

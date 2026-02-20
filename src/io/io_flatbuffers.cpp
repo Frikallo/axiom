@@ -33,6 +33,8 @@ fb::DType to_fb_dtype(DType dtype) {
         return fb::DType_UInt64;
     case DType::Float16:
         return fb::DType_Float16;
+    case DType::BFloat16:
+        return fb::DType_BFloat16;
     case DType::Float32:
         return fb::DType_Float32;
     case DType::Float64:
@@ -68,6 +70,8 @@ DType from_fb_dtype(fb::DType dtype) {
         return DType::UInt64;
     case fb::DType_Float16:
         return DType::Float16;
+    case fb::DType_BFloat16:
+        return DType::BFloat16;
     case fb::DType_Float32:
         return DType::Float32;
     case fb::DType_Float64:

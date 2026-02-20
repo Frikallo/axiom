@@ -473,34 +473,88 @@ if(APPLE AND AXIOM_HAS_METAL)
 endif()
 
 # BLAS backend linking
-# For distribution builds, link BLAS/LAPACK privately so consumers only need -laxiom.
-# The defines are always private since they're only used in src/, not public headers.
+# The AXIOM_USE_* defines are always private (only used in src/, not public headers).
 if(AXIOM_HAS_ACCELERATE)
-    target_link_libraries(axiom PUBLIC ${ACCELERATE_FRAMEWORK})
+    if(AXIOM_DIST_BUILD)
+        # Accelerate is a system framework on macOS — always available at runtime.
+        target_link_libraries(axiom PRIVATE ${ACCELERATE_FRAMEWORK})
+    else()
+        target_link_libraries(axiom PUBLIC ${ACCELERATE_FRAMEWORK})
+    endif()
     target_compile_definitions(axiom PRIVATE AXIOM_USE_ACCELERATE)
 endif()
 
 if(AXIOM_HAS_OPENBLAS)
     if(AXIOM_DIST_BUILD)
-        target_link_libraries(axiom PRIVATE OpenBLAS::OpenBLAS)
+        # For dist builds, find the static archive to bake into libaxiom.
+        # Temporarily override find_library suffixes to only match static libs.
+        set(_orig_suffixes ${CMAKE_FIND_LIBRARY_SUFFIXES})
+        if(WIN32)
+            set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib")
+        else()
+            set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+        endif()
+
+        get_target_property(_openblas_loc OpenBLAS::OpenBLAS IMPORTED_LOCATION)
+        get_filename_component(_openblas_dir "${_openblas_loc}" DIRECTORY)
+        find_library(OPENBLAS_STATIC
+            NAMES openblas libopenblas
+            HINTS "${_openblas_dir}"
+            NO_DEFAULT_PATH
+        )
+        if(NOT OPENBLAS_STATIC)
+            find_library(OPENBLAS_STATIC NAMES openblas libopenblas)
+        endif()
+        set(CMAKE_FIND_LIBRARY_SUFFIXES ${_orig_suffixes})
+
+        if(OPENBLAS_STATIC)
+            target_link_libraries(axiom PRIVATE "${OPENBLAS_STATIC}")
+            message(STATUS "OpenBLAS (dist): static ${OPENBLAS_STATIC}")
+        else()
+            target_link_libraries(axiom PRIVATE OpenBLAS::OpenBLAS)
+            message(STATUS "OpenBLAS (dist): dynamic (static not found)")
+        endif()
+        # On Linux, LAPACKE (C interface) is a separate package from OpenBLAS.
+        # On Windows, LAPACKE is included in the OpenBLAS static build.
+        if(UNIX AND NOT APPLE)
+            find_library(LAPACKE_STATIC NAMES liblapacke.a)
+            if(LAPACKE_STATIC)
+                target_link_libraries(axiom PRIVATE "${LAPACKE_STATIC}")
+                message(STATUS "LAPACKE (dist): static ${LAPACKE_STATIC}")
+            else()
+                find_library(LAPACKE_LIBRARY lapacke)
+                if(LAPACKE_LIBRARY)
+                    target_link_libraries(axiom PRIVATE ${LAPACKE_LIBRARY})
+                    message(STATUS "LAPACKE (dist): dynamic ${LAPACKE_LIBRARY}")
+                else()
+                    message(WARNING "LAPACKE not found - linear algebra operations may fail")
+                endif()
+            endif()
+            # Static OpenBLAS may need gfortran runtime
+            execute_process(
+                COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libgfortran.a
+                OUTPUT_VARIABLE _gfortran_static
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+            )
+            if(EXISTS "${_gfortran_static}")
+                target_link_libraries(axiom PRIVATE "${_gfortran_static}")
+            endif()
+        endif()
     else()
         target_link_libraries(axiom PUBLIC OpenBLAS::OpenBLAS)
-    endif()
-    target_compile_definitions(axiom PRIVATE AXIOM_USE_OPENBLAS)
-    # On Linux, LAPACKE (C interface) is a separate library from OpenBLAS
-    if(UNIX AND NOT APPLE)
-        find_library(LAPACKE_LIBRARY lapacke)
-        if(LAPACKE_LIBRARY)
-            if(AXIOM_DIST_BUILD)
-                target_link_libraries(axiom PRIVATE ${LAPACKE_LIBRARY})
-            else()
+        # On Linux, LAPACKE (C interface) is a separate library from OpenBLAS
+        if(UNIX AND NOT APPLE)
+            find_library(LAPACKE_LIBRARY lapacke)
+            if(LAPACKE_LIBRARY)
                 target_link_libraries(axiom PUBLIC ${LAPACKE_LIBRARY})
+                message(STATUS "LAPACKE: found at ${LAPACKE_LIBRARY}")
+            else()
+                message(WARNING "LAPACKE library not found - linear algebra operations may fail")
             endif()
-            message(STATUS "LAPACKE: found at ${LAPACKE_LIBRARY}")
-        else()
-            message(WARNING "LAPACKE library not found - linear algebra operations may fail")
         endif()
     endif()
+    target_compile_definitions(axiom PRIVATE AXIOM_USE_OPENBLAS)
 endif()
 
 # Linux threading
@@ -510,17 +564,53 @@ endif()
 
 # OpenMP linking
 if(AXIOM_HAS_OPENMP)
-    if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        # Manual linking for Homebrew libomp on macOS
-        # Apple Clang requires -Xpreprocessor -fopenmp (as separate flags)
-        target_compile_options(axiom PUBLIC -Xpreprocessor -fopenmp)
-        target_include_directories(axiom PUBLIC ${OpenMP_CXX_INCLUDE_DIR})
-        target_link_libraries(axiom PUBLIC ${OpenMP_omp_LIBRARY})
+    if(AXIOM_DIST_BUILD)
+        # For dist builds, statically link the OpenMP runtime into libaxiom.
+        # Consumers get the non-OpenMP fallback paths in public headers;
+        # all internal computation is still parallelized.
+        if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            target_compile_options(axiom PRIVATE -Xpreprocessor -fopenmp)
+            target_include_directories(axiom PRIVATE ${OpenMP_CXX_INCLUDE_DIR})
+            set(_omp_static "${LIBOMP_PREFIX}/lib/libomp.a")
+            if(EXISTS "${_omp_static}")
+                target_link_libraries(axiom PRIVATE "${_omp_static}")
+                message(STATUS "OpenMP (dist): static libomp.a")
+            else()
+                target_link_libraries(axiom PRIVATE "${OpenMP_omp_LIBRARY}")
+                message(STATUS "OpenMP (dist): dynamic libomp (static not found)")
+            endif()
+        elseif(UNIX)
+            # Ask the compiler where static libgomp lives
+            execute_process(
+                COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libgomp.a
+                OUTPUT_VARIABLE _gomp_static
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+            )
+            if(EXISTS "${_gomp_static}")
+                target_link_libraries(axiom PRIVATE "${_gomp_static}")
+                target_compile_options(axiom PRIVATE -fopenmp)
+                message(STATUS "OpenMP (dist): static libgomp.a")
+            else()
+                target_link_libraries(axiom PRIVATE OpenMP::OpenMP_CXX)
+                message(STATUS "OpenMP (dist): dynamic (static libgomp not found)")
+            endif()
+        else()
+            # Windows: MSVC OpenMP is part of VC++ Redistributable (always available)
+            target_link_libraries(axiom PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+        target_compile_definitions(axiom PRIVATE AXIOM_USE_OPENMP)
     else()
-        # Standard OpenMP target for other platforms
-        target_link_libraries(axiom PUBLIC OpenMP::OpenMP_CXX)
+        # Standard dynamic linking for local development
+        if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            target_compile_options(axiom PUBLIC -Xpreprocessor -fopenmp)
+            target_include_directories(axiom PUBLIC ${OpenMP_CXX_INCLUDE_DIR})
+            target_link_libraries(axiom PUBLIC ${OpenMP_omp_LIBRARY})
+        else()
+            target_link_libraries(axiom PUBLIC OpenMP::OpenMP_CXX)
+        endif()
+        target_compile_definitions(axiom PUBLIC AXIOM_USE_OPENMP)
     endif()
-    target_compile_definitions(axiom PUBLIC AXIOM_USE_OPENMP)
 endif()
 
 # Google Highway for cross-platform SIMD operations (always enabled)
@@ -692,117 +782,10 @@ endif()
 message(STATUS "")
 
 # ============================================================================
-# Distribution Build - Bundle Dependencies
+# Distribution Build - All dependencies are statically linked above.
+# Only RPATH settings remain for any fallback dynamic deps.
 # ============================================================================
 if(AXIOM_DIST_BUILD)
-    # Bundle OpenMP library
-    if(AXIOM_HAS_OPENMP)
-        if(APPLE)
-            # Get the libomp path and install it
-            if(EXISTS "${OpenMP_omp_LIBRARY}")
-                # Copy libomp.dylib to lib directory
-                install(FILES "${OpenMP_omp_LIBRARY}"
-                    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                    COMPONENT runtime
-                )
-                # Fix the install name in axiom library to use @rpath
-                set_target_properties(axiom PROPERTIES
-                    INSTALL_RPATH "@loader_path"
-                    BUILD_WITH_INSTALL_RPATH OFF
-                )
-            endif()
-        elseif(UNIX AND NOT WIN32)
-            # Linux: Bundle libgomp or libomp
-            find_library(OPENMP_RUNTIME_LIB NAMES gomp omp)
-            if(OPENMP_RUNTIME_LIB)
-                get_filename_component(OPENMP_RUNTIME_REALPATH "${OPENMP_RUNTIME_LIB}" REALPATH)
-                install(FILES "${OPENMP_RUNTIME_REALPATH}"
-                    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                    COMPONENT runtime
-                )
-            endif()
-        elseif(WIN32)
-            # Windows: Bundle OpenMP runtime DLL
-            # For MSVC, this is vcomp140.dll; for Clang/LLVM it's libomp.dll
-            if(MSVC)
-                # MSVC OpenMP runtime is part of Visual C++ Redistributable
-                # Users need VC++ Redist installed, or we bundle vcomp140.dll
-                get_filename_component(MSVC_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-                find_file(VCOMP_DLL
-                    NAMES vcomp140.dll
-                    PATHS
-                        "${MSVC_DIR}"
-                        "${MSVC_DIR}/../../../redist/x64/Microsoft.VC143.OPENMP"
-                        "${MSVC_DIR}/../../../redist/x64/Microsoft.VC142.OPENMP"
-                        "$ENV{VCToolsRedistDir}/x64/Microsoft.VC143.OPENMP"
-                        "$ENV{VCToolsRedistDir}/x64/Microsoft.VC142.OPENMP"
-                    NO_DEFAULT_PATH
-                )
-                if(VCOMP_DLL)
-                    install(FILES "${VCOMP_DLL}"
-                        DESTINATION ${CMAKE_INSTALL_BINDIR}
-                        COMPONENT runtime
-                    )
-                endif()
-            else()
-                # Clang/LLVM or MinGW
-                find_library(OPENMP_RUNTIME_DLL NAMES libomp libgomp-1)
-                if(OPENMP_RUNTIME_DLL)
-                    get_filename_component(OMP_DIR "${OPENMP_RUNTIME_DLL}" DIRECTORY)
-                    file(GLOB OMP_DLLS "${OMP_DIR}/libomp*.dll" "${OMP_DIR}/libgomp*.dll")
-                    foreach(DLL ${OMP_DLLS})
-                        install(FILES "${DLL}"
-                            DESTINATION ${CMAKE_INSTALL_BINDIR}
-                            COMPONENT runtime
-                        )
-                    endforeach()
-                endif()
-            endif()
-        endif()
-    endif()
-
-    # Bundle OpenBLAS for non-macOS platforms
-    if(AXIOM_HAS_OPENBLAS AND NOT APPLE)
-        get_target_property(OPENBLAS_LIB_LOCATION OpenBLAS::OpenBLAS IMPORTED_LOCATION)
-        if(OPENBLAS_LIB_LOCATION)
-            get_filename_component(OPENBLAS_REALPATH "${OPENBLAS_LIB_LOCATION}" REALPATH)
-            if(WIN32)
-                # Windows: Bundle OpenBLAS DLL
-                get_filename_component(OPENBLAS_DIR "${OPENBLAS_REALPATH}" DIRECTORY)
-                # Look for DLL in bin/ or same directory
-                find_file(OPENBLAS_DLL
-                    NAMES libopenblas.dll openblas.dll
-                    PATHS
-                        "${OPENBLAS_DIR}"
-                        "${OPENBLAS_DIR}/../bin"
-                    NO_DEFAULT_PATH
-                )
-                if(OPENBLAS_DLL)
-                    install(FILES "${OPENBLAS_DLL}"
-                        DESTINATION ${CMAKE_INSTALL_BINDIR}
-                        COMPONENT runtime
-                    )
-                endif()
-            else()
-                # Linux: Bundle .so files
-                install(FILES "${OPENBLAS_REALPATH}"
-                    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                    COMPONENT runtime
-                )
-                # Also copy any versioned symlinks
-                get_filename_component(OPENBLAS_DIR "${OPENBLAS_REALPATH}" DIRECTORY)
-                file(GLOB OPENBLAS_LIBS "${OPENBLAS_DIR}/libopenblas*.so*")
-                foreach(LIB ${OPENBLAS_LIBS})
-                    install(FILES "${LIB}"
-                        DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                        COMPONENT runtime
-                    )
-                endforeach()
-            endif()
-        endif()
-    endif()
-
-    # Set RPATH for the installed library (Unix only)
     if(UNIX AND NOT APPLE)
         set_target_properties(axiom PROPERTIES
             INSTALL_RPATH "$ORIGIN"
@@ -825,14 +808,12 @@ if(AXIOM_DIST_BUILD)
     set(CPACK_PACKAGE_VENDOR "Axiom")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "High-Performance Tensor Library")
 
+    set(CPACK_GENERATOR "TGZ")
     if(APPLE)
-        set(CPACK_GENERATOR "TGZ")
         set(CPACK_SYSTEM_NAME "macos-${CMAKE_SYSTEM_PROCESSOR}")
     elseif(WIN32)
-        set(CPACK_GENERATOR "ZIP")
         set(CPACK_SYSTEM_NAME "windows-${CMAKE_SYSTEM_PROCESSOR}")
     else()
-        set(CPACK_GENERATOR "TGZ")
         set(CPACK_SYSTEM_NAME "linux-${CMAKE_SYSTEM_PROCESSOR}")
     endif()
 

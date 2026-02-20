@@ -441,6 +441,7 @@ class Tensor {
     Tensor to_complex() const { return astype(DType::Complex64); }
     Tensor to_complex128() const { return astype(DType::Complex128); }
     Tensor half() const { return astype(DType::Float16); }
+    Tensor bfloat16() const { return astype(DType::BFloat16); }
 
     // Complex number operations
     // real(): Zero-copy view of real components (requires complex input)

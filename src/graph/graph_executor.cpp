@@ -167,6 +167,18 @@ double reduce_tile(const void *data, size_t count, DType dtype,
             return simd::dispatch_reduce_min(tile, count);
         if (red_op == ops::OpType::Prod)
             return simd::dispatch_reduce_prod(tile, count);
+    } else if (dtype == DType::Float16) {
+        const float16_t *src = static_cast<const float16_t *>(data);
+        std::vector<float> f32(count);
+        for (size_t i = 0; i < count; ++i)
+            f32[i] = static_cast<float>(src[i]);
+        return reduce_tile(f32.data(), count, DType::Float32, red_op);
+    } else if (dtype == DType::BFloat16) {
+        const bfloat16_t *src = static_cast<const bfloat16_t *>(data);
+        std::vector<float> f32(count);
+        for (size_t i = 0; i < count; ++i)
+            f32[i] = static_cast<float>(src[i]);
+        return reduce_tile(f32.data(), count, DType::Float32, red_op);
     }
     return scalar_reduce_tile(data, count, dtype, red_op);
 }
@@ -178,6 +190,11 @@ void store_scalar_result(Tensor &result, double acc) {
         result.typed_data<float>()[0] = static_cast<float>(acc);
     else if (dt == DType::Float64)
         result.typed_data<double>()[0] = acc;
+    else if (dt == DType::Float16)
+        result.typed_data<float16_t>()[0] = float16_t(static_cast<float>(acc));
+    else if (dt == DType::BFloat16)
+        result.typed_data<bfloat16_t>()[0] =
+            bfloat16_t(static_cast<float>(acc));
     else if (dt == DType::Int32)
         result.typed_data<int32_t>()[0] = static_cast<int32_t>(acc);
     else if (dt == DType::Int64)
@@ -374,6 +391,15 @@ void execute_single_op(const SingleOpStep &step, std::vector<Tensor> &buffers) {
                                               false);
     } else {
         throw RuntimeError("Unsupported op type in execute_single_op");
+    }
+
+    // Promote half-precision results to Float32 when the graph expects it
+    // (e.g. Mean of BFloat16: backend returns BFloat16, graph expects Float32)
+    if (result.dtype() != step.output_dtype &&
+        (result.dtype() == DType::Float16 ||
+         result.dtype() == DType::BFloat16) &&
+        step.output_dtype == DType::Float32) {
+        result = result.astype(step.output_dtype);
     }
 
     if (step.output_slot >= 0 &&

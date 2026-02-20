@@ -1750,6 +1750,9 @@ Tensor Tensor::ones(const Shape &shape, DType dtype, Device device,
     case DType::Float16:
         tensor.fill<float16_t>(float16_t(1.0f));
         break;
+    case DType::BFloat16:
+        tensor.fill<bfloat16_t>(bfloat16_t(1.0f));
+        break;
     case DType::Float32:
         tensor.fill<float>(1.0f);
         break;
@@ -1828,6 +1831,10 @@ Tensor Tensor::eye(size_t n, DType dtype, Device device, MemoryOrder order) {
         case DType::Float16:
             for (size_t i = 0; i < n; ++i)
                 tensor.set_item<float16_t>({i, i}, float16_t(1.0f));
+            break;
+        case DType::BFloat16:
+            for (size_t i = 0; i < n; ++i)
+                tensor.set_item<bfloat16_t>({i, i}, bfloat16_t(1.0f));
             break;
         case DType::Float32:
             for (size_t i = 0; i < n; ++i)
@@ -1933,6 +1940,13 @@ Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
         }
         break;
     }
+    case DType::BFloat16: {
+        bfloat16_t *data = tensor.typed_data<bfloat16_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = bfloat16_t(rng.normal<float>());
+        }
+        break;
+    }
     default:
         throw TypeError("randn only supports floating point types, got " +
                         axiom::dtype_name(dtype));
@@ -1980,6 +1994,14 @@ Tensor Tensor::uniform(double low, double high, const Shape &shape, DType dtype,
         for (size_t i = 0; i < tensor.size(); ++i) {
             data[i] = float16_t(rng.uniform<float>(static_cast<float>(low),
                                                    static_cast<float>(high)));
+        }
+        break;
+    }
+    case DType::BFloat16: {
+        bfloat16_t *data = tensor.typed_data<bfloat16_t>();
+        for (size_t i = 0; i < tensor.size(); ++i) {
+            data[i] = bfloat16_t(rng.uniform<float>(static_cast<float>(low),
+                                                    static_cast<float>(high)));
         }
         break;
     }
@@ -2543,6 +2565,8 @@ bool Tensor::has_nan() const {
     switch (dtype_) {
     case DType::Float16:
         return check_nan.template operator()<float16_t>();
+    case DType::BFloat16:
+        return check_nan.template operator()<bfloat16_t>();
     case DType::Float32:
         return check_nan.template operator()<float>();
     case DType::Float64:
@@ -2587,6 +2611,8 @@ bool Tensor::has_inf() const {
     switch (dtype_) {
     case DType::Float16:
         return check_inf.template operator()<float16_t>();
+    case DType::BFloat16:
+        return check_inf.template operator()<bfloat16_t>();
     case DType::Float32:
         return check_inf.template operator()<float>();
     case DType::Float64:

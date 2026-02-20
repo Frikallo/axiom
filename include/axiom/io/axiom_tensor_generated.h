@@ -37,29 +37,30 @@ enum DType : int8_t {
     DType_Float64 = 11,
     DType_Complex64 = 12,
     DType_Complex128 = 13,
+    DType_BFloat16 = 14,
     DType_MIN = DType_Bool,
-    DType_MAX = DType_Complex128
+    DType_MAX = DType_BFloat16
 };
 
-inline const DType (&EnumValuesDType())[14] {
+inline const DType (&EnumValuesDType())[15] {
     static const DType values[] = {
-        DType_Bool,      DType_Int8,      DType_Int16,   DType_Int32,
-        DType_Int64,     DType_UInt8,     DType_UInt16,  DType_UInt32,
-        DType_UInt64,    DType_Float16,   DType_Float32, DType_Float64,
-        DType_Complex64, DType_Complex128};
+        DType_Bool,      DType_Int8,       DType_Int16,   DType_Int32,
+        DType_Int64,     DType_UInt8,      DType_UInt16,  DType_UInt32,
+        DType_UInt64,    DType_Float16,    DType_Float32, DType_Float64,
+        DType_Complex64, DType_Complex128, DType_BFloat16};
     return values;
 }
 
 inline const char *const *EnumNamesDType() {
-    static const char *const names[15] = {
-        "Bool",    "Int8",    "Int16",     "Int32",      "Int64",
-        "UInt8",   "UInt16",  "UInt32",    "UInt64",     "Float16",
-        "Float32", "Float64", "Complex64", "Complex128", nullptr};
+    static const char *const names[16] = {
+        "Bool",      "Int8",       "Int16",    "Int32",   "Int64",   "UInt8",
+        "UInt16",    "UInt32",     "UInt64",   "Float16", "Float32", "Float64",
+        "Complex64", "Complex128", "BFloat16", nullptr};
     return names;
 }
 
 inline const char *EnumNameDType(DType e) {
-    if (::flatbuffers::IsOutRange(e, DType_Bool, DType_Complex128))
+    if (::flatbuffers::IsOutRange(e, DType_Bool, DType_BFloat16))
         return "";
     const size_t index = static_cast<size_t>(e);
     return EnumNamesDType()[index];

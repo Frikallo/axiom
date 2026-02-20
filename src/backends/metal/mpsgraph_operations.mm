@@ -179,6 +179,7 @@ static MPSDataType getMPSDataType(DType dtype) {
     switch (dtype) {
         case DType::Float32:    return MPSDataTypeFloat32;
         case DType::Float16:    return MPSDataTypeFloat16;
+        case DType::BFloat16:   return MPSDataTypeBFloat16;
         case DType::Int32:      return MPSDataTypeInt32;
         case DType::Int64:      return MPSDataTypeInt64;
         case DType::Int16:      return MPSDataTypeInt16;
@@ -1103,8 +1104,9 @@ static Tensor executeMatMul(const Tensor& a_raw, const Tensor& b_raw,
         // Type promotion
         DType result_dtype = ops::promote_types(a.dtype(), b.dtype());
 
-        // MPSGraph matmul supports Float16 and Float32
-        if (result_dtype != DType::Float32 && result_dtype != DType::Float16) {
+        // MPSGraph matmul supports Float16, BFloat16, and Float32
+        if (result_dtype != DType::Float32 && result_dtype != DType::Float16 &&
+            result_dtype != DType::BFloat16) {
             result_dtype = DType::Float32;
         }
 

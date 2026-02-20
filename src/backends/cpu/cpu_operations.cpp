@@ -55,8 +55,8 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor &lhs,
                           op_type_ == ops::OpType::LeftShift ||
                           op_type_ == ops::OpType::RightShift);
     if (is_bitwise_op) {
-        if (result_dtype == DType::Float16 || result_dtype == DType::Float32 ||
-            result_dtype == DType::Float64 ||
+        if (result_dtype == DType::Float16 || result_dtype == DType::BFloat16 ||
+            result_dtype == DType::Float32 || result_dtype == DType::Float64 ||
             result_dtype == DType::Complex64 ||
             result_dtype == DType::Complex128) {
             throw TypeError(
@@ -77,12 +77,15 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor &lhs,
     case DType::Float32:
     case DType::Float64:
     case DType::Float16:
+    case DType::BFloat16:
         // Skip float types for bitwise ops - we throw above
         if (!is_bitwise_op) {
             if (result_dtype == DType::Float32)
                 execute_binary_typed<float>(lhs, rhs, result);
             else if (result_dtype == DType::Float64)
                 execute_binary_typed<double>(lhs, rhs, result);
+            else if (result_dtype == DType::BFloat16)
+                execute_binary_typed<bfloat16_t>(lhs, rhs, result);
             else
                 execute_binary_typed<float16_t>(lhs, rhs, result);
         }
@@ -645,6 +648,7 @@ void CPUBinaryOperation<Func>::execute_binary_inplace(Tensor &lhs,
         DISPATCH_CPU_INPLACE_OP(DType::Float32, float)
         DISPATCH_CPU_INPLACE_OP(DType::Float64, double)
         DISPATCH_CPU_INPLACE_OP(DType::Float16, float16_t)
+        DISPATCH_CPU_INPLACE_OP(DType::BFloat16, bfloat16_t)
         DISPATCH_CPU_INPLACE_OP(DType::Int8, int8_t)
         DISPATCH_CPU_INPLACE_OP(DType::Int16, int16_t)
         DISPATCH_CPU_INPLACE_OP(DType::Int32, int32_t)
@@ -918,6 +922,7 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
             DISPATCH_LOGICAL_NOT(DType::UInt32, uint32_t)
             DISPATCH_LOGICAL_NOT(DType::UInt64, uint64_t)
             DISPATCH_LOGICAL_NOT(DType::Float16, float16_t)
+            DISPATCH_LOGICAL_NOT(DType::BFloat16, bfloat16_t)
             DISPATCH_LOGICAL_NOT(DType::Float32, float)
             DISPATCH_LOGICAL_NOT(DType::Float64, double)
 #undef DISPATCH_LOGICAL_NOT
@@ -942,6 +947,7 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
         break;                                                                 \
     }
             DISPATCH_ELEMENT_TEST(DType::Float16, float16_t)
+            DISPATCH_ELEMENT_TEST(DType::BFloat16, bfloat16_t)
             DISPATCH_ELEMENT_TEST(DType::Float32, float)
             DISPATCH_ELEMENT_TEST(DType::Float64, double)
             // For integer types, isnan/isinf return false, isfinite returns
@@ -990,6 +996,7 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
         DISPATCH_CPU_UNARY_OP(DType::Float32, float)
         DISPATCH_CPU_UNARY_OP(DType::Float64, double)
         DISPATCH_CPU_UNARY_OP(DType::Float16, float16_t)
+        DISPATCH_CPU_UNARY_OP(DType::BFloat16, bfloat16_t)
         DISPATCH_CPU_UNARY_OP(DType::Int8, int8_t)
         DISPATCH_CPU_UNARY_OP(DType::Int16, int16_t)
         DISPATCH_CPU_UNARY_OP(DType::Int32, int32_t)
@@ -1416,6 +1423,9 @@ Tensor CPUReductionOperation<Func>::execute_reduction(
     case DType::Float16:
         // Use Float32 accumulation for numerical stability, convert result back
         return execute_reduction_typed<float16_t>(input, axis, keep_dims);
+    case DType::BFloat16:
+        // Use Float32 accumulation for numerical stability, convert result back
+        return execute_reduction_typed<bfloat16_t>(input, axis, keep_dims);
     case DType::Float32:
         return execute_reduction_typed<float>(input, axis, keep_dims);
     case DType::Float64:
@@ -1516,8 +1526,9 @@ template <typename Func>
 template <typename T>
 Tensor CPUReductionOperation<Func>::execute_reduction_typed(
     const Tensor &input, const std::vector<int> &axes, bool keep_dims) const {
-    // For Float16, use Float32 accumulation for numerical stability
-    constexpr bool use_float32_accum = std::is_same_v<T, float16_t>;
+    // For Float16/BFloat16, use Float32 accumulation for numerical stability
+    constexpr bool use_float32_accum =
+        std::is_same_v<T, float16_t> || std::is_same_v<T, bfloat16_t>;
     using AccumT = std::conditional_t<use_float32_accum, float, T>;
 
     Shape result_shape =
@@ -1540,7 +1551,15 @@ Tensor CPUReductionOperation<Func>::execute_reduction_typed(
     // Use Accelerate for full contiguous reductions on float32/float64
     if (is_full_reduction && input.is_contiguous()) {
         if constexpr (std::is_same_v<AccumT, float>) {
-            const float *data = input.template typed_data<float>();
+            // For half-precision types, convert to float32 before Accelerate
+            Tensor input_f32;
+            const float *data;
+            if constexpr (use_float32_accum) {
+                input_f32 = input.astype(DType::Float32);
+                data = input_f32.template typed_data<float>();
+            } else {
+                data = input.template typed_data<float>();
+            }
             size_t n = input.size();
             float result_val;
 
@@ -2239,6 +2258,7 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
 
     switch (result_dtype) {
         DISPATCH_MATMUL(DType::Float16, float16_t)
+        DISPATCH_MATMUL(DType::BFloat16, bfloat16_t)
         DISPATCH_MATMUL(DType::Float32, float)
         DISPATCH_MATMUL(DType::Float64, double)
         DISPATCH_MATMUL(DType::Int32, int32_t)
@@ -2370,6 +2390,7 @@ Tensor CPUArgMaxOperation::execute_reduction(const Tensor &input,
 
     switch (input.dtype()) {
         DISPATCH_ARGMAX(DType::Float16, float16_t)
+        DISPATCH_ARGMAX(DType::BFloat16, bfloat16_t)
         DISPATCH_ARGMAX(DType::Float32, float)
         DISPATCH_ARGMAX(DType::Float64, double)
         DISPATCH_ARGMAX(DType::Int32, int32_t)
@@ -2495,6 +2516,7 @@ Tensor CPUArgMinOperation::execute_reduction(const Tensor &input,
 
     switch (input.dtype()) {
         DISPATCH_ARGMIN(DType::Float16, float16_t)
+        DISPATCH_ARGMIN(DType::BFloat16, bfloat16_t)
         DISPATCH_ARGMIN(DType::Float32, float)
         DISPATCH_ARGMIN(DType::Float64, double)
         DISPATCH_ARGMIN(DType::Int32, int32_t)
@@ -2544,6 +2566,10 @@ static T get_tensor_value_at(const void *data, size_t byte_offset,
     case DType::Float16:
         return static_cast<T>(
             static_cast<float>(*reinterpret_cast<const float16_t *>(
+                static_cast<const uint8_t *>(data) + byte_offset)));
+    case DType::BFloat16:
+        return static_cast<T>(
+            static_cast<float>(*reinterpret_cast<const bfloat16_t *>(
                 static_cast<const uint8_t *>(data) + byte_offset)));
     case DType::Float32:
         return static_cast<T>(*reinterpret_cast<const float *>(
@@ -2741,6 +2767,7 @@ Tensor CPUWhereOperation::execute_where(const Tensor &condition,
 
     switch (output_dtype) {
         DISPATCH_WHERE(DType::Float16, float16_t)
+        DISPATCH_WHERE(DType::BFloat16, bfloat16_t)
         DISPATCH_WHERE(DType::Float32, float)
         DISPATCH_WHERE(DType::Float64, double)
         DISPATCH_WHERE(DType::Int32, int32_t)
@@ -2879,6 +2906,7 @@ Tensor CPUMaskedFillOperation::execute_masked_fill(const Tensor &input,
 
     switch (input.dtype()) {
         DISPATCH_MASKED_FILL(DType::Float16, float16_t)
+        DISPATCH_MASKED_FILL(DType::BFloat16, bfloat16_t)
         DISPATCH_MASKED_FILL(DType::Float32, float)
         DISPATCH_MASKED_FILL(DType::Float64, double)
         DISPATCH_MASKED_FILL(DType::Int32, int32_t)
@@ -2974,6 +3002,7 @@ CPUMaskedSelectOperation::execute_masked_select(const Tensor &input,
 
     switch (input.dtype()) {
         DISPATCH_MASKED_SELECT(DType::Float16, float16_t)
+        DISPATCH_MASKED_SELECT(DType::BFloat16, bfloat16_t)
         DISPATCH_MASKED_SELECT(DType::Float32, float)
         DISPATCH_MASKED_SELECT(DType::Float64, double)
         DISPATCH_MASKED_SELECT(DType::Int32, int32_t)
@@ -3082,6 +3111,7 @@ Tensor CPUGatherOperation::execute_gather(const Tensor &input, int dim,
 
     switch (input.dtype()) {
         DISPATCH_GATHER(DType::Float16, float16_t)
+        DISPATCH_GATHER(DType::BFloat16, bfloat16_t)
         DISPATCH_GATHER(DType::Float32, float)
         DISPATCH_GATHER(DType::Float64, double)
         DISPATCH_GATHER(DType::Int32, int32_t)
@@ -3177,6 +3207,7 @@ Tensor CPUScatterOperation::execute_scatter(const Tensor &input, int dim,
 
     switch (input.dtype()) {
         DISPATCH_SCATTER(DType::Float16, float16_t)
+        DISPATCH_SCATTER(DType::BFloat16, bfloat16_t)
         DISPATCH_SCATTER(DType::Float32, float)
         DISPATCH_SCATTER(DType::Float64, double)
         DISPATCH_SCATTER(DType::Int32, int32_t)
@@ -3298,6 +3329,7 @@ CPUIndexSelectOperation::execute_index_select(const Tensor &input, int dim,
 
     switch (input.dtype()) {
         DISPATCH_INDEX_SELECT(DType::Float16, float16_t)
+        DISPATCH_INDEX_SELECT(DType::BFloat16, bfloat16_t)
         DISPATCH_INDEX_SELECT(DType::Float32, float)
         DISPATCH_INDEX_SELECT(DType::Float64, double)
         DISPATCH_INDEX_SELECT(DType::Int32, int32_t)
@@ -3470,6 +3502,13 @@ Tensor CPUSoftmaxOperation::execute_reduction(const Tensor &input,
         Tensor input_f32 = input.astype(DType::Float32);
         Tensor result_f32 = execute_softmax_typed<float>(input_f32, ax);
         return result_f32.astype(DType::Float16);
+    }
+    case DType::BFloat16: {
+        // For bfloat16, compute in float32 for numerical stability, then
+        // convert back
+        Tensor input_f32 = input.astype(DType::Float32);
+        Tensor result_f32 = execute_softmax_typed<float>(input_f32, ax);
+        return result_f32.astype(DType::BFloat16);
     }
     case DType::Float32:
         return execute_softmax_typed<float>(input, ax);

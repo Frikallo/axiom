@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 
+#include "axiom/bfloat16.hpp"
 #include "axiom/float16.hpp"
 
 namespace axiom {
@@ -26,6 +27,7 @@ enum class DType : uint8_t {
     UInt64,
 
     Float16,
+    BFloat16,
     Float32,
     Float64,
 
@@ -54,6 +56,8 @@ constexpr size_t dtype_size(DType dtype) {
     case DType::UInt64:
         return 8;
     case DType::Float16:
+        return 2;
+    case DType::BFloat16:
         return 2;
     case DType::Float32:
         return 4;
@@ -103,6 +107,9 @@ template <> struct dtype_of<uint64_t> {
 template <> struct dtype_of<float16_t> {
     static constexpr DType value = DType::Float16;
 };
+template <> struct dtype_of<bfloat16_t> {
+    static constexpr DType value = DType::BFloat16;
+};
 template <> struct dtype_of<float> {
     static constexpr DType value = DType::Float32;
 };
@@ -142,6 +149,7 @@ constexpr bool is_integer_dtype(DType dtype) {
 constexpr bool is_floating_dtype(DType dtype) {
     switch (dtype) {
     case DType::Float16:
+    case DType::BFloat16:
     case DType::Float32:
     case DType::Float64:
         return true;
@@ -209,6 +217,8 @@ template <DType dtype> constexpr auto dtype_zero() {
         return uint64_t(0);
     else if constexpr (dtype == DType::Float16)
         return float16_t(0.0f);
+    else if constexpr (dtype == DType::BFloat16)
+        return bfloat16_t(0.0f);
     else if constexpr (dtype == DType::Float32)
         return 0.0f;
     else if constexpr (dtype == DType::Float64)
@@ -240,6 +250,8 @@ template <DType dtype> constexpr auto dtype_one() {
         return uint64_t(1);
     else if constexpr (dtype == DType::Float16)
         return float16_t(1.0f);
+    else if constexpr (dtype == DType::BFloat16)
+        return bfloat16_t(1.0f);
     else if constexpr (dtype == DType::Float32)
         return 1.0f;
     else if constexpr (dtype == DType::Float64)

@@ -70,6 +70,14 @@ DType promote_dtypes(DType dtype1, DType dtype2) {
         if (dtype1 == DType::Float32 || dtype2 == DType::Float32) {
             return DType::Float32;
         }
+        // BFloat16 + Float16 → Float32 (neither fully represents the other)
+        if ((dtype1 == DType::BFloat16 && dtype2 == DType::Float16) ||
+            (dtype1 == DType::Float16 && dtype2 == DType::BFloat16)) {
+            return DType::Float32;
+        }
+        if (dtype1 == DType::BFloat16 || dtype2 == DType::BFloat16) {
+            return DType::BFloat16;
+        }
         return DType::Float16;
     }
 

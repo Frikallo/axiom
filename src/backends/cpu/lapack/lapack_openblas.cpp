@@ -2,6 +2,14 @@
 
 #ifdef AXIOM_USE_OPENBLAS
 
+// MSVC lacks C99 _Complex; define LAPACKE complex types before including the
+// header so it picks up std::complex instead of "float _Complex".
+#ifdef _MSC_VER
+#include <complex>
+#define lapack_complex_float std::complex<float>
+#define lapack_complex_double std::complex<double>
+#endif
+
 // OpenBLAS provides LAPACKE interface
 #include <lapacke.h>
 

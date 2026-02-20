@@ -321,11 +321,11 @@ DType promote_types(DType lhs, DType rhs) {
 
     // Highest rank wins
     static const std::map<DType, int> rank = {
-        {DType::Bool, 0},       {DType::Int8, 1},       {DType::UInt8, 2},
-        {DType::Int16, 3},      {DType::UInt16, 4},     {DType::Int32, 5},
-        {DType::UInt32, 6},     {DType::Int64, 7},      {DType::UInt64, 8},
-        {DType::Float16, 9},    {DType::Float32, 10},   {DType::Float64, 11},
-        {DType::Complex64, 12}, {DType::Complex128, 13}};
+        {DType::Bool, 0},     {DType::Int8, 1},       {DType::UInt8, 2},
+        {DType::Int16, 3},    {DType::UInt16, 4},     {DType::Int32, 5},
+        {DType::UInt32, 6},   {DType::Int64, 7},      {DType::UInt64, 8},
+        {DType::Float16, 9},  {DType::BFloat16, 10},  {DType::Float32, 11},
+        {DType::Float64, 12}, {DType::Complex64, 13}, {DType::Complex128, 14}};
 
     DType t1 = rank.at(lhs) > rank.at(rhs) ? lhs : rhs;
     DType t2 = rank.at(lhs) > rank.at(rhs) ? rhs : lhs;

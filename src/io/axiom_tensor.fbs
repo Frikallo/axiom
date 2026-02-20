@@ -17,7 +17,8 @@ enum DType : byte {
     Float32 = 10,
     Float64 = 11,
     Complex64 = 12,
-    Complex128 = 13
+    Complex128 = 13,
+    BFloat16 = 14
 }
 
 // Memory layout order

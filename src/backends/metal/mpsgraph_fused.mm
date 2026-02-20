@@ -45,8 +45,10 @@ static MPSDataType toMPS(DType dtype) {
         return MPSDataTypeUInt64;
     case DType::Bool:
         return MPSDataTypeBool;
+    case DType::BFloat16:
+        return MPSDataTypeBFloat16;
     default:
-        // Float64, Complex, BFloat16 are not supported by MPS.
+        // Float64, Complex are not supported by MPS.
         // Return 0 as a sentinel — callers must check before using.
         return static_cast<MPSDataType>(0);
     }

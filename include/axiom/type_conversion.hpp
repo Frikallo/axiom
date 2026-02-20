@@ -52,6 +52,9 @@ template <> struct dtype_to_type<DType::UInt64> {
 template <> struct dtype_to_type<DType::Float16> {
     using type = float16_t;
 };
+template <> struct dtype_to_type<DType::BFloat16> {
+    using type = bfloat16_t;
+};
 template <> struct dtype_to_type<DType::Float32> {
     using type = float;
 };
@@ -157,15 +160,23 @@ template <typename To, typename From> struct numeric_converter {
         } else if constexpr (std::is_same_v<To, float16_t>) {
             return float16_t(static_cast<float>(value));
         }
+        // BFloat16 conversions
+        else if constexpr (std::is_same_v<From, bfloat16_t>) {
+            return static_cast<To>(static_cast<float>(value));
+        } else if constexpr (std::is_same_v<To, bfloat16_t>) {
+            return bfloat16_t(static_cast<float>(value));
+        }
         // Integer to float
         else if constexpr (std::is_integral_v<From> &&
                            (std::is_floating_point_v<To> ||
-                            std::is_same_v<To, float16_t>)) {
+                            std::is_same_v<To, float16_t> ||
+                            std::is_same_v<To, bfloat16_t>)) {
             return static_cast<To>(value);
         }
         // Float to integer (truncate)
         else if constexpr ((std::is_floating_point_v<From> ||
-                            std::is_same_v<From, float16_t>) &&
+                            std::is_same_v<From, float16_t> ||
+                            std::is_same_v<From, bfloat16_t>) &&
                            std::is_integral_v<To>) {
             // NumPy behavior: truncate towards zero
             return static_cast<To>(value);
@@ -236,6 +247,9 @@ void convert_array(void *dst, const void *src, size_t count, DType src_dtype) {
     case DType::Float16:
         convert_array_typed<To, float16_t>(dst, src, count);
         break;
+    case DType::BFloat16:
+        convert_array_typed<To, bfloat16_t>(dst, src, count);
+        break;
     case DType::Float32:
         convert_array_typed<To, float>(dst, src, count);
         break;
@@ -293,6 +307,9 @@ inline void convert_dtype(void *dst, const void *src, size_t count,
         break;
     case DType::Float16:
         convert_array<float16_t>(dst, src, count, src_dtype);
+        break;
+    case DType::BFloat16:
+        convert_array<bfloat16_t>(dst, src, count, src_dtype);
         break;
     case DType::Float32:
         convert_array<float>(dst, src, count, src_dtype);

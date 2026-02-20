@@ -79,7 +79,7 @@ jobs:
       if: matrix.os == 'linux-x64'
       run: |
         sudo apt-get update
-        sudo apt-get install -y ninja-build libopenblas-dev liblapacke-dev
+        sudo apt-get install -y ninja-build libopenblas-dev liblapacke-dev gfortran
 
     # -- Windows Setup ---------------------------------------------------------
     - name: Setup Windows
@@ -87,13 +87,17 @@ jobs:
       shell: pwsh
       run: |
         choco install ninja -y
-        # Install OpenBLAS
-        $OPENBLAS_VERSION = "0.3.27"
-        $OPENBLAS_URL = "https://github.com/OpenMathLib/OpenBLAS/releases/download/v${OPENBLAS_VERSION}/OpenBLAS-${OPENBLAS_VERSION}-x64.zip"
-        Invoke-WebRequest -Uri $OPENBLAS_URL -OutFile openblas.zip
-        Expand-Archive -Path openblas.zip -DestinationPath C:\OpenBLAS
+        # Build static OpenBLAS from source (C-only, no Fortran needed)
+        git clone --depth 1 --branch v0.3.28 https://github.com/OpenMathLib/OpenBLAS.git C:\OpenBLAS-src
+        cmake -B C:\OpenBLAS-build -S C:\OpenBLAS-src `
+          -DBUILD_SHARED_LIBS=OFF `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DC_LAPACK=ON `
+          -DNOFORTRAN=1 `
+          -DBUILD_TESTING=OFF
+        cmake --build C:\OpenBLAS-build --config Release
+        cmake --install C:\OpenBLAS-build --prefix C:\OpenBLAS --config Release
         echo "OpenBLAS_DIR=C:\OpenBLAS" >> $env:GITHUB_ENV
-        echo "C:\OpenBLAS\bin" >> $env:GITHUB_PATH
 
     # -- Install Python + NumPy (for test fixtures) ----------------------------
     - name: Setup Python
@@ -185,17 +189,11 @@ jobs:
         dumpbin /dependents install/bin/axiom.dll 2>$null || echo "dumpbin not available"
 
     # -- Package ---------------------------------------------------------------
-    - name: Create Package (Unix)
-      if: runner.os != 'Windows'
+    - name: Create Package
+      shell: bash
       run: |
         cd install
         tar -czvf ../axiom-${{ steps.version.outputs.version }}-${{ matrix.os }}.tar.gz .
-
-    - name: Create Package (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        cd install
-        7z a ../axiom-${{ steps.version.outputs.version }}-${{ matrix.os }}.zip .
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
@@ -237,7 +235,7 @@ jobs:
     - name: Collect Packages
       run: |
         mkdir -p release
-        find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
+        find artifacts -type f -name "*.tar.gz" -exec cp {} release/ \;
         ls -la release/
 
     - name: Create Source Tarball

@@ -158,6 +158,18 @@ std::string half_element_to_string(const void *data, size_t index) {
     return ss.str();
 }
 
+std::string bfloat16_element_to_string(const void *data, size_t index) {
+    float value =
+        static_cast<float>(static_cast<const bfloat16_t *>(data)[index]);
+    if (std::isnan(value))
+        return "nan";
+    if (std::isinf(value))
+        return value > 0 ? "inf" : "-inf";
+    std::stringstream ss;
+    ss << std::fixed << std::setprecision(4) << value;
+    return ss.str();
+}
+
 std::string dispatch_element_to_string(const Tensor &t, size_t index) {
     const void *data = t.data();
     switch (t.dtype()) {
@@ -167,6 +179,8 @@ std::string dispatch_element_to_string(const Tensor &t, size_t index) {
         return element_to_string<double>(data, index);
     case DType::Float16:
         return half_element_to_string(data, index);
+    case DType::BFloat16:
+        return bfloat16_element_to_string(data, index);
     case DType::Int8:
         return element_to_string<int8_t>(data, index);
     case DType::Int16:
