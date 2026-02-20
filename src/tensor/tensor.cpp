@@ -7,6 +7,7 @@
 #include <sstream>
 #include <unordered_set>
 
+#include "axiom/dispatch.hpp"
 #include "axiom/einops.hpp"
 #include "axiom/error.hpp"
 #include "axiom/graph/graph_node.hpp"
@@ -1655,12 +1656,9 @@ Tensor Tensor::ones(const Shape &shape, DType dtype, Device device,
                     MemoryOrder order) {
     // Always create and initialize on CPU first, then transfer to target device
     auto tensor = Tensor(shape, dtype, Device::CPU, order);
-    auto dtype_variant = variant_to_dtype(dtype);
-    std::visit(overload{[&]<typename T>(T) {
-                   using value_type = typename T::value_type;
-                   tensor.fill<value_type>(T::one());
-               }},
-               dtype_variant);
+    dispatch(dtype, [&]<typename DT>(DT) {
+        tensor.fill<typename DT::value_type>(DT::one());
+    });
     if (device == Device::GPU)
         return tensor.to(device, order);
     return tensor;
@@ -1685,13 +1683,11 @@ Tensor Tensor::eye(size_t n, DType dtype, Device device, MemoryOrder order) {
     auto tensor = zeros({n, n}, dtype, device, order);
 
     if (device == Device::CPU) {
-        auto dtype_variant = variant_to_dtype(dtype);
-        std::visit(overload{[&]<typename T>(T) {
-                       using value_type = typename T::value_type;
-                       for (size_t i = 0; i < n; ++i)
-                           tensor.set_item<value_type>({i, i}, T::one());
-                   }},
-                   dtype_variant);
+        dispatch(dtype, [&]<typename DT>(DT) {
+            using T = typename DT::value_type;
+            for (size_t i = 0; i < n; ++i)
+                tensor.set_item<T>({i, i}, DT::one());
+        });
     }
 
     return tensor;
@@ -1715,46 +1711,21 @@ Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
     if (device != Device::CPU)
         throw DeviceError::cpu_only("arange");
 
-    auto dtype_variant = variant_to_dtype(dtype);
-    std::visit(overload{
-        [&]<typename T>(T)
-            requires(T::is_int())
-                    {
-                        using value_type = typename T::value_type;
-                        value_type *data = t.typed_data<value_type>();
-                        for (size_t i = 0; i < size; ++i)
-                            data[i] = static_cast<value_type>(start + i * step);
-                    },
-                    [&]<typename T>(T)
-                        requires(T::is_pod_float())
-                                {
-                                    using value_type = typename T::value_type;
-                                    value_type *data =
-                                        t.typed_data<value_type>();
-                                    for (size_t i = 0; i < size; ++i)
-                                        data[i] = static_cast<value_type>(
-                                            start + i * step);
-                                },
-                                [&](axiom::Float16) {
-                                    float16_t *data = t.typed_data<float16_t>();
-                                    for (size_t i = 0; i < size; ++i)
-                                        data[i] = float16_t(static_cast<float>(
-                                            start + i * step));
-                                },
-                                [&](axiom::BFloat16) {
-                                    bfloat16_t *data =
-                                        t.typed_data<bfloat16_t>();
-                                    for (size_t i = 0; i < size; ++i)
-                                        data[i] = bfloat16_t(static_cast<float>(
-                                            start + i * step));
-                                },
-                                [&]<typename T>(T)
-                                    requires(T::is_complex())
-        {
+    dispatch(dtype, [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        if constexpr (DT::is_int()) {
+            T *data = t.typed_data<T>();
+            for (size_t i = 0; i < size; ++i)
+                data[i] = static_cast<T>(start + i * step);
+        } else if constexpr (DT::is_float()) {
+            T *data = t.typed_data<T>();
+            for (size_t i = 0; i < size; ++i)
+                data[i] = static_cast<T>(static_cast<float>(start + i * step));
+        } else {
             throw TypeError::unsupported_dtype(axiom::dtype_name(dtype),
                                                "arange");
-        }},
-               dtype_variant);
+        }
+    });
 
     return t;
 }
@@ -1770,34 +1741,17 @@ Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
     // Always create and initialize on CPU first, then transfer to target device
     auto tensor = Tensor(shape, dtype, Device::CPU, order);
     auto &rng = RandomGenerator::instance();
-    auto dtype_variant = variant_to_dtype(dtype);
-    std::visit(overload{
-        [&]<typename T>(T)
-            requires(!T::is_float())
-                    {
-                        throw TypeError(
-                            "randn only supports floating point types, got " +
-                            axiom::dtype_name(dtype));
-                    },
-                    [&]<typename T>(T)
-                        requires(T::is_pod_float())
-        {
-            using value_type = typename T::value_type;
-            value_type *data = tensor.typed_data<value_type>();
+    dispatch_float(dtype, "randn", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        T *data = tensor.typed_data<T>();
+        if constexpr (DT::is_pod_float()) {
             for (size_t i = 0; i < tensor.size(); ++i)
-                data[i] = rng.normal<value_type>();
-        },
-        [&](axiom::Float16) {
-            float16_t *data = tensor.typed_data<float16_t>();
+                data[i] = rng.normal<T>();
+        } else {
             for (size_t i = 0; i < tensor.size(); ++i)
-                data[i] = float16_t(rng.normal<float>());
-        },
-        [&](axiom::BFloat16) {
-            bfloat16_t *data = tensor.typed_data<bfloat16_t>();
-            for (size_t i = 0; i < tensor.size(); ++i)
-                data[i] = bfloat16_t(rng.normal<float>());
-        }},
-               dtype_variant);
+                data[i] = static_cast<T>(rng.normal<float>());
+        }
+    });
 
     if (device == Device::GPU)
         return tensor.to(device, order);
@@ -1817,41 +1771,19 @@ Tensor Tensor::uniform(double low, double high, const Shape &shape, DType dtype,
     // Always create and initialize on CPU first, then transfer to target device
     auto tensor = Tensor(shape, dtype, Device::CPU, order);
     auto &rng = RandomGenerator::instance();
-    auto dtype_variant = variant_to_dtype(dtype);
-    std::visit(overload{
-        [&]<typename T>(T)
-            requires(!T::is_float())
-                    {
-                        throw TypeError(
-                            "uniform only supports floating point types, got " +
-                            axiom::dtype_name(dtype));
-                    },
-                    [&]<typename T>(T)
-                        requires(T::is_pod_float())
-        {
-            using value_type = typename T::value_type;
-            value_type *data = tensor.typed_data<value_type>();
-            for (size_t i = 0; i < tensor.size(); ++i) {
+    dispatch_float(dtype, "uniform", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        T *data = tensor.typed_data<T>();
+        if constexpr (DT::is_pod_float()) {
+            for (size_t i = 0; i < tensor.size(); ++i)
                 data[i] =
-                    rng.uniform<value_type>(static_cast<value_type>(low),
-                                            static_cast<value_type>(high));
-            }
-        },
-        [&](axiom::Float16) {
-            float16_t *data = tensor.typed_data<float16_t>();
-            for (size_t i = 0; i < tensor.size(); ++i) {
-                data[i] = float16_t(rng.uniform<float>(
+                    rng.uniform<T>(static_cast<T>(low), static_cast<T>(high));
+        } else {
+            for (size_t i = 0; i < tensor.size(); ++i)
+                data[i] = static_cast<T>(rng.uniform<float>(
                     static_cast<float>(low), static_cast<float>(high)));
-            }
-        },
-        [&](axiom::BFloat16) {
-            bfloat16_t *data = tensor.typed_data<bfloat16_t>();
-            for (size_t i = 0; i < tensor.size(); ++i) {
-                data[i] = bfloat16_t(rng.uniform<float>(
-                    static_cast<float>(low), static_cast<float>(high)));
-            }
-        }},
-               dtype_variant);
+        }
+    });
     if (device == Device::GPU)
         return tensor.to(device, order);
     return tensor;
@@ -1866,24 +1798,12 @@ Tensor Tensor::randint(int64_t low, int64_t high, const Shape &shape,
     // device
     auto tensor = Tensor(shape, dtype, Device::CPU, order);
     auto &rng = RandomGenerator::instance();
-    auto dtype_variant = variant_to_dtype(dtype);
-    std::visit(overload{
-        [&]<typename T>(T)
-            requires(!T::is_int())
-                    {
-                        throw TypeError(
-                            "randint only supports integer types, got " +
-                            axiom::dtype_name(dtype));
-                    },
-                    [&]<typename T>(T)
-                        requires(T::is_int())
-        {
-            using value_type = typename T::value_type;
-            value_type *data = tensor.typed_data<value_type>();
-            for (size_t i = 0; i < tensor.size(); ++i)
-                data[i] = static_cast<value_type>(rng.randint(low, high));
-        }},
-               dtype_variant);
+    dispatch_int(dtype, "randint", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        T *data = tensor.typed_data<T>();
+        for (size_t i = 0; i < tensor.size(); ++i)
+            data[i] = static_cast<T>(rng.randint(low, high));
+    });
 
     if (device == Device::GPU)
         return tensor.to(device, order);
@@ -1908,49 +1828,28 @@ Tensor Tensor::randint_like(const Tensor &prototype, int64_t low,
 
 Tensor Tensor::linspace(double start, double stop, size_t num, bool endpoint,
                         DType dtype, Device device) {
-    auto dtype_variant = variant_to_dtype(dtype);
     if (num == 0)
         return Tensor::empty({0}, dtype, device);
     if (num == 1) {
         auto t = Tensor({1}, dtype, Device::CPU);
-        std::visit(overload{
-            [&]<typename T>(T)
-                requires(!T::is_pod_float())
-                        {
-                            throw TypeError::unsupported_dtype(
-                                axiom::dtype_name(dtype), "linspace");
-                        },
-                        [&]<typename T>(T)
-                            requires(T::is_pod_float())
-            {
-                using value_type = typename T::value_type;
-                t.typed_data<value_type>()[0] = static_cast<value_type>(start);
-            }},
-                   dtype_variant);
+        dispatch_float(dtype, "linspace", [&]<typename DT>(DT) {
+            using T = typename DT::value_type;
+            t.typed_data<T>()[0] = static_cast<T>(start);
+        });
         return device == Device::GPU ? t.to(device) : t;
     }
 
     double step = endpoint ? (stop - start) / (num - 1) : (stop - start) / num;
     auto t = Tensor({num}, dtype, Device::CPU);
 
-    std::visit(
-        overload{[&]<typename T>(T)
-                     requires(!T::is_pod_float())
-                             {
-                                 throw TypeError::unsupported_dtype(
-                                     axiom::dtype_name(dtype), "linspace");
-                             },
-                             [&]<typename T>(T)
-                                 requires(T::is_pod_float())
-                 {
-                     using value_type = typename T::value_type;
-                     auto *data = t.typed_data<value_type>();
-                     for (size_t i = 0; i < num; ++i)
-                         data[i] = static_cast<value_type>(start + i * step);
-                     if (endpoint && num > 1)
-                         data[num - 1] = static_cast<value_type>(stop);
-                 }},
-        dtype_variant);
+    dispatch_float(dtype, "linspace", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        auto *data = t.typed_data<T>();
+        for (size_t i = 0; i < num; ++i)
+            data[i] = static_cast<T>(start + i * step);
+        if (endpoint && num > 1)
+            data[num - 1] = static_cast<T>(stop);
+    });
     return device == Device::GPU ? t.to(device) : t;
 }
 
@@ -1958,23 +1857,13 @@ Tensor Tensor::logspace(double start, double stop, size_t num, bool endpoint,
                         double base, DType dtype, Device device) {
     // logspace(start, stop) = base^linspace(start, stop)
     auto linear = linspace(start, stop, num, endpoint, dtype, Device::CPU);
-    auto dtype_variant = variant_to_dtype(dtype);
-    std::visit(overload{
-        [&]<typename T>(T)
-            requires(!T::is_pod_float())
-                    {
-                        throw TypeError::unsupported_dtype(
-                            axiom::dtype_name(dtype), "logspace");
-                    },
-                    [&]<typename T>(T)
-                        requires(T::is_pod_float())
-        {
-            using value_type = typename T::value_type;
-            auto *data = linear.typed_data<value_type>();
-            for (size_t i = 0; i < num; ++i)
-                data[i] = static_cast<value_type>(std::pow(base, data[i]));
-        }},
-               dtype_variant);
+    dispatch_float(dtype, "logspace", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        auto *data = linear.typed_data<T>();
+        for (size_t i = 0; i < num; ++i)
+            data[i] =
+                static_cast<T>(std::pow(base, static_cast<double>(data[i])));
+    });
 
     return device == Device::GPU ? linear.to(device) : linear;
 }
@@ -1997,19 +1886,12 @@ Tensor Tensor::geomspace(double start, double stop, size_t num, bool endpoint,
         logspace(log_start, log_stop, num, endpoint, 10.0, dtype, Device::CPU);
 
     if (negative) {
-        auto dtype_variant = variant_to_dtype(dtype);
-        std::visit(overload{[&]<typename T>(T)
-                                requires(!T::is_pod_float())
-                                        {},
-                                        [&]<typename T>(T)
-                                            requires(T::is_pod_float())
-                            {
-                                using value_type = typename T::value_type;
-                                auto *data = result.typed_data<value_type>();
-                                for (size_t i = 0; i < num; ++i)
-                                    data[i] = -data[i];
-                            }},
-                   dtype_variant);
+        dispatch_float(dtype, "geomspace", [&]<typename DT>(DT) {
+            using T = typename DT::value_type;
+            auto *data = result.typed_data<T>();
+            for (size_t i = 0; i < num; ++i)
+                data[i] = -data[i];
+        });
     }
 
     return device == Device::GPU ? result.to(device) : result;
@@ -2044,16 +1926,12 @@ Tensor Tensor::diag(const Tensor &v, int64_t k) {
         size_t row_offset = k < 0 ? static_cast<size_t>(-k) : 0;
         size_t col_offset = k > 0 ? static_cast<size_t>(k) : 0;
 
-        auto dtype_variant = variant_to_dtype(v.dtype());
-        std::visit(overload{[&]<typename T>(T) {
-                       using value_type = typename T::value_type;
-                       const value_type *src = v.typed_data<value_type>();
-                       for (size_t i = 0; i < n; ++i) {
-                           result.set_item<value_type>(
-                               {row_offset + i, col_offset + i}, src[i]);
-                       }
-                   }},
-                   dtype_variant);
+        dispatch(v.dtype(), [&]<typename DT>(DT) {
+            using T = typename DT::value_type;
+            const T *src = v.typed_data<T>();
+            for (size_t i = 0; i < n; ++i)
+                result.set_item<T>({row_offset + i, col_offset + i}, src[i]);
+        });
         return result;
     } else if (v.ndim() == 2) {
         // Extract diagonal from 2D input
@@ -2072,16 +1950,12 @@ Tensor Tensor::diag(const Tensor &v, int64_t k) {
         if (v.device() != Device::CPU)
             throw DeviceError::cpu_only("diag");
 
-        auto dtype_variant = variant_to_dtype(v.dtype());
-        std::visit(overload{[&]<typename T>(T) {
-                       using value_type = typename T::value_type;
-                       value_type *dst = result.typed_data<value_type>();
-                       for (size_t i = 0; i < diag_len; ++i) {
-                           dst[i] = v.item<value_type>(
-                               {diag_start_row + i, diag_start_col + i});
-                       }
-                   }},
-                   dtype_variant);
+        dispatch(v.dtype(), [&]<typename DT>(DT) {
+            using T = typename DT::value_type;
+            T *dst = result.typed_data<T>();
+            for (size_t i = 0; i < diag_len; ++i)
+                dst[i] = v.item<T>({diag_start_row + i, diag_start_col + i});
+        });
         return result;
     } else {
         throw ShapeError("diag requires 1-D or 2-D input, got " +
@@ -2093,28 +1967,15 @@ Tensor Tensor::tri(size_t N, size_t M, int64_t k, DType dtype, Device device) {
     if (M == 0)
         M = N;
     auto result = zeros({N, M}, dtype, Device::CPU);
-    auto dtype_variant = variant_to_dtype(dtype);
-    std::visit(overload{[&]<typename T>(T)
-                            requires(T::is_complex())
-                                    {
-                                        throw TypeError::unsupported_dtype(
-                                            axiom::dtype_name(dtype), "tri");
-                                    },
-                                    [&]<typename T>(T)
-                                        requires(!T::is_complex())
-                        {
-                            using value_type = typename T::value_type;
-                            for (size_t i = 0; i < N; ++i) {
-                                int64_t max_col =
-                                    std::min(static_cast<int64_t>(M),
-                                             static_cast<int64_t>(i) + k + 1);
-                                for (int64_t j = 0; j < max_col; ++j) {
-                                    result.set_item<value_type>(
-                                        {i, static_cast<size_t>(j)}, T::one());
-                                }
-                            }
-                        }},
-               dtype_variant);
+    dispatch_numeric(dtype, "tri", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        for (size_t i = 0; i < N; ++i) {
+            int64_t max_col = std::min(static_cast<int64_t>(M),
+                                       static_cast<int64_t>(i) + k + 1);
+            for (int64_t j = 0; j < max_col; ++j)
+                result.set_item<T>({i, static_cast<size_t>(j)}, DT::one());
+        }
+    });
 
     return device == Device::GPU ? result.to(device) : result;
 }
@@ -2132,25 +1993,22 @@ Tensor Tensor::tril(const Tensor &m, int64_t k) {
     size_t rows = m.shape()[m.ndim() - 2];
     size_t cols = m.shape()[m.ndim() - 1];
     size_t batch_size = m.size() / (rows * cols);
-    auto dtype_variant = variant_to_dtype(m.dtype());
-    std::visit(overload{[&]<typename T>(T) {
-                   using value_type = typename T::value_type;
-                   const value_type *src = m.typed_data<value_type>();
-                   value_type *dst = result.typed_data<value_type>();
-                   for (size_t b = 0; b < batch_size; ++b) {
-                       for (size_t i = 0; i < rows; ++i) {
-                           int64_t max_col =
-                               std::min(static_cast<int64_t>(cols),
-                                        static_cast<int64_t>(i) + k + 1);
-                           for (int64_t j = 0; j < max_col; ++j) {
-                               size_t idx = b * rows * cols + i * cols +
-                                            static_cast<size_t>(j);
-                               dst[idx] = src[idx];
-                           }
-                       }
-                   }
-               }},
-               dtype_variant);
+    dispatch(m.dtype(), [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        const T *src = m.typed_data<T>();
+        T *dst = result.typed_data<T>();
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t i = 0; i < rows; ++i) {
+                int64_t max_col = std::min(static_cast<int64_t>(cols),
+                                           static_cast<int64_t>(i) + k + 1);
+                for (int64_t j = 0; j < max_col; ++j) {
+                    size_t idx =
+                        b * rows * cols + i * cols + static_cast<size_t>(j);
+                    dst[idx] = src[idx];
+                }
+            }
+        }
+    });
 
     return result;
 }
@@ -2169,24 +2027,21 @@ Tensor Tensor::triu(const Tensor &m, int64_t k) {
     size_t cols = m.shape()[m.ndim() - 1];
     size_t batch_size = m.size() / (rows * cols);
 
-    auto dtype_variant = variant_to_dtype(m.dtype());
-    std::visit(overload{[&]<typename T>(T) {
-                   using value_type = typename T::value_type;
-                   const value_type *src = m.typed_data<value_type>();
-                   value_type *dst = result.typed_data<value_type>();
-                   for (size_t b = 0; b < batch_size; ++b) {
-                       for (size_t i = 0; i < rows; ++i) {
-                           int64_t min_col = std::max(
-                               int64_t(0), static_cast<int64_t>(i) + k);
-                           for (size_t j = static_cast<size_t>(min_col);
-                                j < cols; ++j) {
-                               size_t idx = b * rows * cols + i * cols + j;
-                               dst[idx] = src[idx];
-                           }
-                       }
-                   }
-               }},
-               dtype_variant);
+    dispatch(m.dtype(), [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        const T *src = m.typed_data<T>();
+        T *dst = result.typed_data<T>();
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t i = 0; i < rows; ++i) {
+                int64_t min_col =
+                    std::max(int64_t(0), static_cast<int64_t>(i) + k);
+                for (size_t j = static_cast<size_t>(min_col); j < cols; ++j) {
+                    size_t idx = b * rows * cols + i * cols + j;
+                    dst[idx] = src[idx];
+                }
+            }
+        }
+    });
 
     return result;
 }
@@ -2273,42 +2128,21 @@ bool Tensor::has_nan() const {
     if (!is_floating_dtype(dtype_) && !is_complex_dtype(dtype_))
         return false;
 
-    auto check_nan = [this]<typename T>() {
-        const T *data = typed_data<T>();
-        for (size_t i = 0; i < size(); ++i)
-            if (std::isnan(static_cast<double>(data[i])))
-                return true;
+    return dispatch(dtype_, [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        if constexpr (DT::is_float()) {
+            const T *data = typed_data<T>();
+            for (size_t i = 0; i < size(); ++i)
+                if (std::isnan(static_cast<double>(data[i])))
+                    return true;
+        } else if constexpr (DT::is_complex()) {
+            const T *data = typed_data<T>();
+            for (size_t i = 0; i < size(); ++i)
+                if (std::isnan(data[i].real()) || std::isnan(data[i].imag()))
+                    return true;
+        }
         return false;
-    };
-
-    // Complex types need to check both real and imaginary parts
-    auto check_nan_complex = [this]<typename T>() {
-        const T *data = typed_data<T>();
-        for (size_t i = 0; i < size(); ++i)
-            if (std::isnan(data[i].real()) || std::isnan(data[i].imag()))
-                return true;
-        return false;
-    };
-    auto dtype_variant = variant_to_dtype(dtype_);
-    return std::visit(overload{
-        [&]<typename T>(T)
-            requires(T::is_float())
-                    {
-                        using value_type = typename T::value_type;
-                        return check_nan.template operator()<value_type>();
-                    },
-                    [&]<typename T>(T)
-                        requires(T::is_complex())
-                                {
-                                    using value_type = typename T::value_type;
-                                    return check_nan_complex
-                                        .template operator()<value_type>();
-                                },
-                                [&]<typename T>(T)
-                                    requires(
-                                        !(T::is_complex() || T::is_float()))
-        { return false; }},
-                      dtype_variant);
+    });
 }
 
 bool Tensor::has_inf() const {
@@ -2319,43 +2153,21 @@ bool Tensor::has_inf() const {
     if (!is_floating_dtype(dtype_) && !is_complex_dtype(dtype_))
         return false;
 
-    auto check_inf = [this]<typename T>() {
-        const T *data = typed_data<T>();
-        for (size_t i = 0; i < size(); ++i)
-            if (std::isinf(static_cast<double>(data[i])))
-                return true;
+    return dispatch(dtype_, [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        if constexpr (DT::is_float()) {
+            const T *data = typed_data<T>();
+            for (size_t i = 0; i < size(); ++i)
+                if (std::isinf(static_cast<double>(data[i])))
+                    return true;
+        } else if constexpr (DT::is_complex()) {
+            const T *data = typed_data<T>();
+            for (size_t i = 0; i < size(); ++i)
+                if (std::isinf(data[i].real()) || std::isinf(data[i].imag()))
+                    return true;
+        }
         return false;
-    };
-
-    // Complex types need to check both real and imaginary parts
-    auto check_inf_complex = [this]<typename T>() {
-        const T *data = typed_data<T>();
-        for (size_t i = 0; i < size(); ++i)
-            if (std::isinf(data[i].real()) || std::isinf(data[i].imag()))
-                return true;
-        return false;
-    };
-
-    auto dtype_variant = variant_to_dtype(dtype_);
-    return std::visit(overload{
-        [&]<typename T>(T)
-            requires(T::is_float())
-                    {
-                        using value_type = typename T::value_type;
-                        return check_inf.template operator()<value_type>();
-                    },
-                    [&]<typename T>(T)
-                        requires(T::is_complex())
-                                {
-                                    using value_type = typename T::value_type;
-                                    return check_inf_complex
-                                        .template operator()<value_type>();
-                                },
-                                [&]<typename T>(T)
-                                    requires(
-                                        !(T::is_complex() || T::is_float()))
-        { return false; }},
-                      dtype_variant);
+    });
 }
 
 Tensor &Tensor::nan_guard() {

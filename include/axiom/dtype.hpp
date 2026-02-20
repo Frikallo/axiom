@@ -11,12 +11,6 @@
 
 namespace axiom {
 
-// The overload pattern template
-template <class... Ts> struct overload : Ts... {
-    using Ts::operator()...; // Bring all operator() into scope
-};
-
-// TODO: Add class description
 template <class T> class BaseType {
   public:
     using value_type = T;
@@ -166,10 +160,9 @@ class Complex128 : public BaseType<std::complex<double>> {
     static std::string name() { return "Complex128"; }
 };
 
-using TypeVariant =
-    ::std::variant<Bool, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32,
-                   UInt64, Float16, BFloat16, Float32, Float64, Complex64,
-                   Complex128>;
+using TypeVariant = ::std::variant<Bool, Int8, Int16, Int32, Int64, UInt8,
+                                   UInt16, UInt32, UInt64, Float16, BFloat16,
+                                   Float32, Float64, Complex64, Complex128>;
 
 // float16_t is defined in axiom/float16.hpp
 using complex64_t = std::complex<float>;
@@ -196,8 +189,6 @@ enum class DType : uint8_t {
     Complex64,
     Complex128
 };
-
-TypeVariant variant_to_dtype(DType dtype);
 
 constexpr size_t dtype_size(DType dtype) {
     switch (dtype) {

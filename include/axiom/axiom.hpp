@@ -4,6 +4,7 @@
 // Include this file to get access to all the core functionality.
 
 #include "axiom/debug.hpp"
+#include "axiom/dispatch.hpp"
 #include "axiom/dtype.hpp"
 #include "axiom/einops.hpp"
 #include "axiom/error.hpp"
