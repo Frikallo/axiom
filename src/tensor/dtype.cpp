@@ -32,6 +32,9 @@ UInt64::value_type UInt64::zeros() { return 0; }
 Float16::value_type Float16::one() { return float16_t{1.0f}; }
 Float16::value_type Float16::zeros() { return float16_t{0.0f}; }
 
+BFloat16::value_type BFloat16::one() { return bfloat16_t{1.0f}; }
+BFloat16::value_type BFloat16::zeros() { return bfloat16_t{0.0f}; }
+
 Float32::value_type Float32::one() { return 1.0f; }
 Float32::value_type Float32::zeros() { return 0.0f; }
 
@@ -110,6 +113,8 @@ TypeVariant variant_to_dtype(DType dtype) {
         return UInt64();
     case DType::Float16:
         return Float16();
+    case DType::BFloat16:
+        return BFloat16();
     case DType::Float32:
         return Float32();
     case DType::Float64:

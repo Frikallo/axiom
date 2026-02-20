@@ -33,7 +33,8 @@ template <class T> class BaseType {
     static constexpr bool is_float() {
         // capture 16 bit floats
         return std::is_floating_point_v<value_type> ||
-               std::is_same_v<float16_t, value_type>;
+               std::is_same_v<float16_t, value_type> ||
+               std::is_same_v<bfloat16_t, value_type>;
     }
     static constexpr bool is_pod_float() {
         return std::is_floating_point_v<value_type>;
@@ -125,6 +126,14 @@ class Float16 : public BaseType<float16_t> {
     static std::string name() { return "Float16"; }
 };
 
+class BFloat16 : public BaseType<bfloat16_t> {
+  public:
+    using value_type = typename BaseType::value_type;
+    static value_type one();
+    static value_type zeros();
+    static std::string name() { return "BFloat16"; }
+};
+
 class Float32 : public BaseType<float> {
   public:
     using value_type = typename BaseType::value_type;
@@ -159,7 +168,8 @@ class Complex128 : public BaseType<std::complex<double>> {
 
 using TypeVariant =
     ::std::variant<Bool, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32,
-                   UInt64, Float16, Float32, Float64, Complex64, Complex128>;
+                   UInt64, Float16, BFloat16, Float32, Float64, Complex64,
+                   Complex128>;
 
 // float16_t is defined in axiom/float16.hpp
 using complex64_t = std::complex<float>;

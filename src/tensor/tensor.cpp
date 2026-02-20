@@ -277,6 +277,7 @@ void *Tensor::data() {
     materialize_if_needed();
     if (!storage_) {
         return nullptr;
+    }
     // For negative strides, adjust base pointer to account for flipped view
     // The data pointer should point to the "first" element in iteration order
     size_t adjustment = 0;
@@ -290,6 +291,7 @@ const void *Tensor::data() const {
     materialize_if_needed();
     if (!storage_) {
         return nullptr;
+    }
     // For negative strides, adjust base pointer to account for flipped view
     // The data pointer should point to the "first" element in iteration order
     size_t adjustment = 0;
@@ -457,6 +459,7 @@ Tensor Tensor::ascontiguousarray() const {
 
     if (is_c_contiguous()) {
         return *this;
+    }
 
     auto new_tensor = Tensor(shape_, dtype_, device(), MemoryOrder::RowMajor);
 
@@ -539,6 +542,7 @@ Tensor Tensor::asfortranarray() const {
 
     if (is_f_contiguous()) {
         return *this;
+    }
 
     auto new_tensor = Tensor(shape_, dtype_, device(), MemoryOrder::ColMajor);
 
@@ -620,6 +624,7 @@ Tensor Tensor::transpose() const {
 
     if (ndim() < 2) {
         return *this;
+    }
 
     Shape new_shape = shape_;
     Strides new_strides = strides_;
@@ -713,6 +718,7 @@ Tensor Tensor::view(const Shape &new_shape) const {
 
     if (ShapeUtils::size(new_shape) != size()) {
         throw ShapeError::invalid_reshape(size(), ShapeUtils::size(new_shape));
+    }
 
     if (!is_contiguous())
         throw MemoryError::not_contiguous("view");
@@ -1519,6 +1525,7 @@ Tensor Tensor::astype(DType new_dtype) const {
 
     if (new_dtype == dtype_) {
         return *this;
+    }
 
     // Use GPU cast operation if tensor is on GPU and Cast op is available
     if (device() == Device::GPU) {
@@ -1734,6 +1741,13 @@ Tensor Tensor::arange(int64_t start, int64_t end, int64_t step, DType dtype,
                                         data[i] = float16_t(static_cast<float>(
                                             start + i * step));
                                 },
+                                [&](axiom::BFloat16) {
+                                    bfloat16_t *data =
+                                        t.typed_data<bfloat16_t>();
+                                    for (size_t i = 0; i < size; ++i)
+                                        data[i] = bfloat16_t(static_cast<float>(
+                                            start + i * step));
+                                },
                                 [&]<typename T>(T)
                                     requires(T::is_complex())
         {
@@ -1777,6 +1791,11 @@ Tensor Tensor::randn(const Shape &shape, DType dtype, Device device,
             float16_t *data = tensor.typed_data<float16_t>();
             for (size_t i = 0; i < tensor.size(); ++i)
                 data[i] = float16_t(rng.normal<float>());
+        },
+        [&](axiom::BFloat16) {
+            bfloat16_t *data = tensor.typed_data<bfloat16_t>();
+            for (size_t i = 0; i < tensor.size(); ++i)
+                data[i] = bfloat16_t(rng.normal<float>());
         }},
                dtype_variant);
 
@@ -1822,6 +1841,13 @@ Tensor Tensor::uniform(double low, double high, const Shape &shape, DType dtype,
             float16_t *data = tensor.typed_data<float16_t>();
             for (size_t i = 0; i < tensor.size(); ++i) {
                 data[i] = float16_t(rng.uniform<float>(
+                    static_cast<float>(low), static_cast<float>(high)));
+            }
+        },
+        [&](axiom::BFloat16) {
+            bfloat16_t *data = tensor.typed_data<bfloat16_t>();
+            for (size_t i = 0; i < tensor.size(); ++i) {
+                data[i] = bfloat16_t(rng.uniform<float>(
                     static_cast<float>(low), static_cast<float>(high)));
             }
         }},
