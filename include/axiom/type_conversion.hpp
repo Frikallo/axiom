@@ -6,6 +6,7 @@
 #include <limits>
 #include <type_traits>
 
+#include "axiom/dispatch.hpp"
 #include "axiom/dtype.hpp"
 #include "axiom/shape.hpp"
 
@@ -216,53 +217,9 @@ void convert_array_typed(void *dst, const void *src, size_t count) {
 
 template <typename To>
 void convert_array(void *dst, const void *src, size_t count, DType src_dtype) {
-    switch (src_dtype) {
-    case DType::Bool:
-        convert_array_typed<To, bool>(dst, src, count);
-        break;
-    case DType::Int8:
-        convert_array_typed<To, int8_t>(dst, src, count);
-        break;
-    case DType::Int16:
-        convert_array_typed<To, int16_t>(dst, src, count);
-        break;
-    case DType::Int32:
-        convert_array_typed<To, int32_t>(dst, src, count);
-        break;
-    case DType::Int64:
-        convert_array_typed<To, int64_t>(dst, src, count);
-        break;
-    case DType::UInt8:
-        convert_array_typed<To, uint8_t>(dst, src, count);
-        break;
-    case DType::UInt16:
-        convert_array_typed<To, uint16_t>(dst, src, count);
-        break;
-    case DType::UInt32:
-        convert_array_typed<To, uint32_t>(dst, src, count);
-        break;
-    case DType::UInt64:
-        convert_array_typed<To, uint64_t>(dst, src, count);
-        break;
-    case DType::Float16:
-        convert_array_typed<To, float16_t>(dst, src, count);
-        break;
-    case DType::BFloat16:
-        convert_array_typed<To, bfloat16_t>(dst, src, count);
-        break;
-    case DType::Float32:
-        convert_array_typed<To, float>(dst, src, count);
-        break;
-    case DType::Float64:
-        convert_array_typed<To, double>(dst, src, count);
-        break;
-    case DType::Complex64:
-        convert_array_typed<To, complex64_t>(dst, src, count);
-        break;
-    case DType::Complex128:
-        convert_array_typed<To, complex128_t>(dst, src, count);
-        break;
-    }
+    dispatch(src_dtype, [&]<typename SrcDT>(SrcDT) {
+        convert_array_typed<To, typename SrcDT::value_type>(dst, src, count);
+    });
 }
 
 // ============================================================================
@@ -277,53 +234,9 @@ inline void convert_dtype(void *dst, const void *src, size_t count,
         return;
     }
 
-    switch (dst_dtype) {
-    case DType::Bool:
-        convert_array<bool>(dst, src, count, src_dtype);
-        break;
-    case DType::Int8:
-        convert_array<int8_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Int16:
-        convert_array<int16_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Int32:
-        convert_array<int32_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Int64:
-        convert_array<int64_t>(dst, src, count, src_dtype);
-        break;
-    case DType::UInt8:
-        convert_array<uint8_t>(dst, src, count, src_dtype);
-        break;
-    case DType::UInt16:
-        convert_array<uint16_t>(dst, src, count, src_dtype);
-        break;
-    case DType::UInt32:
-        convert_array<uint32_t>(dst, src, count, src_dtype);
-        break;
-    case DType::UInt64:
-        convert_array<uint64_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Float16:
-        convert_array<float16_t>(dst, src, count, src_dtype);
-        break;
-    case DType::BFloat16:
-        convert_array<bfloat16_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Float32:
-        convert_array<float>(dst, src, count, src_dtype);
-        break;
-    case DType::Float64:
-        convert_array<double>(dst, src, count, src_dtype);
-        break;
-    case DType::Complex64:
-        convert_array<complex64_t>(dst, src, count, src_dtype);
-        break;
-    case DType::Complex128:
-        convert_array<complex128_t>(dst, src, count, src_dtype);
-        break;
-    }
+    dispatch(dst_dtype, [&]<typename DstDT>(DstDT) {
+        convert_array<typename DstDT::value_type>(dst, src, count, src_dtype);
+    });
 }
 
 // ============================================================================

@@ -3,6 +3,7 @@
 #include <axiom/axiom.hpp>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 
 using namespace axiom;
 
@@ -427,7 +428,9 @@ TEST(BFloat16Tensor, HasInf) {
 
 TEST(BFloat16Tensor, FlatBuffersRoundTrip) {
     auto t = Tensor::ones({2, 3}, DType::BFloat16);
-    std::string filename = "/tmp/test_bfloat16_tensor.axfb";
+    std::string filename =
+        (std::filesystem::temp_directory_path() / "test_bfloat16_tensor.axfb")
+            .string();
     t.save(filename);
 
     auto loaded = Tensor::load(filename);

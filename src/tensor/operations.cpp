@@ -5,6 +5,7 @@
 #include <set>
 #include <sstream>
 
+#include "axiom/dispatch.hpp"
 #include "axiom/error.hpp"
 #include "axiom/graph/graph_registry.hpp"
 #include "axiom/system.hpp"
@@ -1817,35 +1818,22 @@ Tensor take(const Tensor &input, const Tensor &indices, int axis) {
         const int64_t *idx_data = indices_cpu.typed_data<int64_t>();
         size_t out_size = indices_cpu.size();
 
-        switch (input.dtype()) {
-#define TAKE_CASE(DTYPE, CTYPE)                                                \
-    case DTYPE: {                                                              \
-        const CTYPE *src = flat.typed_data<CTYPE>();                           \
-        CTYPE *dst = result.typed_data<CTYPE>();                               \
-        for (size_t i = 0; i < out_size; ++i) {                                \
-            int64_t idx = idx_data[i];                                         \
-            if (idx < 0)                                                       \
-                idx += static_cast<int64_t>(n);                                \
-            if (idx < 0 || idx >= static_cast<int64_t>(n)) {                   \
-                throw IndexError(                                              \
-                    "take: index " + std::to_string(idx_data[i]) +             \
-                    " out of bounds for size " + std::to_string(n));           \
-            }                                                                  \
-            dst[i] = src[idx];                                                 \
-        }                                                                      \
-        break;                                                                 \
-    }
-            TAKE_CASE(DType::Float32, float)
-            TAKE_CASE(DType::Float64, double)
-            TAKE_CASE(DType::Int32, int32_t)
-            TAKE_CASE(DType::Int64, int64_t)
-            TAKE_CASE(DType::Int8, int8_t)
-            TAKE_CASE(DType::Int16, int16_t)
-#undef TAKE_CASE
-        default:
-            throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                               "take");
-        }
+        dispatch(input.dtype(), [&]<typename DT>(DT) {
+            using T = typename DT::value_type;
+            const T *src = flat.typed_data<T>();
+            T *dst = result.typed_data<T>();
+            for (size_t i = 0; i < out_size; ++i) {
+                int64_t idx = idx_data[i];
+                if (idx < 0)
+                    idx += static_cast<int64_t>(n);
+                if (idx < 0 || idx >= static_cast<int64_t>(n)) {
+                    throw IndexError(
+                        "take: index " + std::to_string(idx_data[i]) +
+                        " out of bounds for size " + std::to_string(n));
+                }
+                dst[i] = src[idx];
+            }
+        });
 
         return input.device() == Device::GPU ? result.gpu() : result;
     }
@@ -1910,32 +1898,20 @@ Tensor take_along_axis(const Tensor &input, const Tensor &indices, int axis) {
     size_t total = indices_cpu.size();
     std::vector<size_t> coords(ndim, 0);
 
-    switch (input.dtype()) {
-#define TAKE_ALONG_CASE(DTYPE, CTYPE)                                          \
-    case DTYPE: {                                                              \
-        for (size_t i = 0; i < total; ++i) {                                   \
-            int64_t idx = idx_data[i];                                         \
-            if (idx < 0)                                                       \
-                idx += static_cast<int64_t>(axis_size);                        \
-            if (idx < 0 || idx >= static_cast<int64_t>(axis_size)) {           \
-                throw IndexError("take_along_axis: index out of bounds");      \
-            }                                                                  \
-            std::vector<size_t> src_coords = coords;                           \
-            src_coords[axis] = static_cast<size_t>(idx);                       \
-            result.set_item<CTYPE>(coords, input_cpu.item<CTYPE>(src_coords)); \
-            ShapeUtils::increment_coords(coords, indices.shape());             \
-        }                                                                      \
-        break;                                                                 \
-    }
-        TAKE_ALONG_CASE(DType::Float32, float)
-        TAKE_ALONG_CASE(DType::Float64, double)
-        TAKE_ALONG_CASE(DType::Int32, int32_t)
-        TAKE_ALONG_CASE(DType::Int64, int64_t)
-#undef TAKE_ALONG_CASE
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "take_along_axis");
-    }
+    dispatch(input.dtype(), [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        for (size_t i = 0; i < total; ++i) {
+            int64_t idx = idx_data[i];
+            if (idx < 0)
+                idx += static_cast<int64_t>(axis_size);
+            if (idx < 0 || idx >= static_cast<int64_t>(axis_size))
+                throw IndexError("take_along_axis: index out of bounds");
+            std::vector<size_t> src_coords = coords;
+            src_coords[axis] = static_cast<size_t>(idx);
+            result.set_item<T>(coords, input_cpu.item<T>(src_coords));
+            ShapeUtils::increment_coords(coords, indices.shape());
+        }
+    });
 
     return input.device() == Device::GPU ? result.gpu() : result;
 }
@@ -1985,33 +1961,20 @@ Tensor put_along_axis(const Tensor &input, const Tensor &indices,
     size_t total = indices_cpu.size();
     std::vector<size_t> coords(ndim, 0);
 
-    switch (input.dtype()) {
-#define PUT_ALONG_CASE(DTYPE, CTYPE)                                           \
-    case DTYPE: {                                                              \
-        for (size_t i = 0; i < total; ++i) {                                   \
-            int64_t idx = idx_data[i];                                         \
-            if (idx < 0)                                                       \
-                idx += static_cast<int64_t>(axis_size);                        \
-            if (idx < 0 || idx >= static_cast<int64_t>(axis_size)) {           \
-                throw IndexError("put_along_axis: index out of bounds");       \
-            }                                                                  \
-            std::vector<size_t> dst_coords = coords;                           \
-            dst_coords[axis] = static_cast<size_t>(idx);                       \
-            result.set_item<CTYPE>(dst_coords,                                 \
-                                   values_cpu.item<CTYPE>(coords));            \
-            ShapeUtils::increment_coords(coords, indices.shape());             \
-        }                                                                      \
-        break;                                                                 \
-    }
-        PUT_ALONG_CASE(DType::Float32, float)
-        PUT_ALONG_CASE(DType::Float64, double)
-        PUT_ALONG_CASE(DType::Int32, int32_t)
-        PUT_ALONG_CASE(DType::Int64, int64_t)
-#undef PUT_ALONG_CASE
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "put_along_axis");
-    }
+    dispatch(input.dtype(), [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        for (size_t i = 0; i < total; ++i) {
+            int64_t idx = idx_data[i];
+            if (idx < 0)
+                idx += static_cast<int64_t>(axis_size);
+            if (idx < 0 || idx >= static_cast<int64_t>(axis_size))
+                throw IndexError("put_along_axis: index out of bounds");
+            std::vector<size_t> dst_coords = coords;
+            dst_coords[axis] = static_cast<size_t>(idx);
+            result.set_item<T>(dst_coords, values_cpu.item<T>(coords));
+            ShapeUtils::increment_coords(coords, indices.shape());
+        }
+    });
 
     return input.device() == Device::GPU ? result.gpu() : result;
 }
@@ -2114,22 +2077,10 @@ Tensor pad(const Tensor &input,
 
     // Fill with constant value if mode is constant
     if (mode == "constant" && value != 0.0) {
-        switch (result_cpu.dtype()) {
-        case DType::Float32:
-            result_cpu.fill<float>(static_cast<float>(value));
-            break;
-        case DType::Float64:
-            result_cpu.fill<double>(value);
-            break;
-        case DType::Int32:
-            result_cpu.fill<int32_t>(static_cast<int32_t>(value));
-            break;
-        case DType::Int64:
-            result_cpu.fill<int64_t>(static_cast<int64_t>(value));
-            break;
-        default:
-            break;
-        }
+        dispatch(result_cpu.dtype(), [&]<typename DT>(DT) {
+            using T = typename DT::value_type;
+            result_cpu.fill<T>(static_cast<T>(value));
+        });
     }
 
     // Helper to compute source index based on padding mode
@@ -2188,26 +2139,11 @@ Tensor pad(const Tensor &input,
 
         if (!use_constant) {
             // Copy value from source
-            switch (result_cpu.dtype()) {
-            case DType::Float32:
-                result_cpu.set_item<float>(out_coords,
-                                           input_cpu.item<float>(src_coords));
-                break;
-            case DType::Float64:
-                result_cpu.set_item<double>(out_coords,
-                                            input_cpu.item<double>(src_coords));
-                break;
-            case DType::Int32:
-                result_cpu.set_item<int32_t>(
-                    out_coords, input_cpu.item<int32_t>(src_coords));
-                break;
-            case DType::Int64:
-                result_cpu.set_item<int64_t>(
-                    out_coords, input_cpu.item<int64_t>(src_coords));
-                break;
-            default:
-                break;
-            }
+            dispatch(result_cpu.dtype(), [&]<typename DT>(DT) {
+                using T = typename DT::value_type;
+                result_cpu.set_item<T>(out_coords,
+                                       input_cpu.item<T>(src_coords));
+            });
         }
 
         // Increment output coordinates
@@ -2324,48 +2260,37 @@ Tensor max_pool1d(const Tensor &input, int kernel_size, int stride,
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
     Tensor result(out_shape, input.dtype(), Device::CPU);
 
-    // Process each channel
-    switch (input.dtype()) {
-#define MAX_POOL1D_CASE(DTYPE, CTYPE, MINVAL)                                  \
-    case DTYPE: {                                                              \
-        for (size_t b = 0; b < batch_size; ++b) {                              \
-            for (size_t c = 0; c < channels; ++c) {                            \
-                for (size_t o = 0; o < out_length; ++o) {                      \
-                    CTYPE max_val = MINVAL;                                    \
-                    int start = static_cast<int>(o) * stride - padding;        \
-                    for (int k = 0; k < kernel_size; ++k) {                    \
-                        int idx = start + k;                                   \
-                        if (idx >= 0 && idx < static_cast<int>(length)) {      \
-                            std::vector<size_t> coords =                       \
-                                has_batch                                      \
-                                    ? std::vector<size_t>{b, c,                \
-                                                          static_cast<size_t>( \
-                                                              idx)}            \
-                                    : std::vector<size_t>{                     \
-                                          c, static_cast<size_t>(idx)};        \
-                            CTYPE val = input_cpu.item<CTYPE>(coords);         \
-                            if (val > max_val)                                 \
-                                max_val = val;                                 \
-                        }                                                      \
-                    }                                                          \
-                    std::vector<size_t> out_coords =                           \
-                        has_batch ? std::vector<size_t>{b, c, o}               \
-                                  : std::vector<size_t>{c, o};                 \
-                    result.set_item<CTYPE>(out_coords, max_val);               \
-                }                                                              \
-            }                                                                  \
-        }                                                                      \
-        break;                                                                 \
-    }
-        MAX_POOL1D_CASE(DType::Float32, float,
-                        -std::numeric_limits<float>::infinity())
-        MAX_POOL1D_CASE(DType::Float64, double,
-                        -std::numeric_limits<double>::infinity())
-#undef MAX_POOL1D_CASE
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "max_pool1d");
-    }
+    dispatch_float(input.dtype(), "max_pool1d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t c = 0; c < channels; ++c) {
+                for (size_t o = 0; o < out_length; ++o) {
+                    double max_val = -std::numeric_limits<double>::infinity();
+                    int start = static_cast<int>(o) * stride - padding;
+                    for (int k = 0; k < kernel_size; ++k) {
+                        int idx = start + k;
+                        if (idx >= 0 && idx < static_cast<int>(length)) {
+                            std::vector<size_t> coords =
+                                has_batch
+                                    ? std::vector<size_t>{b, c,
+                                                          static_cast<size_t>(
+                                                              idx)}
+                                    : std::vector<size_t>{
+                                          c, static_cast<size_t>(idx)};
+                            double val =
+                                static_cast<double>(input_cpu.item<T>(coords));
+                            if (val > max_val)
+                                max_val = val;
+                        }
+                    }
+                    std::vector<size_t> out_coords =
+                        has_batch ? std::vector<size_t>{b, c, o}
+                                  : std::vector<size_t>{c, o};
+                    result.set_item<T>(out_coords, static_cast<T>(max_val));
+                }
+            }
+        }
+    });
 
     return input.device() == Device::GPU ? result.gpu() : result;
 }
@@ -2392,48 +2317,40 @@ Tensor avg_pool1d(const Tensor &input, int kernel_size, int stride, int padding,
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
     Tensor result(out_shape, input.dtype(), Device::CPU);
 
-    switch (input.dtype()) {
-#define AVG_POOL1D_CASE(DTYPE, CTYPE)                                          \
-    case DTYPE: {                                                              \
-        for (size_t b = 0; b < batch_size; ++b) {                              \
-            for (size_t c = 0; c < channels; ++c) {                            \
-                for (size_t o = 0; o < out_length; ++o) {                      \
-                    CTYPE sum = 0;                                             \
-                    int count = 0;                                             \
-                    int start = static_cast<int>(o) * stride - padding;        \
-                    for (int k = 0; k < kernel_size; ++k) {                    \
-                        int idx = start + k;                                   \
-                        if (idx >= 0 && idx < static_cast<int>(length)) {      \
-                            std::vector<size_t> coords =                       \
-                                has_batch                                      \
-                                    ? std::vector<size_t>{b, c,                \
-                                                          static_cast<size_t>( \
-                                                              idx)}            \
-                                    : std::vector<size_t>{                     \
-                                          c, static_cast<size_t>(idx)};        \
-                            sum += input_cpu.item<CTYPE>(coords);              \
-                            count++;                                           \
-                        } else if (count_include_pad) {                        \
-                            count++;                                           \
-                        }                                                      \
-                    }                                                          \
-                    CTYPE avg = count > 0 ? sum / count : CTYPE(0);            \
-                    std::vector<size_t> out_coords =                           \
-                        has_batch ? std::vector<size_t>{b, c, o}               \
-                                  : std::vector<size_t>{c, o};                 \
-                    result.set_item<CTYPE>(out_coords, avg);                   \
-                }                                                              \
-            }                                                                  \
-        }                                                                      \
-        break;                                                                 \
-    }
-        AVG_POOL1D_CASE(DType::Float32, float)
-        AVG_POOL1D_CASE(DType::Float64, double)
-#undef AVG_POOL1D_CASE
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "avg_pool1d");
-    }
+    dispatch_float(input.dtype(), "avg_pool1d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t c = 0; c < channels; ++c) {
+                for (size_t o = 0; o < out_length; ++o) {
+                    double sum = 0;
+                    int count = 0;
+                    int start = static_cast<int>(o) * stride - padding;
+                    for (int k = 0; k < kernel_size; ++k) {
+                        int idx = start + k;
+                        if (idx >= 0 && idx < static_cast<int>(length)) {
+                            std::vector<size_t> coords =
+                                has_batch
+                                    ? std::vector<size_t>{b, c,
+                                                          static_cast<size_t>(
+                                                              idx)}
+                                    : std::vector<size_t>{
+                                          c, static_cast<size_t>(idx)};
+                            sum +=
+                                static_cast<double>(input_cpu.item<T>(coords));
+                            count++;
+                        } else if (count_include_pad) {
+                            count++;
+                        }
+                    }
+                    double avg = count > 0 ? sum / count : 0.0;
+                    std::vector<size_t> out_coords =
+                        has_batch ? std::vector<size_t>{b, c, o}
+                                  : std::vector<size_t>{c, o};
+                    result.set_item<T>(out_coords, static_cast<T>(avg));
+                }
+            }
+        }
+    });
 
     return input.device() == Device::GPU ? result.gpu() : result;
 }
@@ -2476,62 +2393,51 @@ Tensor max_pool2d(const Tensor &input, const std::vector<int> &kernel_size,
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
     Tensor result(out_shape, input.dtype(), Device::CPU);
 
-    switch (input.dtype()) {
-#define MAX_POOL2D_CASE(DTYPE, CTYPE, MINVAL)                                  \
-    case DTYPE: {                                                              \
-        for (size_t b = 0; b < batch_size; ++b) {                              \
-            for (size_t c = 0; c < channels; ++c) {                            \
-                for (size_t oh = 0; oh < out_h; ++oh) {                        \
-                    for (size_t ow = 0; ow < out_w; ++ow) {                    \
-                        CTYPE max_val = MINVAL;                                \
-                        int h_start =                                          \
-                            static_cast<int>(oh) * actual_stride[0] -          \
-                            actual_padding[0];                                 \
-                        int w_start =                                          \
-                            static_cast<int>(ow) * actual_stride[1] -          \
-                            actual_padding[1];                                 \
-                        for (int kh = 0; kh < kernel_size[0]; ++kh) {          \
-                            for (int kw = 0; kw < kernel_size[1]; ++kw) {      \
-                                int h = h_start + kh;                          \
-                                int w = w_start + kw;                          \
-                                if (h >= 0 && h < static_cast<int>(height) &&  \
-                                    w >= 0 && w < static_cast<int>(width)) {   \
-                                    std::vector<size_t> coords =               \
-                                        has_batch                              \
-                                            ? std::vector<                     \
-                                                  size_t>{b, c,                \
-                                                          static_cast<size_t>( \
-                                                              h),              \
-                                                          static_cast<size_t>( \
-                                                              w)}              \
-                                            : std::vector<size_t>{             \
-                                                  c, static_cast<size_t>(h),   \
-                                                  static_cast<size_t>(w)};     \
-                                    CTYPE val = input_cpu.item<CTYPE>(coords); \
-                                    if (val > max_val)                         \
-                                        max_val = val;                         \
-                                }                                              \
-                            }                                                  \
-                        }                                                      \
-                        std::vector<size_t> out_coords =                       \
-                            has_batch ? std::vector<size_t>{b, c, oh, ow}      \
-                                      : std::vector<size_t>{c, oh, ow};        \
-                        result.set_item<CTYPE>(out_coords, max_val);           \
-                    }                                                          \
-                }                                                              \
-            }                                                                  \
-        }                                                                      \
-        break;                                                                 \
-    }
-        MAX_POOL2D_CASE(DType::Float32, float,
-                        -std::numeric_limits<float>::infinity())
-        MAX_POOL2D_CASE(DType::Float64, double,
-                        -std::numeric_limits<double>::infinity())
-#undef MAX_POOL2D_CASE
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "max_pool2d");
-    }
+    dispatch_float(input.dtype(), "max_pool2d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t c = 0; c < channels; ++c) {
+                for (size_t oh = 0; oh < out_h; ++oh) {
+                    for (size_t ow = 0; ow < out_w; ++ow) {
+                        double max_val =
+                            -std::numeric_limits<double>::infinity();
+                        int h_start = static_cast<int>(oh) * actual_stride[0] -
+                                      actual_padding[0];
+                        int w_start = static_cast<int>(ow) * actual_stride[1] -
+                                      actual_padding[1];
+                        for (int kh = 0; kh < kernel_size[0]; ++kh) {
+                            for (int kw = 0; kw < kernel_size[1]; ++kw) {
+                                int h = h_start + kh;
+                                int w = w_start + kw;
+                                if (h >= 0 && h < static_cast<int>(height) &&
+                                    w >= 0 && w < static_cast<int>(width)) {
+                                    std::vector<size_t> coords =
+                                        has_batch
+                                            ? std::vector<
+                                                  size_t>{b, c,
+                                                          static_cast<size_t>(
+                                                              h),
+                                                          static_cast<size_t>(
+                                                              w)}
+                                            : std::vector<size_t>{
+                                                  c, static_cast<size_t>(h),
+                                                  static_cast<size_t>(w)};
+                                    double val = static_cast<double>(
+                                        input_cpu.item<T>(coords));
+                                    if (val > max_val)
+                                        max_val = val;
+                                }
+                            }
+                        }
+                        std::vector<size_t> out_coords =
+                            has_batch ? std::vector<size_t>{b, c, oh, ow}
+                                      : std::vector<size_t>{c, oh, ow};
+                        result.set_item<T>(out_coords, static_cast<T>(max_val));
+                    }
+                }
+            }
+        }
+    });
 
     return input.device() == Device::GPU ? result.gpu() : result;
 }
@@ -2569,63 +2475,53 @@ Tensor avg_pool2d(const Tensor &input, const std::vector<int> &kernel_size,
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
     Tensor result(out_shape, input.dtype(), Device::CPU);
 
-    switch (input.dtype()) {
-#define AVG_POOL2D_CASE(DTYPE, CTYPE)                                          \
-    case DTYPE: {                                                              \
-        for (size_t b = 0; b < batch_size; ++b) {                              \
-            for (size_t c = 0; c < channels; ++c) {                            \
-                for (size_t oh = 0; oh < out_h; ++oh) {                        \
-                    for (size_t ow = 0; ow < out_w; ++ow) {                    \
-                        CTYPE sum = 0;                                         \
-                        int count = 0;                                         \
-                        int h_start =                                          \
-                            static_cast<int>(oh) * actual_stride[0] -          \
-                            actual_padding[0];                                 \
-                        int w_start =                                          \
-                            static_cast<int>(ow) * actual_stride[1] -          \
-                            actual_padding[1];                                 \
-                        for (int kh = 0; kh < kernel_size[0]; ++kh) {          \
-                            for (int kw = 0; kw < kernel_size[1]; ++kw) {      \
-                                int h = h_start + kh;                          \
-                                int w = w_start + kw;                          \
-                                if (h >= 0 && h < static_cast<int>(height) &&  \
-                                    w >= 0 && w < static_cast<int>(width)) {   \
-                                    std::vector<size_t> coords =               \
-                                        has_batch                              \
-                                            ? std::vector<                     \
-                                                  size_t>{b, c,                \
-                                                          static_cast<size_t>( \
-                                                              h),              \
-                                                          static_cast<size_t>( \
-                                                              w)}              \
-                                            : std::vector<size_t>{             \
-                                                  c, static_cast<size_t>(h),   \
-                                                  static_cast<size_t>(w)};     \
-                                    sum += input_cpu.item<CTYPE>(coords);      \
-                                    count++;                                   \
-                                } else if (count_include_pad) {                \
-                                    count++;                                   \
-                                }                                              \
-                            }                                                  \
-                        }                                                      \
-                        CTYPE avg = count > 0 ? sum / count : CTYPE(0);        \
-                        std::vector<size_t> out_coords =                       \
-                            has_batch ? std::vector<size_t>{b, c, oh, ow}      \
-                                      : std::vector<size_t>{c, oh, ow};        \
-                        result.set_item<CTYPE>(out_coords, avg);               \
-                    }                                                          \
-                }                                                              \
-            }                                                                  \
-        }                                                                      \
-        break;                                                                 \
-    }
-        AVG_POOL2D_CASE(DType::Float32, float)
-        AVG_POOL2D_CASE(DType::Float64, double)
-#undef AVG_POOL2D_CASE
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "avg_pool2d");
-    }
+    dispatch_float(input.dtype(), "avg_pool2d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t c = 0; c < channels; ++c) {
+                for (size_t oh = 0; oh < out_h; ++oh) {
+                    for (size_t ow = 0; ow < out_w; ++ow) {
+                        double sum = 0;
+                        int count = 0;
+                        int h_start = static_cast<int>(oh) * actual_stride[0] -
+                                      actual_padding[0];
+                        int w_start = static_cast<int>(ow) * actual_stride[1] -
+                                      actual_padding[1];
+                        for (int kh = 0; kh < kernel_size[0]; ++kh) {
+                            for (int kw = 0; kw < kernel_size[1]; ++kw) {
+                                int h = h_start + kh;
+                                int w = w_start + kw;
+                                if (h >= 0 && h < static_cast<int>(height) &&
+                                    w >= 0 && w < static_cast<int>(width)) {
+                                    std::vector<size_t> coords =
+                                        has_batch
+                                            ? std::vector<
+                                                  size_t>{b, c,
+                                                          static_cast<size_t>(
+                                                              h),
+                                                          static_cast<size_t>(
+                                                              w)}
+                                            : std::vector<size_t>{
+                                                  c, static_cast<size_t>(h),
+                                                  static_cast<size_t>(w)};
+                                    sum += static_cast<double>(
+                                        input_cpu.item<T>(coords));
+                                    count++;
+                                } else if (count_include_pad) {
+                                    count++;
+                                }
+                            }
+                        }
+                        double avg = count > 0 ? sum / count : 0.0;
+                        std::vector<size_t> out_coords =
+                            has_batch ? std::vector<size_t>{b, c, oh, ow}
+                                      : std::vector<size_t>{c, oh, ow};
+                        result.set_item<T>(out_coords, static_cast<T>(avg));
+                    }
+                }
+            }
+        }
+    });
 
     return input.device() == Device::GPU ? result.gpu() : result;
 }
@@ -2667,87 +2563,78 @@ Tensor max_pool3d(const Tensor &input, const std::vector<int> &kernel_size,
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
     Tensor result(out_shape, input.dtype(), Device::CPU);
 
-    switch (input.dtype()) {
-#define MAX_POOL3D_CASE(DTYPE, CTYPE, MINVAL)                                  \
-    case DTYPE: {                                                              \
-        for (size_t b = 0; b < batch_size; ++b) {                              \
-            for (size_t c = 0; c < channels; ++c) {                            \
-                for (size_t od = 0; od < out_d; ++od) {                        \
-                    for (size_t oh = 0; oh < out_h; ++oh) {                    \
-                        for (size_t ow = 0; ow < out_w; ++ow) {                \
-                            CTYPE max_val = MINVAL;                            \
-                            int d_start =                                      \
-                                static_cast<int>(od) * actual_stride[0] -      \
-                                actual_padding[0];                             \
-                            int h_start =                                      \
-                                static_cast<int>(oh) * actual_stride[1] -      \
-                                actual_padding[1];                             \
-                            int w_start =                                      \
-                                static_cast<int>(ow) * actual_stride[2] -      \
-                                actual_padding[2];                             \
-                            for (int kd = 0; kd < kernel_size[0]; ++kd) {      \
-                                for (int kh = 0; kh < kernel_size[1]; ++kh) {  \
-                                    for (int kw = 0; kw < kernel_size[2];      \
-                                         ++kw) {                               \
-                                        int d = d_start + kd;                  \
-                                        int h = h_start + kh;                  \
-                                        int w = w_start + kw;                  \
-                                        if (d >= 0 &&                          \
-                                            d < static_cast<int>(depth) &&     \
-                                            h >= 0 &&                          \
-                                            h < static_cast<int>(height) &&    \
-                                            w >= 0 &&                          \
-                                            w < static_cast<int>(width)) {     \
-                                            std::vector<size_t> coords =       \
-                                                has_batch                      \
-                                                    ? std::vector<             \
-                                                          size_t>{b, c,        \
-                                                                  static_cast< \
-                                                                      size_t>( \
-                                                                      d),      \
-                                                                  static_cast< \
-                                                                      size_t>( \
-                                                                      h),      \
-                                                                  static_cast< \
-                                                                      size_t>( \
-                                                                      w)}      \
-                                                    : std::vector<size_t>{     \
-                                                          c,                   \
-                                                          static_cast<size_t>( \
-                                                              d),              \
-                                                          static_cast<size_t>( \
-                                                              h),              \
-                                                          static_cast<size_t>( \
-                                                              w)};             \
-                                            CTYPE val =                        \
-                                                input_cpu.item<CTYPE>(coords); \
-                                            if (val > max_val)                 \
-                                                max_val = val;                 \
-                                        }                                      \
-                                    }                                          \
-                                }                                              \
-                            }                                                  \
-                            std::vector<size_t> out_coords =                   \
-                                has_batch                                      \
-                                    ? std::vector<size_t>{b, c, od, oh, ow}    \
-                                    : std::vector<size_t>{c, od, oh, ow};      \
-                            result.set_item<CTYPE>(out_coords, max_val);       \
-                        }                                                      \
-                    }                                                          \
-                }                                                              \
-            }                                                                  \
-        }                                                                      \
-        break;                                                                 \
-    }
-        MAX_POOL3D_CASE(DType::Float32, float,
-                        -std::numeric_limits<float>::infinity())
-        MAX_POOL3D_CASE(DType::Float64, double,
-                        -std::numeric_limits<double>::infinity())
-#undef MAX_POOL3D_CASE
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "max_pool3d");
-    }
+    dispatch_float(input.dtype(), "max_pool3d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t c = 0; c < channels; ++c) {
+                for (size_t od = 0; od < out_d; ++od) {
+                    for (size_t oh = 0; oh < out_h; ++oh) {
+                        for (size_t ow = 0; ow < out_w; ++ow) {
+                            double max_val =
+                                -std::numeric_limits<double>::infinity();
+                            int d_start =
+                                static_cast<int>(od) * actual_stride[0] -
+                                actual_padding[0];
+                            int h_start =
+                                static_cast<int>(oh) * actual_stride[1] -
+                                actual_padding[1];
+                            int w_start =
+                                static_cast<int>(ow) * actual_stride[2] -
+                                actual_padding[2];
+                            for (int kd = 0; kd < kernel_size[0]; ++kd) {
+                                for (int kh = 0; kh < kernel_size[1]; ++kh) {
+                                    for (int kw = 0; kw < kernel_size[2];
+                                         ++kw) {
+                                        int d = d_start + kd;
+                                        int h = h_start + kh;
+                                        int w = w_start + kw;
+                                        if (d >= 0 &&
+                                            d < static_cast<int>(depth) &&
+                                            h >= 0 &&
+                                            h < static_cast<int>(height) &&
+                                            w >= 0 &&
+                                            w < static_cast<int>(width)) {
+                                            auto coords =
+                                                has_batch
+                                                    ? std::vector<
+                                                          size_t>{b, c,
+                                                                  static_cast<
+                                                                      size_t>(
+                                                                      d),
+                                                                  static_cast<
+                                                                      size_t>(
+                                                                      h),
+                                                                  static_cast<
+                                                                      size_t>(
+                                                                      w)}
+                                                    : std::vector<size_t>{
+                                                          c,
+                                                          static_cast<size_t>(
+                                                              d),
+                                                          static_cast<size_t>(
+                                                              h),
+                                                          static_cast<size_t>(
+                                                              w)};
+                                            double val = static_cast<double>(
+                                                input_cpu.item<T>(coords));
+                                            if (val > max_val)
+                                                max_val = val;
+                                        }
+                                    }
+                                }
+                            }
+                            auto out_coords =
+                                has_batch
+                                    ? std::vector<size_t>{b, c, od, oh, ow}
+                                    : std::vector<size_t>{c, od, oh, ow};
+                            result.set_item<T>(out_coords,
+                                               static_cast<T>(max_val));
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     return input.device() == Device::GPU ? result.gpu() : result;
 }
@@ -2789,88 +2676,79 @@ Tensor avg_pool3d(const Tensor &input, const std::vector<int> &kernel_size,
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
     Tensor result(out_shape, input.dtype(), Device::CPU);
 
-    switch (input.dtype()) {
-#define AVG_POOL3D_CASE(DTYPE, CTYPE)                                          \
-    case DTYPE: {                                                              \
-        for (size_t b = 0; b < batch_size; ++b) {                              \
-            for (size_t c = 0; c < channels; ++c) {                            \
-                for (size_t od = 0; od < out_d; ++od) {                        \
-                    for (size_t oh = 0; oh < out_h; ++oh) {                    \
-                        for (size_t ow = 0; ow < out_w; ++ow) {                \
-                            CTYPE sum = 0;                                     \
-                            int count = 0;                                     \
-                            int d_start =                                      \
-                                static_cast<int>(od) * actual_stride[0] -      \
-                                actual_padding[0];                             \
-                            int h_start =                                      \
-                                static_cast<int>(oh) * actual_stride[1] -      \
-                                actual_padding[1];                             \
-                            int w_start =                                      \
-                                static_cast<int>(ow) * actual_stride[2] -      \
-                                actual_padding[2];                             \
-                            for (int kd = 0; kd < kernel_size[0]; ++kd) {      \
-                                for (int kh = 0; kh < kernel_size[1]; ++kh) {  \
-                                    for (int kw = 0; kw < kernel_size[2];      \
-                                         ++kw) {                               \
-                                        int d = d_start + kd;                  \
-                                        int h = h_start + kh;                  \
-                                        int w = w_start + kw;                  \
-                                        if (d >= 0 &&                          \
-                                            d < static_cast<int>(depth) &&     \
-                                            h >= 0 &&                          \
-                                            h < static_cast<int>(height) &&    \
-                                            w >= 0 &&                          \
-                                            w < static_cast<int>(width)) {     \
-                                            std::vector<size_t> coords =       \
-                                                has_batch                      \
-                                                    ? std::vector<             \
-                                                          size_t>{b, c,        \
-                                                                  static_cast< \
-                                                                      size_t>( \
-                                                                      d),      \
-                                                                  static_cast< \
-                                                                      size_t>( \
-                                                                      h),      \
-                                                                  static_cast< \
-                                                                      size_t>( \
-                                                                      w)}      \
-                                                    : std::vector<size_t>{     \
-                                                          c,                   \
-                                                          static_cast<size_t>( \
-                                                              d),              \
-                                                          static_cast<size_t>( \
-                                                              h),              \
-                                                          static_cast<size_t>( \
-                                                              w)};             \
-                                            sum +=                             \
-                                                input_cpu.item<CTYPE>(coords); \
-                                            count++;                           \
-                                        } else if (count_include_pad) {        \
-                                            count++;                           \
-                                        }                                      \
-                                    }                                          \
-                                }                                              \
-                            }                                                  \
-                            CTYPE avg = count > 0 ? sum / count : CTYPE(0);    \
-                            std::vector<size_t> out_coords =                   \
-                                has_batch                                      \
-                                    ? std::vector<size_t>{b, c, od, oh, ow}    \
-                                    : std::vector<size_t>{c, od, oh, ow};      \
-                            result.set_item<CTYPE>(out_coords, avg);           \
-                        }                                                      \
-                    }                                                          \
-                }                                                              \
-            }                                                                  \
-        }                                                                      \
-        break;                                                                 \
-    }
-        AVG_POOL3D_CASE(DType::Float32, float)
-        AVG_POOL3D_CASE(DType::Float64, double)
-#undef AVG_POOL3D_CASE
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "avg_pool3d");
-    }
+    dispatch_float(input.dtype(), "avg_pool3d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t c = 0; c < channels; ++c) {
+                for (size_t od = 0; od < out_d; ++od) {
+                    for (size_t oh = 0; oh < out_h; ++oh) {
+                        for (size_t ow = 0; ow < out_w; ++ow) {
+                            double sum = 0;
+                            int count = 0;
+                            int d_start =
+                                static_cast<int>(od) * actual_stride[0] -
+                                actual_padding[0];
+                            int h_start =
+                                static_cast<int>(oh) * actual_stride[1] -
+                                actual_padding[1];
+                            int w_start =
+                                static_cast<int>(ow) * actual_stride[2] -
+                                actual_padding[2];
+                            for (int kd = 0; kd < kernel_size[0]; ++kd) {
+                                for (int kh = 0; kh < kernel_size[1]; ++kh) {
+                                    for (int kw = 0; kw < kernel_size[2];
+                                         ++kw) {
+                                        int d = d_start + kd;
+                                        int h = h_start + kh;
+                                        int w = w_start + kw;
+                                        if (d >= 0 &&
+                                            d < static_cast<int>(depth) &&
+                                            h >= 0 &&
+                                            h < static_cast<int>(height) &&
+                                            w >= 0 &&
+                                            w < static_cast<int>(width)) {
+                                            std::vector<size_t> coords =
+                                                has_batch
+                                                    ? std::vector<
+                                                          size_t>{b, c,
+                                                                  static_cast<
+                                                                      size_t>(
+                                                                      d),
+                                                                  static_cast<
+                                                                      size_t>(
+                                                                      h),
+                                                                  static_cast<
+                                                                      size_t>(
+                                                                      w)}
+                                                    : std::vector<size_t>{
+                                                          c,
+                                                          static_cast<size_t>(
+                                                              d),
+                                                          static_cast<size_t>(
+                                                              h),
+                                                          static_cast<size_t>(
+                                                              w)};
+                                            sum += static_cast<double>(
+                                                input_cpu.item<T>(coords));
+                                            count++;
+                                        } else if (count_include_pad) {
+                                            count++;
+                                        }
+                                    }
+                                }
+                            }
+                            double avg = count > 0 ? sum / count : 0.0;
+                            std::vector<size_t> out_coords =
+                                has_batch
+                                    ? std::vector<size_t>{b, c, od, oh, ow}
+                                    : std::vector<size_t>{c, od, oh, ow};
+                            result.set_item<T>(out_coords, static_cast<T>(avg));
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     return input.device() == Device::GPU ? result.gpu() : result;
 }

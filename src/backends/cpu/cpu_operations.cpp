@@ -2,6 +2,7 @@
 
 #include <cstddef>
 
+#include "axiom/dispatch.hpp"
 #include "axiom/error.hpp"
 #include "axiom/operations.hpp"
 #include "axiom/parallel.hpp"
@@ -68,52 +69,20 @@ Tensor CPUBinaryOperation<Func>::execute_binary(const Tensor &lhs,
     // Create result tensor
     Tensor result(broadcast_info.result_shape, result_dtype, Device::CPU);
 
-#define DISPATCH_CPU_BINARY_OP(TYPE_ENUM, TYPE)                                \
-    case TYPE_ENUM:                                                            \
-        execute_binary_typed<TYPE>(lhs, rhs, result);                          \
-        break;
-
-    switch (result_dtype) {
-    case DType::Float32:
-    case DType::Float64:
-    case DType::Float16:
-    case DType::BFloat16:
-        // Skip float types for bitwise ops - we throw above
-        if (!is_bitwise_op) {
-            if (result_dtype == DType::Float32)
-                execute_binary_typed<float>(lhs, rhs, result);
-            else if (result_dtype == DType::Float64)
-                execute_binary_typed<double>(lhs, rhs, result);
-            else if (result_dtype == DType::BFloat16)
-                execute_binary_typed<bfloat16_t>(lhs, rhs, result);
-            else
-                execute_binary_typed<float16_t>(lhs, rhs, result);
+    dispatch(result_dtype, [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        if constexpr (DT::is_complex()) {
+            throw TypeError::unsupported_dtype(
+                dtype_name(result_dtype),
+                "CPU binary operations (complex types require special "
+                "handling)");
+        } else if constexpr (DT::is_float()) {
+            if (!is_bitwise_op)
+                execute_binary_typed<T>(lhs, rhs, result);
+        } else {
+            execute_binary_typed<T>(lhs, rhs, result);
         }
-        break;
-        DISPATCH_CPU_BINARY_OP(DType::Int8, int8_t)
-        DISPATCH_CPU_BINARY_OP(DType::Int16, int16_t)
-        DISPATCH_CPU_BINARY_OP(DType::Int32, int32_t)
-        DISPATCH_CPU_BINARY_OP(DType::Int64, int64_t)
-        DISPATCH_CPU_BINARY_OP(DType::UInt8, uint8_t)
-        DISPATCH_CPU_BINARY_OP(DType::UInt16, uint16_t)
-        DISPATCH_CPU_BINARY_OP(DType::UInt32, uint32_t)
-        DISPATCH_CPU_BINARY_OP(DType::UInt64, uint64_t)
-    case DType::Bool:
-        execute_binary_typed<bool>(lhs, rhs, result);
-        break;
-    case DType::Complex64:
-    case DType::Complex128:
-        // Complex types are handled separately - only arithmetic ops are
-        // allowed The operation registry and operations.cpp should enforce this
-        // before we get here
-        throw TypeError::unsupported_dtype(
-            dtype_name(result_dtype),
-            "CPU binary operations (complex types require special handling)");
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(result_dtype),
-                                           "CPU binary operations");
-    }
-#undef DISPATCH_CPU_BINARY_OP
+    });
 
     return result;
 }
@@ -638,31 +607,11 @@ void CPUBinaryOperation<Func>::execute_binary_inplace(Tensor &lhs,
             "In-place operation with broadcasting cannot change tensor shape");
     }
 
-// Dispatch to the typed implementation
-#define DISPATCH_CPU_INPLACE_OP(TYPE_ENUM, TYPE)                               \
-    case TYPE_ENUM:                                                            \
-        execute_inplace_typed<TYPE>(lhs, rhs);                                 \
-        break;
-
-    switch (lhs.dtype()) {
-        DISPATCH_CPU_INPLACE_OP(DType::Float32, float)
-        DISPATCH_CPU_INPLACE_OP(DType::Float64, double)
-        DISPATCH_CPU_INPLACE_OP(DType::Float16, float16_t)
-        DISPATCH_CPU_INPLACE_OP(DType::BFloat16, bfloat16_t)
-        DISPATCH_CPU_INPLACE_OP(DType::Int8, int8_t)
-        DISPATCH_CPU_INPLACE_OP(DType::Int16, int16_t)
-        DISPATCH_CPU_INPLACE_OP(DType::Int32, int32_t)
-        DISPATCH_CPU_INPLACE_OP(DType::Int64, int64_t)
-        DISPATCH_CPU_INPLACE_OP(DType::UInt8, uint8_t)
-        DISPATCH_CPU_INPLACE_OP(DType::UInt16, uint16_t)
-        DISPATCH_CPU_INPLACE_OP(DType::UInt32, uint32_t)
-        DISPATCH_CPU_INPLACE_OP(DType::UInt64, uint64_t)
-        DISPATCH_CPU_INPLACE_OP(DType::Bool, bool)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(lhs.dtype()),
-                                           "CPU in-place operations");
-    }
-#undef DISPATCH_CPU_INPLACE_OP
+    // Dispatch to the typed implementation
+    dispatch(lhs.dtype(), [&]<typename DT>(DT) {
+        if constexpr (!DT::is_complex())
+            execute_inplace_typed<typename DT::value_type>(lhs, rhs);
+    });
 }
 
 template <typename Func>
@@ -902,34 +851,14 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
     // Special handling for logical_not - always outputs Bool
     if (is_logical_not) {
         bool *out_data = result.typed_data<bool>();
-        // Handle different input dtypes
-        switch (input.dtype()) {
-#define DISPATCH_LOGICAL_NOT(DTYPE, CTYPE)                                     \
-    case DTYPE: {                                                              \
-        const CTYPE *in_data = input.typed_data<CTYPE>();                      \
-        for (size_t i = 0; i < input.size(); ++i) {                            \
-            out_data[i] = !static_cast<bool>(in_data[i]);                      \
-        }                                                                      \
-        break;                                                                 \
-    }
-            DISPATCH_LOGICAL_NOT(DType::Bool, bool)
-            DISPATCH_LOGICAL_NOT(DType::Int8, int8_t)
-            DISPATCH_LOGICAL_NOT(DType::Int16, int16_t)
-            DISPATCH_LOGICAL_NOT(DType::Int32, int32_t)
-            DISPATCH_LOGICAL_NOT(DType::Int64, int64_t)
-            DISPATCH_LOGICAL_NOT(DType::UInt8, uint8_t)
-            DISPATCH_LOGICAL_NOT(DType::UInt16, uint16_t)
-            DISPATCH_LOGICAL_NOT(DType::UInt32, uint32_t)
-            DISPATCH_LOGICAL_NOT(DType::UInt64, uint64_t)
-            DISPATCH_LOGICAL_NOT(DType::Float16, float16_t)
-            DISPATCH_LOGICAL_NOT(DType::BFloat16, bfloat16_t)
-            DISPATCH_LOGICAL_NOT(DType::Float32, float)
-            DISPATCH_LOGICAL_NOT(DType::Float64, double)
-#undef DISPATCH_LOGICAL_NOT
-        default:
-            throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                               "logical_not");
-        }
+        dispatch(input.dtype(), [&]<typename DT>(DT) {
+            if constexpr (!DT::is_complex()) {
+                const typename DT::value_type *in_data =
+                    input.typed_data<typename DT::value_type>();
+                for (size_t i = 0; i < input.size(); ++i)
+                    out_data[i] = !static_cast<bool>(in_data[i]);
+            }
+        });
         return result;
     }
 
@@ -937,35 +866,14 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
     // outputs Bool
     if (is_element_test) {
         bool *out_data = result.typed_data<bool>();
-        switch (input.dtype()) {
-#define DISPATCH_ELEMENT_TEST(DTYPE, CTYPE)                                    \
-    case DTYPE: {                                                              \
-        const CTYPE *in_data = input.typed_data<CTYPE>();                      \
-        for (size_t i = 0; i < input.size(); ++i) {                            \
-            out_data[i] = func_(in_data[i]);                                   \
-        }                                                                      \
-        break;                                                                 \
-    }
-            DISPATCH_ELEMENT_TEST(DType::Float16, float16_t)
-            DISPATCH_ELEMENT_TEST(DType::BFloat16, bfloat16_t)
-            DISPATCH_ELEMENT_TEST(DType::Float32, float)
-            DISPATCH_ELEMENT_TEST(DType::Float64, double)
-            // For integer types, isnan/isinf return false, isfinite returns
-            // true
-            DISPATCH_ELEMENT_TEST(DType::Bool, bool)
-            DISPATCH_ELEMENT_TEST(DType::Int8, int8_t)
-            DISPATCH_ELEMENT_TEST(DType::Int16, int16_t)
-            DISPATCH_ELEMENT_TEST(DType::Int32, int32_t)
-            DISPATCH_ELEMENT_TEST(DType::Int64, int64_t)
-            DISPATCH_ELEMENT_TEST(DType::UInt8, uint8_t)
-            DISPATCH_ELEMENT_TEST(DType::UInt16, uint16_t)
-            DISPATCH_ELEMENT_TEST(DType::UInt32, uint32_t)
-            DISPATCH_ELEMENT_TEST(DType::UInt64, uint64_t)
-#undef DISPATCH_ELEMENT_TEST
-        default:
-            throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                               name());
-        }
+        dispatch(input.dtype(), [&]<typename DT>(DT) {
+            if constexpr (!DT::is_complex()) {
+                const typename DT::value_type *in_data =
+                    input.typed_data<typename DT::value_type>();
+                for (size_t i = 0; i < input.size(); ++i)
+                    out_data[i] = func_(in_data[i]);
+            }
+        });
         return result;
     }
 
@@ -987,36 +895,15 @@ Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
         return result;
     }
 
-#define DISPATCH_CPU_UNARY_OP(TYPE_ENUM, TYPE)                                 \
-    case TYPE_ENUM:                                                            \
-        execute_unary_typed<TYPE>(input, result);                              \
-        break;
-
-    switch (result_dtype) {
-        DISPATCH_CPU_UNARY_OP(DType::Float32, float)
-        DISPATCH_CPU_UNARY_OP(DType::Float64, double)
-        DISPATCH_CPU_UNARY_OP(DType::Float16, float16_t)
-        DISPATCH_CPU_UNARY_OP(DType::BFloat16, bfloat16_t)
-        DISPATCH_CPU_UNARY_OP(DType::Int8, int8_t)
-        DISPATCH_CPU_UNARY_OP(DType::Int16, int16_t)
-        DISPATCH_CPU_UNARY_OP(DType::Int32, int32_t)
-        DISPATCH_CPU_UNARY_OP(DType::Int64, int64_t)
-        DISPATCH_CPU_UNARY_OP(DType::UInt8, uint8_t)
-        DISPATCH_CPU_UNARY_OP(DType::UInt16, uint16_t)
-        DISPATCH_CPU_UNARY_OP(DType::UInt32, uint32_t)
-        DISPATCH_CPU_UNARY_OP(DType::UInt64, uint64_t)
-        DISPATCH_CPU_UNARY_OP(DType::Bool, bool)
-    case DType::Complex64:
-    case DType::Complex128:
-        // Complex unary operations should be handled at the higher level in
-        // operations.cpp except for abs which is already handled above
-        throw TypeError::unsupported_dtype(
-            dtype_name(result_dtype), name() + " (use higher-level dispatch)");
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(result_dtype),
-                                           "CPU unary operations");
-    }
-#undef DISPATCH_CPU_UNARY_OP
+    dispatch(result_dtype, [&]<typename DT>(DT) {
+        if constexpr (DT::is_complex()) {
+            throw TypeError::unsupported_dtype(
+                dtype_name(result_dtype),
+                name() + " (use higher-level dispatch)");
+        } else {
+            execute_unary_typed<typename DT::value_type>(input, result);
+        }
+    });
 
     return result;
 }
@@ -2251,24 +2138,10 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
     Tensor b_promoted =
         (b.dtype() == result_dtype) ? b : b.astype(result_dtype);
 
-#define DISPATCH_MATMUL(DTYPE, CTYPE)                                          \
-    case DTYPE:                                                                \
-        return execute_matmul_typed<CTYPE>(a_promoted, b_promoted,             \
-                                           transpose_a, transpose_b);
-
-    switch (result_dtype) {
-        DISPATCH_MATMUL(DType::Float16, float16_t)
-        DISPATCH_MATMUL(DType::BFloat16, bfloat16_t)
-        DISPATCH_MATMUL(DType::Float32, float)
-        DISPATCH_MATMUL(DType::Float64, double)
-        DISPATCH_MATMUL(DType::Int32, int32_t)
-        DISPATCH_MATMUL(DType::Int64, int64_t)
-        DISPATCH_MATMUL(DType::Complex64, complex64_t)
-        DISPATCH_MATMUL(DType::Complex128, complex128_t)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(result_dtype), "MatMul");
-    }
-#undef DISPATCH_MATMUL
+    return dispatch(result_dtype, [&]<typename DT>(DT) {
+        return execute_matmul_typed<typename DT::value_type>(
+            a_promoted, b_promoted, transpose_a, transpose_b);
+    });
 }
 
 // ============================================================================
@@ -2384,21 +2257,10 @@ Tensor CPUArgMaxOperation::execute_reduction(const Tensor &input,
         ax = 0;
     }
 
-#define DISPATCH_ARGMAX(DTYPE, CTYPE)                                          \
-    case DTYPE:                                                                \
-        return execute_argmax_typed<CTYPE>(input, ax, keep_dims);
-
-    switch (input.dtype()) {
-        DISPATCH_ARGMAX(DType::Float16, float16_t)
-        DISPATCH_ARGMAX(DType::BFloat16, bfloat16_t)
-        DISPATCH_ARGMAX(DType::Float32, float)
-        DISPATCH_ARGMAX(DType::Float64, double)
-        DISPATCH_ARGMAX(DType::Int32, int32_t)
-        DISPATCH_ARGMAX(DType::Int64, int64_t)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "ArgMax");
-    }
-#undef DISPATCH_ARGMAX
+    return dispatch_numeric(input.dtype(), "ArgMax", [&]<typename DT>(DT) {
+        return execute_argmax_typed<typename DT::value_type>(input, ax,
+                                                             keep_dims);
+    });
 }
 
 template <typename T>
@@ -2510,21 +2372,10 @@ Tensor CPUArgMinOperation::execute_reduction(const Tensor &input,
         ax = 0;
     }
 
-#define DISPATCH_ARGMIN(DTYPE, CTYPE)                                          \
-    case DTYPE:                                                                \
-        return execute_argmin_typed<CTYPE>(input, ax, keep_dims);
-
-    switch (input.dtype()) {
-        DISPATCH_ARGMIN(DType::Float16, float16_t)
-        DISPATCH_ARGMIN(DType::BFloat16, bfloat16_t)
-        DISPATCH_ARGMIN(DType::Float32, float)
-        DISPATCH_ARGMIN(DType::Float64, double)
-        DISPATCH_ARGMIN(DType::Int32, int32_t)
-        DISPATCH_ARGMIN(DType::Int64, int64_t)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "ArgMin");
-    }
-#undef DISPATCH_ARGMIN
+    return dispatch_numeric(input.dtype(), "ArgMin", [&]<typename DT>(DT) {
+        return execute_argmin_typed<typename DT::value_type>(input, ax,
+                                                             keep_dims);
+    });
 }
 
 // ============================================================================
@@ -2761,28 +2612,9 @@ Tensor CPUWhereOperation::execute_where(const Tensor &condition,
     // Determine output dtype from a and b
     DType output_dtype = ops::promote_types(a.dtype(), b.dtype());
 
-#define DISPATCH_WHERE(DTYPE, CTYPE)                                           \
-    case DTYPE:                                                                \
-        return execute_where_typed<CTYPE>(condition, a, b);
-
-    switch (output_dtype) {
-        DISPATCH_WHERE(DType::Float16, float16_t)
-        DISPATCH_WHERE(DType::BFloat16, bfloat16_t)
-        DISPATCH_WHERE(DType::Float32, float)
-        DISPATCH_WHERE(DType::Float64, double)
-        DISPATCH_WHERE(DType::Int32, int32_t)
-        DISPATCH_WHERE(DType::Int64, int64_t)
-        DISPATCH_WHERE(DType::Int16, int16_t)
-        DISPATCH_WHERE(DType::Int8, int8_t)
-        DISPATCH_WHERE(DType::UInt8, uint8_t)
-        DISPATCH_WHERE(DType::UInt16, uint16_t)
-        DISPATCH_WHERE(DType::UInt32, uint32_t)
-        DISPATCH_WHERE(DType::UInt64, uint64_t)
-        DISPATCH_WHERE(DType::Bool, bool)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(output_dtype), "Where");
-    }
-#undef DISPATCH_WHERE
+    return dispatch(output_dtype, [&]<typename DT>(DT) {
+        return execute_where_typed<typename DT::value_type>(condition, a, b);
+    });
 }
 
 // ============================================================================
@@ -2900,29 +2732,10 @@ Tensor CPUMaskedFillOperation::execute_masked_fill(const Tensor &input,
         throw DeviceError::cpu_only("CPU MaskedFill");
     }
 
-#define DISPATCH_MASKED_FILL(DTYPE, CTYPE)                                     \
-    case DTYPE:                                                                \
-        return execute_masked_fill_typed<CTYPE>(input, mask, value);
-
-    switch (input.dtype()) {
-        DISPATCH_MASKED_FILL(DType::Float16, float16_t)
-        DISPATCH_MASKED_FILL(DType::BFloat16, bfloat16_t)
-        DISPATCH_MASKED_FILL(DType::Float32, float)
-        DISPATCH_MASKED_FILL(DType::Float64, double)
-        DISPATCH_MASKED_FILL(DType::Int32, int32_t)
-        DISPATCH_MASKED_FILL(DType::Int64, int64_t)
-        DISPATCH_MASKED_FILL(DType::Int16, int16_t)
-        DISPATCH_MASKED_FILL(DType::Int8, int8_t)
-        DISPATCH_MASKED_FILL(DType::UInt8, uint8_t)
-        DISPATCH_MASKED_FILL(DType::UInt16, uint16_t)
-        DISPATCH_MASKED_FILL(DType::UInt32, uint32_t)
-        DISPATCH_MASKED_FILL(DType::UInt64, uint64_t)
-        DISPATCH_MASKED_FILL(DType::Bool, bool)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "MaskedFill");
-    }
-#undef DISPATCH_MASKED_FILL
+    return dispatch(input.dtype(), [&]<typename DT>(DT) {
+        return execute_masked_fill_typed<typename DT::value_type>(input, mask,
+                                                                  value);
+    });
 }
 
 // ============================================================================
@@ -2996,29 +2809,10 @@ CPUMaskedSelectOperation::execute_masked_select(const Tensor &input,
         throw DeviceError::cpu_only("CPU MaskedSelect");
     }
 
-#define DISPATCH_MASKED_SELECT(DTYPE, CTYPE)                                   \
-    case DTYPE:                                                                \
-        return execute_masked_select_typed<CTYPE>(input, mask);
-
-    switch (input.dtype()) {
-        DISPATCH_MASKED_SELECT(DType::Float16, float16_t)
-        DISPATCH_MASKED_SELECT(DType::BFloat16, bfloat16_t)
-        DISPATCH_MASKED_SELECT(DType::Float32, float)
-        DISPATCH_MASKED_SELECT(DType::Float64, double)
-        DISPATCH_MASKED_SELECT(DType::Int32, int32_t)
-        DISPATCH_MASKED_SELECT(DType::Int64, int64_t)
-        DISPATCH_MASKED_SELECT(DType::Int16, int16_t)
-        DISPATCH_MASKED_SELECT(DType::Int8, int8_t)
-        DISPATCH_MASKED_SELECT(DType::UInt8, uint8_t)
-        DISPATCH_MASKED_SELECT(DType::UInt16, uint16_t)
-        DISPATCH_MASKED_SELECT(DType::UInt32, uint32_t)
-        DISPATCH_MASKED_SELECT(DType::UInt64, uint64_t)
-        DISPATCH_MASKED_SELECT(DType::Bool, bool)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "MaskedSelect");
-    }
-#undef DISPATCH_MASKED_SELECT
+    return dispatch(input.dtype(), [&]<typename DT>(DT) {
+        return execute_masked_select_typed<typename DT::value_type>(input,
+                                                                    mask);
+    });
 }
 
 // ============================================================================
@@ -3105,28 +2899,10 @@ Tensor CPUGatherOperation::execute_gather(const Tensor &input, int dim,
         throw DeviceError::cpu_only("CPU Gather");
     }
 
-#define DISPATCH_GATHER(DTYPE, CTYPE)                                          \
-    case DTYPE:                                                                \
-        return execute_gather_typed<CTYPE>(input, dim, indices);
-
-    switch (input.dtype()) {
-        DISPATCH_GATHER(DType::Float16, float16_t)
-        DISPATCH_GATHER(DType::BFloat16, bfloat16_t)
-        DISPATCH_GATHER(DType::Float32, float)
-        DISPATCH_GATHER(DType::Float64, double)
-        DISPATCH_GATHER(DType::Int32, int32_t)
-        DISPATCH_GATHER(DType::Int64, int64_t)
-        DISPATCH_GATHER(DType::Int16, int16_t)
-        DISPATCH_GATHER(DType::Int8, int8_t)
-        DISPATCH_GATHER(DType::UInt8, uint8_t)
-        DISPATCH_GATHER(DType::UInt16, uint16_t)
-        DISPATCH_GATHER(DType::UInt32, uint32_t)
-        DISPATCH_GATHER(DType::UInt64, uint64_t)
-        DISPATCH_GATHER(DType::Bool, bool)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()), "Gather");
-    }
-#undef DISPATCH_GATHER
+    return dispatch(input.dtype(), [&]<typename DT>(DT) {
+        return execute_gather_typed<typename DT::value_type>(input, dim,
+                                                             indices);
+    });
 }
 
 // ============================================================================
@@ -3201,29 +2977,10 @@ Tensor CPUScatterOperation::execute_scatter(const Tensor &input, int dim,
         throw DeviceError::cpu_only("CPU Scatter");
     }
 
-#define DISPATCH_SCATTER(DTYPE, CTYPE)                                         \
-    case DTYPE:                                                                \
-        return execute_scatter_typed<CTYPE>(input, dim, indices, src);
-
-    switch (input.dtype()) {
-        DISPATCH_SCATTER(DType::Float16, float16_t)
-        DISPATCH_SCATTER(DType::BFloat16, bfloat16_t)
-        DISPATCH_SCATTER(DType::Float32, float)
-        DISPATCH_SCATTER(DType::Float64, double)
-        DISPATCH_SCATTER(DType::Int32, int32_t)
-        DISPATCH_SCATTER(DType::Int64, int64_t)
-        DISPATCH_SCATTER(DType::Int16, int16_t)
-        DISPATCH_SCATTER(DType::Int8, int8_t)
-        DISPATCH_SCATTER(DType::UInt8, uint8_t)
-        DISPATCH_SCATTER(DType::UInt16, uint16_t)
-        DISPATCH_SCATTER(DType::UInt32, uint32_t)
-        DISPATCH_SCATTER(DType::UInt64, uint64_t)
-        DISPATCH_SCATTER(DType::Bool, bool)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "Scatter");
-    }
-#undef DISPATCH_SCATTER
+    return dispatch(input.dtype(), [&]<typename DT>(DT) {
+        return execute_scatter_typed<typename DT::value_type>(input, dim,
+                                                              indices, src);
+    });
 }
 
 // ============================================================================
@@ -3323,29 +3080,10 @@ CPUIndexSelectOperation::execute_index_select(const Tensor &input, int dim,
         throw ShapeError("index_select requires 1D indices tensor");
     }
 
-#define DISPATCH_INDEX_SELECT(DTYPE, CTYPE)                                    \
-    case DTYPE:                                                                \
-        return execute_index_select_typed<CTYPE>(input, dim, indices);
-
-    switch (input.dtype()) {
-        DISPATCH_INDEX_SELECT(DType::Float16, float16_t)
-        DISPATCH_INDEX_SELECT(DType::BFloat16, bfloat16_t)
-        DISPATCH_INDEX_SELECT(DType::Float32, float)
-        DISPATCH_INDEX_SELECT(DType::Float64, double)
-        DISPATCH_INDEX_SELECT(DType::Int32, int32_t)
-        DISPATCH_INDEX_SELECT(DType::Int64, int64_t)
-        DISPATCH_INDEX_SELECT(DType::Int16, int16_t)
-        DISPATCH_INDEX_SELECT(DType::Int8, int8_t)
-        DISPATCH_INDEX_SELECT(DType::UInt8, uint8_t)
-        DISPATCH_INDEX_SELECT(DType::UInt16, uint16_t)
-        DISPATCH_INDEX_SELECT(DType::UInt32, uint32_t)
-        DISPATCH_INDEX_SELECT(DType::UInt64, uint64_t)
-        DISPATCH_INDEX_SELECT(DType::Bool, bool)
-    default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()),
-                                           "IndexSelect");
-    }
-#undef DISPATCH_INDEX_SELECT
+    return dispatch(input.dtype(), [&]<typename DT>(DT) {
+        return execute_index_select_typed<typename DT::value_type>(input, dim,
+                                                                   indices);
+    });
 }
 
 // ============================================================================
