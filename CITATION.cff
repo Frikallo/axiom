@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+title: Axiom
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Noah
+    family-names: Kay
+repository-code: 'https://github.com/frikallo/axiom'
+abstract: >-
+    Axiom: Highly-Flexible, High-Performance Tensor Library for C++
+license: MIT
