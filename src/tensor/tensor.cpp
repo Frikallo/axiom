@@ -20,9 +20,10 @@
 #include "axiom/random.hpp"
 #include "axiom/system.hpp"
 
-// Include Metal execution stream for GPU synchronization on Apple platforms
+// Include Metal execution stream and unified storage for Apple platforms
 #ifdef AXIOM_METAL_SUPPORT
 #include "backends/metal/metal_common.hpp"
+#include "backends/metal/unified_storage.hpp"
 #endif
 
 namespace axiom {
@@ -1497,6 +1498,28 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
     // Materialize lazy tensors before device transfer
     materialize_if_needed();
 
+#ifdef AXIOM_METAL_SUPPORT
+    // Zero-copy path for unified memory: just switch the device tag
+    if (order == memory_order_) {
+        auto *unified =
+            dynamic_cast<backends::metal::UnifiedStorage *>(storage_.get());
+        if (unified) {
+            // Synchronize GPU before CPU reads
+            if (device() == Device::GPU && target_device == Device::CPU)
+                backends::metal::MetalExecutionStream::instance().synchronize();
+
+            auto new_storage = unified->with_device_tag(target_device);
+            Tensor result;
+            result.shape_ = shape_;
+            result.strides_ = strides_;
+            result.dtype_ = dtype_;
+            result.memory_order_ = memory_order_;
+            result.storage_ = std::move(new_storage);
+            return result;
+        }
+    }
+#endif
+
     auto new_tensor = Tensor(shape_, dtype_, target_device, order);
 
     if (order != memory_order_ && device() == Device::CPU &&
@@ -1511,9 +1534,13 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
 
 Tensor Tensor::cpu() const {
 #ifdef AXIOM_METAL_SUPPORT
-    // Synchronize any pending GPU operations before copying to CPU
-    if (device() == Device::GPU)
+    // For non-unified storage, synchronize before the copy.
+    // Unified storage synchronization is handled inside to().
+    if (device() == Device::GPU &&
+        dynamic_cast<backends::metal::UnifiedStorage *>(storage_.get()) ==
+            nullptr) {
         backends::metal::MetalExecutionStream::instance().synchronize();
+    }
 #endif
     return to(Device::CPU, memory_order_);
 }

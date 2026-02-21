@@ -343,6 +343,7 @@ endif()
 if(APPLE AND AXIOM_HAS_METAL)
     list(APPEND AXIOM_SOURCES
         src/backends/metal/metal_storage.mm
+        src/backends/metal/unified_storage.mm
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
@@ -353,6 +354,7 @@ if(APPLE AND AXIOM_HAS_METAL)
 
     set_source_files_properties(
         src/backends/metal/metal_storage.mm
+        src/backends/metal/unified_storage.mm
         src/backends/metal/metal_operations.mm
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm

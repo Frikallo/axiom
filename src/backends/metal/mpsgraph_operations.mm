@@ -1,5 +1,6 @@
 #import "mpsgraph_operations.hpp"
 #import "metal_common.hpp"
+#import "metal_buffer_provider.hpp"
 #import "metal_storage.hpp"
 #import "graph_cache.hpp"
 #import "axiom/error.hpp"
@@ -97,9 +98,9 @@ static Tensor makeContiguousViaGatherKernel(const Tensor& tensor) {
     id<MTLComputePipelineState> pipeline_state = getGatherPipelineState(tensor.dtype());
     
     // Get storage buffers
-    auto* src_storage = static_cast<const MetalStorage*>(tensor.storage().get());
-    auto* dst_storage = static_cast<MetalStorage*>(result.storage().get());
-    
+    auto* src_storage = as_metal_buffer_provider(tensor.storage().get());
+    auto* dst_storage = as_metal_buffer_provider(result.storage().get());
+
     id<MTLBuffer> src_buffer = (__bridge id<MTLBuffer>)src_storage->buffer();
     id<MTLBuffer> dst_buffer = (__bridge id<MTLBuffer>)dst_storage->buffer();
     
@@ -224,7 +225,7 @@ static MPSGraphTensorData* createTensorData(const Tensor& tensor) {
         throw DeviceError("MPSGraph operations require GPU tensors");
     }
     
-    auto* storage = static_cast<const MetalStorage*>(tensor.storage().get());
+    auto* storage = as_metal_buffer_provider(tensor.storage().get());
     id<MTLBuffer> buffer = (__bridge id<MTLBuffer>)storage->buffer();
     
     MPSDataType dtype = getMPSDataType(tensor.dtype());
@@ -1028,7 +1029,7 @@ static Tensor executeReduction(const Tensor& input_raw, const std::vector<int>& 
 
         // Create output tensor
         Tensor result = Tensor(output_shape, input.dtype(), Device::GPU);
-        auto* result_storage = static_cast<MetalStorage*>(result.storage().get());
+        auto* result_storage = as_metal_buffer_provider(result.storage().get());
         id<MTLBuffer> result_buffer = (__bridge id<MTLBuffer>)result_storage->buffer();
 
         // Create tensor data
@@ -1273,9 +1274,9 @@ static Tensor executeMatMul(const Tensor& a_raw, const Tensor& b_raw,
         Tensor result(result_shape, result_dtype, Device::GPU);
 
         // Create tensor data - reshape inputs if needed
-        auto* a_storage = static_cast<const MetalStorage*>(a.storage().get());
-        auto* b_storage = static_cast<const MetalStorage*>(b.storage().get());
-        auto* result_storage = static_cast<MetalStorage*>(result.storage().get());
+        auto* a_storage = as_metal_buffer_provider(a.storage().get());
+        auto* b_storage = as_metal_buffer_provider(b.storage().get());
+        auto* result_storage = as_metal_buffer_provider(result.storage().get());
 
         id<MTLBuffer> a_buffer = (__bridge id<MTLBuffer>)a_storage->buffer();
         id<MTLBuffer> b_buffer = (__bridge id<MTLBuffer>)b_storage->buffer();
@@ -1427,7 +1428,7 @@ static Tensor executeArgMaxMin(const Tensor& input_raw, int axis, bool keep_dims
         
         // Create output tensor with Int64 dtype
         Tensor result = Tensor(output_shape, DType::Int64, Device::GPU);
-        auto* result_storage = static_cast<MetalStorage*>(result.storage().get());
+        auto* result_storage = as_metal_buffer_provider(result.storage().get());
         id<MTLBuffer> result_buffer = (__bridge id<MTLBuffer>)result_storage->buffer();
         
         // Build apparent shape (with 1 at reduced dimension) for MPSGraph

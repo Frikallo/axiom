@@ -131,6 +131,7 @@ axiom_add_test(test_typed_comparisons)
 # ============================================================================
 
 axiom_add_test(test_cpu_gpu_parity TIMEOUT 60)
+axiom_add_test(test_unified_memory TIMEOUT 60)
 axiom_add_test(test_transformer_ops TIMEOUT 60)
 axiom_add_test(test_tensor_linalg TIMEOUT 60)
 axiom_add_test(test_parallel TIMEOUT 60)
