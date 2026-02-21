@@ -5,7 +5,7 @@
 
 A C++20 tensor library optimized for Apple Silicon with Metal GPU acceleration and NumPy compatibility.
 
-::::{grid} 1 2 2 3
+::::{grid} 1 2 2 4
 :gutter: 3
 
 :::{grid-item-card} Getting Started
@@ -13,6 +13,13 @@ A C++20 tensor library optimized for Apple Silicon with Metal GPU acceleration a
 :link-type: doc
 
 Installation, quickstart, and first tensor operations.
+:::
+
+:::{grid-item-card} Usage Guide
+:link: usage
+:link-type: doc
+
+Comprehensive API showcase with practical examples.
 :::
 
 :::{grid-item-card} API Reference
@@ -36,6 +43,7 @@ Performance comparisons against NumPy, Eigen, and PyTorch.
 :hidden:
 
 getting-started
+usage
 api/index
 BENCHMARKS
 ```
