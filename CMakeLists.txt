@@ -454,6 +454,7 @@ target_include_directories(axiom SYSTEM
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FXdiv/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/pocketfft>
 )
 
 # ============================================================================

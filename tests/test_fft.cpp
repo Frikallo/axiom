@@ -160,6 +160,54 @@ TEST(FFT, Fft2Roundtrip) {
 }
 
 // ============================================================================
+// Non-power-of-2 FFT Tests (exercise pocketfft mixed-radix path)
+// ============================================================================
+
+TEST(FFT, FftNonPowerOf2Roundtrip) {
+    auto x = axiom::Tensor::randn({12});
+
+    auto X = axiom::fft::fft(x);
+    auto x_back = axiom::fft::ifft(X);
+    auto x_real = axiom::ops::real(x_back);
+
+    ASSERT_TRUE(x_real.allclose(x, 1e-4, 1e-4))
+        << "FFT roundtrip (n=12) should recover original";
+}
+
+TEST(FFT, FftPrimeSize) {
+    auto x = axiom::Tensor::randn({13});
+
+    auto X = axiom::fft::fft(x);
+    auto x_back = axiom::fft::ifft(X);
+    auto x_real = axiom::ops::real(x_back);
+
+    ASSERT_TRUE(x_real.allclose(x, 1e-4, 1e-4))
+        << "FFT roundtrip (n=13, prime) should recover original";
+}
+
+TEST(FFT, FftNonPowerOf2OrthoRoundtrip) {
+    auto x = axiom::Tensor::randn({12});
+
+    auto X = axiom::fft::fft(x, -1, -1, "ortho");
+    auto x_back = axiom::fft::ifft(X, -1, -1, "ortho");
+    auto x_real = axiom::ops::real(x_back);
+
+    ASSERT_TRUE(x_real.allclose(x, 1e-4, 1e-4))
+        << "FFT ortho roundtrip (n=12) should recover original";
+}
+
+TEST(FFT, Fft2NonPowerOf2Roundtrip) {
+    auto x = axiom::Tensor::randn({3, 5});
+
+    auto X = axiom::fft::fft2(x);
+    auto x_back = axiom::fft::ifft2(X);
+    auto x_real = axiom::ops::real(x_back);
+
+    ASSERT_TRUE(x_real.allclose(x, 1e-4, 1e-4))
+        << "FFT2 roundtrip (3x5) should recover original";
+}
+
+// ============================================================================
 // Window Function Tests
 // ============================================================================
 
