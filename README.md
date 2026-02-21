@@ -19,6 +19,8 @@ The **Axiom** library offers ...
 
   * ... **Multi-device**: Operations can run on any supported device — currently CPU and Metal GPU, with more coming soon 🤫. Every operation, not just matmul, runs on GPU with the same API.
 
+  * ... **Unified memory**: On Apple Silicon, CPU and GPU tensors share the same physical memory. Switching between `.cpu()` and `.gpu()` is a zero-copy device-tag change — no `memcpy`, no latency.
+
   * ... **High performance**: SIMD vectorization, BLAS acceleration, and aggresive parallelization.
 
   * ... **Cross-platform**: macOS, Linux, and Windows.
@@ -158,6 +160,9 @@ auto x = Tensor::randn({1024, 1024}, DType::Float32, Device::GPU);
 
 // Everything just works: matmul, softmax, reductions, broadcasting, indexing...
 auto result = x.matmul(x.T()).softmax(-1).sum({1});  // All on GPU
+
+// On Apple Silicon, device transfers are zero-copy — no memcpy overhead
+auto cpu_result = result.cpu();  // Instant: same underlying memory
 ```
 
 No other C++ tensor library offers this. Eigen, Armadillo, Blaze—all CPU-only. With Axiom, you get the same clean API with full GPU acceleration on macOS.
