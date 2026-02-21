@@ -149,5 +149,59 @@ inline std::string DeviceName(
     return info.param == Device::CPU ? "CPU" : "GPU";
 }
 
+// ============================================================================
+// Typed test support — type lists mirroring dispatch.hpp categories
+// ============================================================================
+
+using AllFloatTypes = ::testing::Types<Float16, BFloat16, Float32, Float64>;
+using StandardFloatTypes = ::testing::Types<Float32, Float64>;
+using SignedIntTypes = ::testing::Types<Int8, Int16, Int32, Int64>;
+using AllIntTypes = ::testing::Types<Bool, Int8, Int16, Int32, Int64, UInt8,
+                                     UInt16, UInt32, UInt64>;
+using NumericTypes =
+    ::testing::Types<Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64,
+                     Float16, BFloat16, Float32, Float64>;
+using AllTypes =
+    ::testing::Types<Bool, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32,
+                     UInt64, Float16, BFloat16, Float32, Float64, Complex64,
+                     Complex128>;
+
+// Produces readable test names like "Float32" instead of mangled type names
+struct AxiomTypeName {
+    template <typename T> static std::string GetName(int) {
+        return T::name();
+    }
+};
+
+// Per-dtype absolute tolerance for floating-point comparisons
+template <typename DT> constexpr double default_atol() {
+    using T = typename DT::value_type;
+    if constexpr (std::is_same_v<T, float16_t> ||
+                  std::is_same_v<T, bfloat16_t>)
+        return 1e-2;
+    else if constexpr (std::is_same_v<T, float>)
+        return 1e-5;
+    else if constexpr (std::is_same_v<T, double>)
+        return 1e-10;
+    else
+        return 0.0;
+}
+
+// Base fixture for dtype-parameterized tests
+template <typename DTypeClass> class TypedTensorTest : public ::testing::Test {
+  protected:
+    using DT = DTypeClass;
+    using value_type = typename DT::value_type;
+    static constexpr DType dtype = dtype_of_v<value_type>;
+
+    void assert_tensors_close(const Tensor &a, const Tensor &b,
+                              double atol = default_atol<DTypeClass>()) {
+        auto a32 = a.astype(DType::Float32);
+        auto b32 = b.astype(DType::Float32);
+        ASSERT_TRUE(a32.allclose(b32, atol, atol))
+            << "Tensors not close for dtype " << DT::name();
+    }
+};
+
 } // namespace testing
 } // namespace axiom

@@ -120,6 +120,11 @@ axiom_add_test(test_einops_reduce)
 axiom_add_test(test_custom_functors)
 axiom_add_test(test_shape_utils)
 axiom_add_test(test_bfloat16)
+axiom_add_test(test_typed_binary_ops)
+axiom_add_test(test_typed_unary_ops)
+axiom_add_test(test_typed_reductions)
+axiom_add_test(test_typed_activations)
+axiom_add_test(test_typed_comparisons)
 
 # ============================================================================
 # Tests with longer timeouts (60s)
