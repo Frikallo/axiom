@@ -1,0 +1,32 @@
+# Doxygen configuration for Axiom
+# Used by Breathe/Sphinx to generate API documentation from C++ headers
+
+PROJECT_NAME           = "Axiom"
+PROJECT_BRIEF          = "High-performance C++20 tensor library"
+
+# Input
+INPUT                  = ../include/axiom
+RECURSIVE              = YES
+FILE_PATTERNS          = *.hpp *.h
+EXCLUDE_PATTERNS       = */detail/* */internal/* *_generated.h
+
+# Parsing
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+BUILTIN_STL_SUPPORT    = YES
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+
+# Output — XML only (consumed by Breathe)
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+XML_PROGRAMLISTING     = YES
+
+# Suppress verbose output
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_LOGFILE           = doxygen_warnings.log

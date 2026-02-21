@@ -1,3 +1,6 @@
 sphinx
-pydata-sphinx-theme
+furo
 myst-parser
+breathe>=4.35
+sphinx-copybutton>=0.5
+sphinx-design>=0.6

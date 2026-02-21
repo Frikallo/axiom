@@ -1,0 +1,42 @@
+/* Sidebar logo */
+.sidebar-logo {
+    max-width: 96px;
+}
+
+/* Banner image on landing page */
+.banner-image {
+    width: 100%;
+    max-width: 700px;
+    display: block;
+    margin: 0 auto 1.5rem auto;
+    border-radius: 12px;
+}
+
+/* Breathe C++ signature styling */
+.breathe-sectiondef .breatheparameterlist td {
+    padding: 4px 8px;
+}
+
+dl.cpp dt {
+    padding: 6px 10px;
+    background: var(--color-background-secondary);
+    border-left: 3px solid var(--color-brand-primary);
+    font-size: 0.95em;
+}
+
+dl.cpp dd {
+    margin-left: 1.5em;
+    margin-top: 0.5em;
+}
+
+/* Enum value table */
+dl.cpp .enumerator dt {
+    border-left: none;
+    background: none;
+    padding: 2px 0;
+}
+
+/* Tighten spacing for parameter descriptions */
+.breathe-sectiondef p {
+    margin-bottom: 0.4em;
+}

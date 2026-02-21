@@ -519,6 +519,29 @@ run-example: release  ## Run an example (EXAMPLE=name)
 	@./$(BUILD_DIR)/examples/$(EXAMPLE)
 
 # ============================================================================
+# Documentation
+# ============================================================================
+
+.PHONY: docs
+docs:  ## Build documentation (Doxygen + Sphinx)
+	@echo "$(CYAN)Running Doxygen...$(RESET)"
+	@cd docs && doxygen Doxyfile
+	@echo "$(CYAN)Running Sphinx...$(RESET)"
+	@cd docs && sphinx-build -b html . ../$(BUILD_DIR)/docs
+	@echo "$(GREEN)✓ Documentation built: $(BUILD_DIR)/docs/index.html$(RESET)"
+
+.PHONY: docs-clean
+docs-clean:  ## Remove generated documentation
+	@echo "$(CYAN)Cleaning docs...$(RESET)"
+	@rm -rf docs/xml docs/doxygen_warnings.log $(BUILD_DIR)/docs
+	@echo "$(GREEN)✓ Docs cleaned$(RESET)"
+
+.PHONY: docs-serve
+docs-serve: docs  ## Build docs and serve locally on port 8000
+	@echo "$(CYAN)Serving docs at http://localhost:8000 (Ctrl+C to stop)$(RESET)"
+	@$(PYTHON) -m http.server 8000 --directory $(BUILD_DIR)/docs
+
+# ============================================================================
 # CI/CD Helpers
 # ============================================================================
 
