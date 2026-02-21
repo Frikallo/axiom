@@ -3,6 +3,8 @@
 #include "axiom/error.hpp"
 #include "axiom/operations.hpp"
 
+#include "pocketfft_hdronly.h"
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -19,92 +21,6 @@ namespace fft {
 
 namespace {
 
-#ifndef AXIOM_USE_ACCELERATE
-// Cooley-Tukey FFT implementation for power-of-2 sizes (fallback for non-Apple)
-void fft_radix2_inplace(std::complex<double> *data, size_t n, bool inverse) {
-    if (n <= 1)
-        return;
-
-    // Bit-reversal permutation
-    size_t j = 0;
-    for (size_t i = 1; i < n - 1; ++i) {
-        size_t bit = n >> 1;
-        while (j >= bit) {
-            j -= bit;
-            bit >>= 1;
-        }
-        j += bit;
-        if (i < j) {
-            std::swap(data[i], data[j]);
-        }
-    }
-
-    // Cooley-Tukey iterative FFT
-    for (size_t len = 2; len <= n; len *= 2) {
-        double angle = (inverse ? 2.0 : -2.0) * M_PI / len;
-        std::complex<double> wlen(std::cos(angle), std::sin(angle));
-
-        for (size_t i = 0; i < n; i += len) {
-            std::complex<double> w(1.0, 0.0);
-            for (size_t k = 0; k < len / 2; ++k) {
-                std::complex<double> u = data[i + k];
-                std::complex<double> v = data[i + k + len / 2] * w;
-                data[i + k] = u + v;
-                data[i + k + len / 2] = u - v;
-                w *= wlen;
-            }
-        }
-    }
-
-    if (inverse) {
-        for (size_t i = 0; i < n; ++i) {
-            data[i] /= static_cast<double>(n);
-        }
-    }
-}
-
-void fft_radix2_inplace_f32(std::complex<float> *data, size_t n, bool inverse) {
-    if (n <= 1)
-        return;
-
-    size_t j = 0;
-    for (size_t i = 1; i < n - 1; ++i) {
-        size_t bit = n >> 1;
-        while (j >= bit) {
-            j -= bit;
-            bit >>= 1;
-        }
-        j += bit;
-        if (i < j) {
-            std::swap(data[i], data[j]);
-        }
-    }
-
-    for (size_t len = 2; len <= n; len *= 2) {
-        float angle = (inverse ? 2.0f : -2.0f) * static_cast<float>(M_PI) / len;
-        std::complex<float> wlen(std::cos(angle), std::sin(angle));
-
-        for (size_t i = 0; i < n; i += len) {
-            std::complex<float> w(1.0f, 0.0f);
-            for (size_t k = 0; k < len / 2; ++k) {
-                std::complex<float> u = data[i + k];
-                std::complex<float> v = data[i + k + len / 2] * w;
-                data[i + k] = u + v;
-                data[i + k + len / 2] = u - v;
-                w *= wlen;
-            }
-        }
-    }
-
-    if (inverse) {
-        float inv_n = 1.0f / static_cast<float>(n);
-        for (size_t i = 0; i < n; ++i) {
-            data[i] *= inv_n;
-        }
-    }
-}
-#endif // AXIOM_USE_ACCELERATE
-
 // Check if n is a power of 2
 bool is_power_of_2(size_t n) { return n > 0 && (n & (n - 1)) == 0; }
 
@@ -118,9 +34,8 @@ static inline int log2_int(size_t n) {
 }
 #endif
 
-// Get normalization factor
-// Note: The FFT kernel (both Cooley-Tukey and vDSP wrappers) applies 1/n for
-// inverse. These factors are ADDITIONAL to that.
+// Get normalization factor (additional multiplier beyond what get_total_scale
+// computes). Used internally by get_total_scale.
 double get_norm_factor(size_t n, const std::string &norm, bool inverse) {
     if (norm == "backward") {
         return 1.0;
@@ -239,7 +154,12 @@ void process_slices_f32(const complex64_t *src, complex64_t *dst,
     }
 #endif // AXIOM_USE_ACCELERATE
 
-    // Generic path: non-power-of-2 or non-Accelerate
+    // Generic path: uses pocketfft for all sizes (mixed-radix O(n log n))
+    pocketfft::shape_t pf_shape = {fft_size};
+    pocketfft::stride_t pf_stride = {
+        static_cast<ptrdiff_t>(sizeof(std::complex<float>))};
+    pocketfft::shape_t pf_axes = {0};
+
     std::vector<std::complex<float>> buffer(fft_size);
     std::vector<size_t> outer_idx(outer_shape.size(), 0);
 
@@ -257,38 +177,9 @@ void process_slices_f32(const complex64_t *src, complex64_t *dst,
             buffer[i] = slice_src[i * axis_stride_in];
         }
 
-        // FFT
-        if (is_power_of_2(fft_size)) {
-#ifndef AXIOM_USE_ACCELERATE
-            fft_radix2_inplace_f32(buffer.data(), fft_size, inverse);
-            // fft_radix2_inplace_f32 already applies 1/n for inverse
-            // Apply additional norm factor
-            if (get_norm_factor(fft_size, norm, inverse) != 1.0) {
-                float nf = static_cast<float>(
-                    get_norm_factor(fft_size, norm, inverse));
-                for (auto &v : buffer)
-                    v *= nf;
-            }
-#endif
-        } else {
-            // Non-power-of-2: DFT
-            std::vector<std::complex<float>> temp(fft_size);
-            float sign = inverse ? 1.0f : -1.0f;
-            for (size_t k = 0; k < fft_size; ++k) {
-                std::complex<float> sum(0, 0);
-                for (size_t j = 0; j < fft_size; ++j) {
-                    float angle = sign * 2.0f * static_cast<float>(M_PI) * k *
-                                  j / fft_size;
-                    sum += buffer[j] * std::complex<float>(std::cos(angle),
-                                                           std::sin(angle));
-                }
-                temp[k] = sum;
-            }
-            buffer = temp;
-            // Apply total scale (includes 1/n for inverse + norm)
-            for (auto &v : buffer)
-                v *= total_scale;
-        }
+        // FFT via pocketfft (unnormalized; total_scale includes all scaling)
+        pocketfft::c2c(pf_shape, pf_stride, pf_stride, pf_axes, !inverse,
+                       buffer.data(), buffer.data(), total_scale);
 
         // Copy to output
         complex64_t *slice_dst = dst + dst_base;
@@ -384,7 +275,12 @@ void process_slices_f64(const complex128_t *src, complex128_t *dst,
     }
 #endif // AXIOM_USE_ACCELERATE
 
-    // Generic path
+    // Generic path: uses pocketfft for all sizes (mixed-radix O(n log n))
+    pocketfft::shape_t pf_shape = {fft_size};
+    pocketfft::stride_t pf_stride = {
+        static_cast<ptrdiff_t>(sizeof(std::complex<double>))};
+    pocketfft::shape_t pf_axes = {0};
+
     std::vector<std::complex<double>> buffer(fft_size);
     std::vector<size_t> outer_idx(outer_shape.size(), 0);
 
@@ -401,31 +297,9 @@ void process_slices_f64(const complex128_t *src, complex128_t *dst,
             buffer[i] = slice_src[i * axis_stride_in];
         }
 
-        if (is_power_of_2(fft_size)) {
-#ifndef AXIOM_USE_ACCELERATE
-            fft_radix2_inplace(buffer.data(), fft_size, inverse);
-            if (get_norm_factor(fft_size, norm, inverse) != 1.0) {
-                double nf = get_norm_factor(fft_size, norm, inverse);
-                for (auto &v : buffer)
-                    v *= nf;
-            }
-#endif
-        } else {
-            std::vector<std::complex<double>> temp(fft_size);
-            double sign = inverse ? 1.0 : -1.0;
-            for (size_t k = 0; k < fft_size; ++k) {
-                std::complex<double> sum(0, 0);
-                for (size_t j = 0; j < fft_size; ++j) {
-                    double angle = sign * 2.0 * M_PI * k * j / fft_size;
-                    sum += buffer[j] * std::complex<double>(std::cos(angle),
-                                                            std::sin(angle));
-                }
-                temp[k] = sum;
-            }
-            buffer = temp;
-            for (auto &v : buffer)
-                v *= total_scale;
-        }
+        // FFT via pocketfft (unnormalized; total_scale includes all scaling)
+        pocketfft::c2c(pf_shape, pf_stride, pf_stride, pf_axes, !inverse,
+                       buffer.data(), buffer.data(), total_scale);
 
         complex128_t *slice_dst = dst + dst_base;
         for (size_t i = 0; i < fft_size; ++i) {
