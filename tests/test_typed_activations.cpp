@@ -5,8 +5,7 @@
 using namespace axiom;
 using namespace axiom::testing;
 
-template <typename DT>
-class TypedActivations : public TypedTensorTest<DT> {};
+template <typename DT> class TypedActivations : public TypedTensorTest<DT> {};
 
 TYPED_TEST_SUITE(TypedActivations, AllFloatTypes, AxiomTypeName);
 
@@ -34,8 +33,7 @@ TYPED_TEST(TypedActivations, SoftmaxUniform) {
     auto a = Tensor::ones({2, 3}, this->dtype);
     auto result = ops::softmax(a, -1);
     // softmax of uniform values = 1/n along that axis
-    auto expected =
-        Tensor::full({2, 3}, 1.0f / 3.0f).astype(this->dtype);
+    auto expected = Tensor::full({2, 3}, 1.0f / 3.0f).astype(this->dtype);
     this->assert_tensors_close(result, expected);
 }
 

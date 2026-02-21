@@ -5,8 +5,7 @@
 using namespace axiom;
 using namespace axiom::testing;
 
-template <typename DT>
-class TypedBinaryOps : public TypedTensorTest<DT> {};
+template <typename DT> class TypedBinaryOps : public TypedTensorTest<DT> {};
 
 TYPED_TEST_SUITE(TypedBinaryOps, NumericTypes, AxiomTypeName);
 

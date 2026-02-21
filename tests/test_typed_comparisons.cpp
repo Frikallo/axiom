@@ -5,8 +5,7 @@
 using namespace axiom;
 using namespace axiom::testing;
 
-template <typename DT>
-class TypedComparisons : public TypedTensorTest<DT> {};
+template <typename DT> class TypedComparisons : public TypedTensorTest<DT> {};
 
 TYPED_TEST_SUITE(TypedComparisons, NumericTypes, AxiomTypeName);
 
@@ -16,8 +15,8 @@ TYPED_TEST(TypedComparisons, EqualSelf) {
     ASSERT_EQ(result.dtype(), DType::Bool);
     auto all_true = ops::all(result);
     bool val = all_true.template item<bool>();
-    ASSERT_TRUE(val)
-        << "equal(a, a) should be all true for " << TestFixture::DT::name();
+    ASSERT_TRUE(val) << "equal(a, a) should be all true for "
+                     << TestFixture::DT::name();
 }
 
 TYPED_TEST(TypedComparisons, NotEqualDifferent) {
@@ -27,9 +26,8 @@ TYPED_TEST(TypedComparisons, NotEqualDifferent) {
     ASSERT_EQ(result.dtype(), DType::Bool);
     auto all_true = ops::all(result);
     bool val = all_true.template item<bool>();
-    ASSERT_TRUE(val)
-        << "not_equal(zeros, ones) should be all true for "
-        << TestFixture::DT::name();
+    ASSERT_TRUE(val) << "not_equal(zeros, ones) should be all true for "
+                     << TestFixture::DT::name();
 }
 
 TYPED_TEST(TypedComparisons, LessThanGreater) {
@@ -39,9 +37,8 @@ TYPED_TEST(TypedComparisons, LessThanGreater) {
     ASSERT_EQ(result.dtype(), DType::Bool);
     auto all_true = ops::all(result);
     bool val = all_true.template item<bool>();
-    ASSERT_TRUE(val)
-        << "less(zeros, ones) should be all true for "
-        << TestFixture::DT::name();
+    ASSERT_TRUE(val) << "less(zeros, ones) should be all true for "
+                     << TestFixture::DT::name();
 }
 
 TYPED_TEST(TypedComparisons, GreaterThanLess) {
@@ -51,7 +48,6 @@ TYPED_TEST(TypedComparisons, GreaterThanLess) {
     ASSERT_EQ(result.dtype(), DType::Bool);
     auto all_true = ops::all(result);
     bool val = all_true.template item<bool>();
-    ASSERT_TRUE(val)
-        << "greater(ones, zeros) should be all true for "
-        << TestFixture::DT::name();
+    ASSERT_TRUE(val) << "greater(ones, zeros) should be all true for "
+                     << TestFixture::DT::name();
 }

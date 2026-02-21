@@ -5,8 +5,7 @@
 using namespace axiom;
 using namespace axiom::testing;
 
-template <typename DT>
-class TypedReductions : public TypedTensorTest<DT> {};
+template <typename DT> class TypedReductions : public TypedTensorTest<DT> {};
 
 TYPED_TEST_SUITE(TypedReductions, NumericTypes, AxiomTypeName);
 

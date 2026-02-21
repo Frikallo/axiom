@@ -5,8 +5,7 @@
 using namespace axiom;
 using namespace axiom::testing;
 
-template <typename DT>
-class TypedUnaryOps : public TypedTensorTest<DT> {};
+template <typename DT> class TypedUnaryOps : public TypedTensorTest<DT> {};
 
 TYPED_TEST_SUITE(TypedUnaryOps, AllFloatTypes, AxiomTypeName);
 
