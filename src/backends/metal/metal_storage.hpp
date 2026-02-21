@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "axiom/storage.hpp"
+#include "metal_buffer_provider.hpp"
 
 namespace axiom {
 namespace backends {
@@ -15,7 +16,7 @@ enum class MetalStorageMode {
             // intermediates
 };
 
-class MetalStorage : public Storage {
+class MetalStorage : public Storage, public MetalBufferProvider {
   private:
     void *device_; // id<MTLDevice>
     void *buffer_; // id<MTLBuffer>
@@ -37,10 +38,10 @@ class MetalStorage : public Storage {
     void copy_from(const Storage &other) override;
     std::unique_ptr<Storage> clone() const override;
 
-    void *buffer() const { return buffer_; } // id<MTLBuffer>
-    size_t offset() const { return offset_; }
+    void *buffer() const override { return buffer_; } // id<MTLBuffer>
+    size_t offset() const override { return offset_; }
     MetalStorageMode storage_mode() const { return storage_mode_; }
-    bool is_private() const {
+    bool is_private() const override {
         return storage_mode_ == MetalStorageMode::Private;
     }
 };

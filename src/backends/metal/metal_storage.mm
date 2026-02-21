@@ -1,3 +1,4 @@
+#import "metal_buffer_provider.hpp"
 #import "metal_storage.hpp"
 #import "metal_common.hpp"
 
@@ -91,8 +92,8 @@ void MetalStorage::copy_to(Storage& other) const {
             std::memcpy(cpu_ptr, static_cast<const uint8_t*>(metal_ptr) + offset_, size_bytes());
         }
     } else if (other.device() == Device::GPU) {
-        auto& other_metal = static_cast<MetalStorage&>(other);
-        id<MTLBuffer> other_mtl_buffer = (__bridge id<MTLBuffer>)other_metal.buffer_;
+        auto* other_provider = as_metal_buffer_provider(&other);
+        id<MTLBuffer> other_mtl_buffer = (__bridge id<MTLBuffer>)other_provider->buffer();
 
         id<MTLDevice> device = (__bridge id<MTLDevice>)device_;
         id<MTLCommandQueue> queue = [device newCommandQueue];
@@ -102,7 +103,7 @@ void MetalStorage::copy_to(Storage& other) const {
         [encoder copyFromBuffer:mtl_buffer
                    sourceOffset:offset_
                        toBuffer:other_mtl_buffer
-              destinationOffset:other_metal.offset_
+              destinationOffset:other_provider->offset()
                            size:std::min(size_bytes_, other.size_bytes())];
 
         [encoder endEncoding];

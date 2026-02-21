@@ -4,6 +4,7 @@
 #import "axiom/operations.hpp"
 #import "graph_cache.hpp"
 #import "metal_common.hpp"
+#import "metal_buffer_provider.hpp"
 #import "metal_storage.hpp"
 
 #import <Metal/Metal.h>
@@ -68,8 +69,7 @@ static MPSShape *toMPSShape(const Shape &shape) {
 }
 
 static MPSGraphTensorData *makeTensorData(const Tensor &t) {
-    auto *ms = static_cast<const backends::metal::MetalStorage *>(
-        t.storage().get());
+    auto *ms = backends::metal::as_metal_buffer_provider(t.storage().get());
     id<MTLBuffer> buf = (__bridge id<MTLBuffer>)ms->buffer();
     return [[MPSGraphTensorData alloc] initWithMTLBuffer:buf
                                                    shape:toMPSShape(t.shape())
@@ -383,9 +383,8 @@ static Tensor ensureGPUContiguous(const Tensor &t) {
     // Copy to contiguous via to() which triggers a gather
     Tensor c(t.shape(), t.dtype(), Device::GPU);
     // Use the storage copy path
-    auto *src =
-        static_cast<const backends::metal::MetalStorage *>(t.storage().get());
-    auto *dst = static_cast<backends::metal::MetalStorage *>(c.storage().get());
+    auto *src = backends::metal::as_metal_buffer_provider(t.storage().get());
+    auto *dst = backends::metal::as_metal_buffer_provider(c.storage().get());
     id<MTLBuffer> src_buf = (__bridge id<MTLBuffer>)src->buffer();
     id<MTLBuffer> dst_buf = (__bridge id<MTLBuffer>)dst->buffer();
     size_t bytes = ShapeUtils::size(t.shape()) * dtype_size(t.dtype());
