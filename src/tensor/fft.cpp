@@ -9,6 +9,7 @@
 #include <cmath>
 #include <complex>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 #ifdef AXIOM_USE_ACCELERATE
@@ -31,6 +32,43 @@ static inline int log2_int(size_t n) {
         log2n++;
     }
     return log2n;
+}
+
+// Cached FFTSetup objects — twiddle factor tables are reusable and expensive
+// to create. Keyed by log2n, never freed during runtime.
+FFTSetup get_cached_fft_setup(int log2n) {
+    // Max supported: 2^24 = 16M points
+    static constexpr int kMaxLog2n = 24;
+    static FFTSetup cache[kMaxLog2n + 1] = {};
+    static std::mutex mtx;
+
+    if (log2n < 0 || log2n > kMaxLog2n)
+        return nullptr;
+    FFTSetup s = cache[log2n];
+    if (s)
+        return s;
+    std::lock_guard<std::mutex> lock(mtx);
+    if (cache[log2n])
+        return cache[log2n]; // double-check
+    cache[log2n] = vDSP_create_fftsetup(log2n, FFT_RADIX2);
+    return cache[log2n];
+}
+
+FFTSetupD get_cached_fft_setupD(int log2n) {
+    static constexpr int kMaxLog2n = 24;
+    static FFTSetupD cache[kMaxLog2n + 1] = {};
+    static std::mutex mtx;
+
+    if (log2n < 0 || log2n > kMaxLog2n)
+        return nullptr;
+    FFTSetupD s = cache[log2n];
+    if (s)
+        return s;
+    std::lock_guard<std::mutex> lock(mtx);
+    if (cache[log2n])
+        return cache[log2n];
+    cache[log2n] = vDSP_create_fftsetupD(log2n, FFT_RADIX2);
+    return cache[log2n];
 }
 #endif
 
@@ -60,6 +98,159 @@ double get_total_scale(size_t n, const std::string &norm, bool inverse) {
 }
 
 // ============================================================================
+// Real-input FFT: bypass to_complex() by feeding real data directly
+// ============================================================================
+
+#ifdef AXIOM_USE_ACCELERATE
+// Process 1D FFT slices with real (float32) input, writing complex64 output.
+// Avoids the expensive to_complex() allocation and conversion.
+void process_slices_real_f32(const float *src, complex64_t *dst,
+                             size_t input_size, size_t fft_size,
+                             int64_t axis_stride_in, int64_t axis_stride_out,
+                             const std::vector<size_t> &outer_shape,
+                             const std::vector<int64_t> &src_outer_strides,
+                             const std::vector<int64_t> &dst_outer_strides,
+                             size_t n_slices, bool inverse,
+                             const std::string &norm) {
+    if (!is_power_of_2(fft_size) || fft_size == 0)
+        return; // caller falls back to complex path
+    float total_scale =
+        static_cast<float>(get_total_scale(fft_size, norm, inverse));
+    size_t copy_count = std::min(input_size, fft_size);
+
+    int log2n = log2_int(fft_size);
+    FFTSetup setup = get_cached_fft_setup(log2n);
+    if (!setup)
+        return;
+
+    std::vector<float> real_part(fft_size), imag_part(fft_size, 0.0f);
+    DSPSplitComplex split = {real_part.data(), imag_part.data()};
+
+    std::vector<size_t> outer_idx(outer_shape.size(), 0);
+    FFTDirection fft_dir =
+        inverse ? kFFTDirection_Inverse : kFFTDirection_Forward;
+
+    for (size_t slice = 0; slice < n_slices; ++slice) {
+        size_t src_base = 0, dst_base = 0;
+        for (size_t i = 0; i < outer_idx.size(); ++i) {
+            src_base += outer_idx[i] * src_outer_strides[i];
+            dst_base += outer_idx[i] * dst_outer_strides[i];
+        }
+
+        // Copy real data directly into split.realp, zero imag
+        if (axis_stride_in == 1 && copy_count == fft_size) {
+            std::memcpy(real_part.data(), src + src_base,
+                        fft_size * sizeof(float));
+        } else {
+            std::fill(real_part.begin(), real_part.end(), 0.0f);
+            const float *slice_src = src + src_base;
+            for (size_t i = 0; i < copy_count; ++i) {
+                real_part[i] = slice_src[i * axis_stride_in];
+            }
+        }
+        std::fill(imag_part.begin(), imag_part.end(), 0.0f);
+
+        vDSP_fft_zip(setup, &split, 1, log2n, fft_dir);
+
+        if (total_scale != 1.0f) {
+            vDSP_vsmul(real_part.data(), 1, &total_scale, real_part.data(), 1,
+                       fft_size);
+            vDSP_vsmul(imag_part.data(), 1, &total_scale, imag_part.data(), 1,
+                       fft_size);
+        }
+
+        if (axis_stride_out == 1) {
+            vDSP_ztoc(&split, 1, (DSPComplex *)(dst + dst_base), 2, fft_size);
+        } else {
+            complex64_t *slice_dst = dst + dst_base;
+            for (size_t i = 0; i < fft_size; ++i) {
+                slice_dst[i * axis_stride_out] =
+                    complex64_t(real_part[i], imag_part[i]);
+            }
+        }
+
+        for (int d = static_cast<int>(outer_idx.size()) - 1; d >= 0; --d) {
+            if (++outer_idx[d] < outer_shape[d])
+                break;
+            outer_idx[d] = 0;
+        }
+    }
+}
+
+void process_slices_real_f64(const double *src, complex128_t *dst,
+                             size_t input_size, size_t fft_size,
+                             int64_t axis_stride_in, int64_t axis_stride_out,
+                             const std::vector<size_t> &outer_shape,
+                             const std::vector<int64_t> &src_outer_strides,
+                             const std::vector<int64_t> &dst_outer_strides,
+                             size_t n_slices, bool inverse,
+                             const std::string &norm) {
+    if (!is_power_of_2(fft_size) || fft_size == 0)
+        return;
+    double total_scale = get_total_scale(fft_size, norm, inverse);
+    size_t copy_count = std::min(input_size, fft_size);
+
+    int log2n = log2_int(fft_size);
+    FFTSetupD setup = get_cached_fft_setupD(log2n);
+    if (!setup)
+        return;
+
+    std::vector<double> real_part(fft_size), imag_part(fft_size, 0.0);
+    DSPDoubleSplitComplex split = {real_part.data(), imag_part.data()};
+
+    std::vector<size_t> outer_idx(outer_shape.size(), 0);
+    FFTDirection fft_dir =
+        inverse ? kFFTDirection_Inverse : kFFTDirection_Forward;
+
+    for (size_t slice = 0; slice < n_slices; ++slice) {
+        size_t src_base = 0, dst_base = 0;
+        for (size_t i = 0; i < outer_idx.size(); ++i) {
+            src_base += outer_idx[i] * src_outer_strides[i];
+            dst_base += outer_idx[i] * dst_outer_strides[i];
+        }
+
+        if (axis_stride_in == 1 && copy_count == fft_size) {
+            std::memcpy(real_part.data(), src + src_base,
+                        fft_size * sizeof(double));
+        } else {
+            std::fill(real_part.begin(), real_part.end(), 0.0);
+            const double *slice_src = src + src_base;
+            for (size_t i = 0; i < copy_count; ++i) {
+                real_part[i] = slice_src[i * axis_stride_in];
+            }
+        }
+        std::fill(imag_part.begin(), imag_part.end(), 0.0);
+
+        vDSP_fft_zipD(setup, &split, 1, log2n, fft_dir);
+
+        if (total_scale != 1.0) {
+            vDSP_vsmulD(real_part.data(), 1, &total_scale, real_part.data(), 1,
+                        fft_size);
+            vDSP_vsmulD(imag_part.data(), 1, &total_scale, imag_part.data(), 1,
+                        fft_size);
+        }
+
+        if (axis_stride_out == 1) {
+            vDSP_ztocD(&split, 1, (DSPDoubleComplex *)(dst + dst_base), 2,
+                       fft_size);
+        } else {
+            complex128_t *slice_dst = dst + dst_base;
+            for (size_t i = 0; i < fft_size; ++i) {
+                slice_dst[i * axis_stride_out] =
+                    complex128_t(real_part[i], imag_part[i]);
+            }
+        }
+
+        for (int d = static_cast<int>(outer_idx.size()) - 1; d >= 0; --d) {
+            if (++outer_idx[d] < outer_shape[d])
+                break;
+            outer_idx[d] = 0;
+        }
+    }
+}
+#endif // AXIOM_USE_ACCELERATE
+
+// ============================================================================
 // Optimized 1D FFT slice processing
 // ============================================================================
 
@@ -79,7 +270,7 @@ void process_slices_f32(const complex64_t *src, complex64_t *dst,
 #ifdef AXIOM_USE_ACCELERATE
     if (is_power_of_2(fft_size) && fft_size > 0) {
         int log2n = log2_int(fft_size);
-        FFTSetup setup = vDSP_create_fftsetup(log2n, FFT_RADIX2);
+        FFTSetup setup = get_cached_fft_setup(log2n);
         if (!setup)
             return;
 
@@ -90,26 +281,23 @@ void process_slices_f32(const complex64_t *src, complex64_t *dst,
         std::vector<size_t> outer_idx(outer_shape.size(), 0);
         FFTDirection fft_dir =
             inverse ? kFFTDirection_Inverse : kFFTDirection_Forward;
+        bool contiguous_full = (axis_stride_in == 1 && copy_count == fft_size);
 
         for (size_t slice = 0; slice < n_slices; ++slice) {
-            // Compute base offsets from outer coordinates
             size_t src_base = 0, dst_base = 0;
             for (size_t i = 0; i < outer_idx.size(); ++i) {
                 src_base += outer_idx[i] * src_outer_strides[i];
                 dst_base += outer_idx[i] * dst_outer_strides[i];
             }
 
-            // Zero the split buffers (for zero-padding)
-            std::fill(real_part.begin(), real_part.end(), 0.0f);
-            std::fill(imag_part.begin(), imag_part.end(), 0.0f);
-
-            // Deinterleave input to split complex format
-            if (axis_stride_in == 1 && copy_count == fft_size) {
-                // Contiguous: use vDSP_ctoz for fast deinterleave
+            if (contiguous_full) {
+                // vDSP_ctoz overwrites everything — no zeroing needed
                 vDSP_ctoz((const DSPComplex *)(src + src_base), 2, &split, 1,
                           fft_size);
             } else {
-                // Strided or needs zero-padding
+                // Zero for padding, then fill what we have
+                std::fill(real_part.begin(), real_part.end(), 0.0f);
+                std::fill(imag_part.begin(), imag_part.end(), 0.0f);
                 const complex64_t *slice_src = src + src_base;
                 for (size_t i = 0; i < copy_count; ++i) {
                     auto val = slice_src[i * axis_stride_in];
@@ -118,10 +306,8 @@ void process_slices_f32(const complex64_t *src, complex64_t *dst,
                 }
             }
 
-            // In-place FFT
             vDSP_fft_zip(setup, &split, 1, log2n, fft_dir);
 
-            // Apply combined scale factor
             if (total_scale != 1.0f) {
                 vDSP_vsmul(real_part.data(), 1, &total_scale, real_part.data(),
                            1, fft_size);
@@ -129,7 +315,6 @@ void process_slices_f32(const complex64_t *src, complex64_t *dst,
                            1, fft_size);
             }
 
-            // Interleave back to destination
             if (axis_stride_out == 1) {
                 vDSP_ztoc(&split, 1, (DSPComplex *)(dst + dst_base), 2,
                           fft_size);
@@ -141,7 +326,6 @@ void process_slices_f32(const complex64_t *src, complex64_t *dst,
                 }
             }
 
-            // Increment outer indices
             for (int d = static_cast<int>(outer_idx.size()) - 1; d >= 0; --d) {
                 if (++outer_idx[d] < outer_shape[d])
                     break;
@@ -149,7 +333,6 @@ void process_slices_f32(const complex64_t *src, complex64_t *dst,
             }
         }
 
-        vDSP_destroy_fftsetup(setup);
         return;
     }
 #endif // AXIOM_USE_ACCELERATE
@@ -210,7 +393,7 @@ void process_slices_f64(const complex128_t *src, complex128_t *dst,
 #ifdef AXIOM_USE_ACCELERATE
     if (is_power_of_2(fft_size) && fft_size > 0) {
         int log2n = log2_int(fft_size);
-        FFTSetupD setup = vDSP_create_fftsetupD(log2n, FFT_RADIX2);
+        FFTSetupD setup = get_cached_fft_setupD(log2n);
         if (!setup)
             return;
 
@@ -220,6 +403,7 @@ void process_slices_f64(const complex128_t *src, complex128_t *dst,
         std::vector<size_t> outer_idx(outer_shape.size(), 0);
         FFTDirection fft_dir =
             inverse ? kFFTDirection_Inverse : kFFTDirection_Forward;
+        bool contiguous_full = (axis_stride_in == 1 && copy_count == fft_size);
 
         for (size_t slice = 0; slice < n_slices; ++slice) {
             size_t src_base = 0, dst_base = 0;
@@ -228,13 +412,12 @@ void process_slices_f64(const complex128_t *src, complex128_t *dst,
                 dst_base += outer_idx[i] * dst_outer_strides[i];
             }
 
-            std::fill(real_part.begin(), real_part.end(), 0.0);
-            std::fill(imag_part.begin(), imag_part.end(), 0.0);
-
-            if (axis_stride_in == 1 && copy_count == fft_size) {
+            if (contiguous_full) {
                 vDSP_ctozD((const DSPDoubleComplex *)(src + src_base), 2,
                            &split, 1, fft_size);
             } else {
+                std::fill(real_part.begin(), real_part.end(), 0.0);
+                std::fill(imag_part.begin(), imag_part.end(), 0.0);
                 const complex128_t *slice_src = src + src_base;
                 for (size_t i = 0; i < copy_count; ++i) {
                     auto val = slice_src[i * axis_stride_in];
@@ -270,7 +453,6 @@ void process_slices_f64(const complex128_t *src, complex128_t *dst,
             }
         }
 
-        vDSP_destroy_fftsetupD(setup);
         return;
     }
 #endif // AXIOM_USE_ACCELERATE
@@ -335,9 +517,77 @@ Tensor fft_1d_impl(const Tensor &input, int64_t n, int axis, bool inverse,
     // Move to CPU for computation
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
 
-    // Convert to complex if needed
     DType result_dtype = input.dtype() == DType::Complex128 ? DType::Complex128
                                                             : DType::Complex64;
+
+#ifdef AXIOM_USE_ACCELERATE
+    // Fast path: real input with power-of-2 size — bypass to_complex()
+    // by feeding real floats directly into the split-complex FFT buffers.
+    if (!is_complex_dtype(input.dtype()) && is_power_of_2(fft_size) &&
+        fft_size > 0) {
+        Tensor real_input = input_cpu;
+        // Promote to float32 if needed (e.g., int types)
+        if (result_dtype == DType::Complex64 &&
+            real_input.dtype() != DType::Float32) {
+            real_input = real_input.astype(DType::Float32);
+        } else if (result_dtype == DType::Complex128 &&
+                   real_input.dtype() != DType::Float64) {
+            real_input = real_input.astype(DType::Float64);
+        }
+        if (!real_input.is_contiguous()) {
+            real_input = real_input.ascontiguousarray();
+        }
+
+        Shape output_shape = input.shape();
+        output_shape[axis] = fft_size;
+        Tensor result(output_shape, result_dtype, Device::CPU);
+
+        size_t n_slices = 1;
+        std::vector<size_t> outer_shape;
+        std::vector<int64_t> src_outer_strides;
+        std::vector<int64_t> dst_outer_strides;
+
+        int64_t real_elem_size = static_cast<int64_t>(
+            result_dtype == DType::Complex64 ? sizeof(float) : sizeof(double));
+        int64_t cplx_elem_size = static_cast<int64_t>(
+            result_dtype == DType::Complex64 ? sizeof(complex64_t)
+                                             : sizeof(complex128_t));
+
+        for (size_t d = 0; d < static_cast<size_t>(ndim); ++d) {
+            if (static_cast<int>(d) != axis) {
+                outer_shape.push_back(output_shape[d]);
+                src_outer_strides.push_back(real_input.strides()[d] /
+                                            real_elem_size);
+                dst_outer_strides.push_back(result.strides()[d] /
+                                            cplx_elem_size);
+                n_slices *= output_shape[d];
+            }
+        }
+
+        int64_t axis_stride_in = real_input.strides()[axis] / real_elem_size;
+        int64_t axis_stride_out = result.strides()[axis] / cplx_elem_size;
+
+        if (result_dtype == DType::Complex64) {
+            process_slices_real_f32(
+                real_input.typed_data<float>(),
+                result.typed_data<complex64_t>(), input_size, fft_size,
+                axis_stride_in, axis_stride_out, outer_shape, src_outer_strides,
+                dst_outer_strides, n_slices, inverse, norm);
+        } else {
+            process_slices_real_f64(
+                real_input.typed_data<double>(),
+                result.typed_data<complex128_t>(), input_size, fft_size,
+                axis_stride_in, axis_stride_out, outer_shape, src_outer_strides,
+                dst_outer_strides, n_slices, inverse, norm);
+        }
+
+        if (input.device() == Device::GPU)
+            return result.gpu();
+        return result;
+    }
+#endif // AXIOM_USE_ACCELERATE
+
+    // Standard path: convert to complex, then process
     Tensor complex_input = input_cpu;
     if (!is_complex_dtype(input.dtype())) {
         complex_input = input_cpu.to_complex();
@@ -345,20 +595,15 @@ Tensor fft_1d_impl(const Tensor &input, int64_t n, int axis, bool inverse,
     if (complex_input.dtype() != result_dtype) {
         complex_input = complex_input.astype(result_dtype);
     }
-
-    // Ensure contiguous for pointer-based access
     if (!complex_input.is_contiguous()) {
         complex_input = complex_input.ascontiguousarray();
     }
 
-    // Build output shape
     Shape output_shape = input.shape();
     output_shape[axis] = fft_size;
 
     Tensor result(output_shape, result_dtype, Device::CPU);
 
-    // Compute slice iteration info
-    // Strides are in bytes; convert to element strides
     int64_t elem_size = static_cast<int64_t>(result_dtype == DType::Complex64
                                                  ? sizeof(complex64_t)
                                                  : sizeof(complex128_t));
@@ -380,7 +625,6 @@ Tensor fft_1d_impl(const Tensor &input, int64_t n, int axis, bool inverse,
     int64_t axis_stride_in = complex_input.strides()[axis] / elem_size;
     int64_t axis_stride_out = result.strides()[axis] / elem_size;
 
-    // Dispatch to typed processing functions
     if (result_dtype == DType::Complex64) {
         const complex64_t *src = complex_input.typed_data<complex64_t>();
         complex64_t *dst = result.typed_data<complex64_t>();
@@ -482,8 +726,7 @@ Tensor fft2d_native(const Tensor &input, const std::vector<int> &axes,
         const complex64_t *src = complex_input.typed_data<complex64_t>();
         complex64_t *dst = result.typed_data<complex64_t>();
 
-        FFTSetup setup =
-            vDSP_create_fftsetup(std::max(log2_rows, log2_cols), FFT_RADIX2);
+        FFTSetup setup = get_cached_fft_setup(std::max(log2_rows, log2_cols));
         if (!setup)
             return result;
 
@@ -496,13 +739,10 @@ Tensor fft2d_native(const Tensor &input, const std::vector<int> &axes,
             const complex64_t *batch_src = src + b * matrix_size;
             complex64_t *batch_dst = dst + b * matrix_size;
 
-            // Deinterleave to split complex
             vDSP_ctoz((const DSPComplex *)batch_src, 2, &split, 1, matrix_size);
 
-            // 2D FFT in one call
             vDSP_fft2d_zip(setup, &split, 1, 0, log2_cols, log2_rows, fft_dir);
 
-            // Apply combined scale
             if (static_cast<float>(total_scale) != 1.0f) {
                 float scale_f = static_cast<float>(total_scale);
                 vDSP_vsmul(real_part.data(), 1, &scale_f, real_part.data(), 1,
@@ -511,17 +751,13 @@ Tensor fft2d_native(const Tensor &input, const std::vector<int> &axes,
                            matrix_size);
             }
 
-            // Interleave back to output
             vDSP_ztoc(&split, 1, (DSPComplex *)batch_dst, 2, matrix_size);
         }
-
-        vDSP_destroy_fftsetup(setup);
     } else {
         const complex128_t *src = complex_input.typed_data<complex128_t>();
         complex128_t *dst = result.typed_data<complex128_t>();
 
-        FFTSetupD setup =
-            vDSP_create_fftsetupD(std::max(log2_rows, log2_cols), FFT_RADIX2);
+        FFTSetupD setup = get_cached_fft_setupD(std::max(log2_rows, log2_cols));
         if (!setup)
             return result;
 
@@ -549,8 +785,6 @@ Tensor fft2d_native(const Tensor &input, const std::vector<int> &axes,
             vDSP_ztocD(&split, 1, (DSPDoubleComplex *)batch_dst, 2,
                        matrix_size);
         }
-
-        vDSP_destroy_fftsetupD(setup);
     }
 
     if (input.device() == Device::GPU) {

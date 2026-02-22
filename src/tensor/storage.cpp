@@ -26,16 +26,6 @@ namespace axiom {
 std::unique_ptr<Storage> make_storage(size_t size_bytes, Device device) {
     switch (device) {
     case Device::CPU:
-#ifdef __APPLE__
-        // On Apple Silicon with unified memory, CPU tensors use the same
-        // shared MTLBuffer so that to(GPU) is zero-copy later.
-        // Skip for empty tensors — Metal rejects 0-byte buffers.
-        if (size_bytes > 0 && backends::metal::is_metal_available() &&
-            backends::metal::is_unified_memory_available()) {
-            return backends::metal::make_unified_storage(size_bytes,
-                                                         Device::CPU);
-        }
-#endif
         return backends::cpu::make_cpu_storage(size_bytes);
 
     case Device::GPU:

@@ -28,30 +28,40 @@ using namespace axiom;
 TEST(UnifiedMemory, DataReturnsWritableCpuPointer) {
     SKIP_IF_NO_UNIFIED();
 
-    auto t = Tensor::zeros({4, 4}, DType::Float32, Device::CPU);
-    void *ptr = t.storage()->data();
+    // GPU tensors use UnifiedStorage on Apple Silicon
+    auto t = Tensor::zeros({4, 4}, DType::Float32, Device::GPU);
+    auto cpu_view = t.cpu(); // zero-copy: still backed by UnifiedStorage
+    void *ptr = cpu_view.storage()->data();
     ASSERT_NE(ptr, nullptr);
 
     // Write through the CPU pointer and read back
     auto *f = static_cast<float *>(ptr);
     f[0] = 42.0f;
-    EXPECT_FLOAT_EQ(t.item<float>({0, 0}), 42.0f);
+    EXPECT_FLOAT_EQ(cpu_view.item<float>({0, 0}), 42.0f);
 }
 
-TEST(UnifiedMemory, ZeroCopyToGpuAndBack) {
+TEST(UnifiedMemory, ZeroCopyGpuToCpu) {
     SKIP_IF_NO_UNIFIED();
 
-    std::vector<float> vals = {1.0f, 2.0f, 3.0f, 4.0f};
-    auto cpu_tensor = Tensor::from_data(vals.data(), {4});
-    auto gpu_tensor = cpu_tensor.gpu();
-    auto back_cpu = gpu_tensor.cpu();
+    // Create on GPU (uses UnifiedStorage), move to CPU — should be zero-copy
+    auto gpu_tensor = Tensor::ones({4}, DType::Float32, Device::GPU);
+    auto cpu_view = gpu_tensor.cpu();
 
-    // Verify same underlying data pointer (zero-copy)
-    EXPECT_EQ(cpu_tensor.storage()->data(), back_cpu.storage()->data());
+    // Both should be backed by UnifiedStorage (same underlying MTLBuffer)
+#ifdef AXIOM_METAL_SUPPORT
+    auto *gpu_unified = dynamic_cast<backends::metal::UnifiedStorage *>(
+        gpu_tensor.storage().get());
+    auto *cpu_unified = dynamic_cast<backends::metal::UnifiedStorage *>(
+        cpu_view.storage().get());
+    ASSERT_NE(gpu_unified, nullptr);
+    ASSERT_NE(cpu_unified, nullptr);
+    // Same underlying data pointer confirms zero-copy
+    EXPECT_EQ(gpu_unified->data(), cpu_unified->data());
+#endif
 
     // Verify values are correct
-    axiom::testing::ExpectTensorEquals<float>(back_cpu,
-                                              {1.0f, 2.0f, 3.0f, 4.0f});
+    axiom::testing::ExpectTensorEquals<float>(cpu_view,
+                                              {1.0f, 1.0f, 1.0f, 1.0f});
 }
 
 TEST(UnifiedMemory, GpuAddThenCpu) {
@@ -71,9 +81,18 @@ TEST(UnifiedMemory, GpuAddThenCpu) {
 TEST(UnifiedMemory, CpuBlasMatmulOnUnifiedTensor) {
     SKIP_IF_NO_UNIFIED();
 
-    // Create tensors that are backed by unified memory but tagged CPU
-    auto a = Tensor::ones({2, 3}, DType::Float32, Device::CPU);
-    auto b = Tensor::ones({3, 2}, DType::Float32, Device::CPU);
+    // Create GPU tensors (uses UnifiedStorage), move to CPU (stays unified),
+    // then verify that CPU BLAS matmul works on unified-backed tensors
+    auto a = Tensor::ones({2, 3}, DType::Float32, Device::GPU).cpu();
+    auto b = Tensor::ones({3, 2}, DType::Float32, Device::GPU).cpu();
+
+#ifdef AXIOM_METAL_SUPPORT
+    // Confirm they are still backed by UnifiedStorage
+    ASSERT_NE(
+        dynamic_cast<backends::metal::UnifiedStorage *>(a.storage().get()),
+        nullptr);
+#endif
+
     auto result = ops::matmul(a, b);
 
     // Each element should be 3.0 (dot product of ones vectors of length 3)
@@ -105,15 +124,15 @@ TEST(UnifiedMemory, SynchronizationCorrectness) {
 TEST(UnifiedMemory, CloneCreatesIndependentCopy) {
     SKIP_IF_NO_UNIFIED();
 
-    std::vector<float> vals = {1.0f, 2.0f, 3.0f, 4.0f};
-    auto original = Tensor::from_data(vals.data(), {4});
+    // Create a GPU tensor (UnifiedStorage), move to CPU (stays unified), clone
+    auto original = Tensor::ones({4}, DType::Float32, Device::GPU).cpu();
     auto cloned = original.clone();
 
     // Should have different underlying storage
     EXPECT_NE(original.storage()->data(), cloned.storage()->data());
 
     // But same values
-    axiom::testing::ExpectTensorEquals<float>(cloned, {1.0f, 2.0f, 3.0f, 4.0f});
+    axiom::testing::ExpectTensorEquals<float>(cloned, {1.0f, 1.0f, 1.0f, 1.0f});
 
     // Mutating clone should not affect original
     static_cast<float *>(cloned.storage()->data())[0] = 99.0f;
@@ -148,18 +167,25 @@ TEST(UnifiedMemory, RoundTripPreservesValues) {
     auto gpu = t.gpu();
     auto back = gpu.cpu();
 
+    // GPU->CPU is zero-copy (unified), verify still backed by UnifiedStorage
+#ifdef AXIOM_METAL_SUPPORT
+    ASSERT_NE(
+        dynamic_cast<backends::metal::UnifiedStorage *>(back.storage().get()),
+        nullptr);
+#endif
+
     axiom::testing::ExpectTensorEquals<float>(back, values);
 }
 
 TEST(UnifiedMemory, DeviceTagCorrectness) {
     SKIP_IF_NO_UNIFIED();
 
-    auto cpu_tensor = Tensor::zeros({2, 2}, DType::Float32, Device::CPU);
-    EXPECT_EQ(cpu_tensor.device(), Device::CPU);
-
-    auto gpu_tensor = cpu_tensor.gpu();
+    auto gpu_tensor = Tensor::zeros({2, 2}, DType::Float32, Device::GPU);
     EXPECT_EQ(gpu_tensor.device(), Device::GPU);
 
-    auto back_cpu = gpu_tensor.cpu();
-    EXPECT_EQ(back_cpu.device(), Device::CPU);
+    auto cpu_view = gpu_tensor.cpu();
+    EXPECT_EQ(cpu_view.device(), Device::CPU);
+
+    auto back_gpu = cpu_view.gpu();
+    EXPECT_EQ(back_gpu.device(), Device::GPU);
 }

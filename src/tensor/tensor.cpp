@@ -1514,7 +1514,10 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
             result.strides_ = strides_;
             result.dtype_ = dtype_;
             result.memory_order_ = memory_order_;
+            result.offset_ = offset_;
+            result.flags_ = flags_;
             result.storage_ = std::move(new_storage);
+            result.update_contiguity_flags();
             return result;
         }
     }

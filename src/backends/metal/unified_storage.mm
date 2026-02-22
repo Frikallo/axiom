@@ -13,16 +13,17 @@ namespace metal {
 // ============================================================================
 
 bool is_unified_memory_available() {
-    id<MTLDevice> device =
-        (__bridge id<MTLDevice>)MetalContext::instance().device();
-    if (!device)
+    static const bool cached = [] {
+        id<MTLDevice> device =
+            (__bridge id<MTLDevice>)MetalContext::instance().device();
+        if (!device)
+            return false;
+        if (@available(macOS 12.0, iOS 15.0, *)) {
+            return static_cast<bool>([device hasUnifiedMemory]);
+        }
         return false;
-    // hasUnifiedMemory is available on macOS 12+ / iOS 15+.
-    // All Apple Silicon Macs report true; Intel Macs report false.
-    if (@available(macOS 12.0, iOS 15.0, *)) {
-        return [device hasUnifiedMemory];
-    }
-    return false;
+    }();
+    return cached;
 }
 
 // ============================================================================
@@ -31,8 +32,8 @@ bool is_unified_memory_available() {
 
 UnifiedStorage::UnifiedStorage(void *device, size_t size_bytes,
                                Device device_tag)
-    : device_(device), size_bytes_(size_bytes), offset_(0),
-      device_tag_(device_tag) {
+    : device_(device), cached_contents_(nullptr), size_bytes_(size_bytes),
+      offset_(0), device_tag_(device_tag) {
     id<MTLDevice> mtl_device = (__bridge id<MTLDevice>)device_;
     id<MTLBuffer> mtl_buffer =
         [mtl_device newBufferWithLength:size_bytes
@@ -41,6 +42,17 @@ UnifiedStorage::UnifiedStorage(void *device, size_t size_bytes,
         throw MemoryError::allocation_failed(size_bytes);
     }
     buffer_ = (__bridge_retained void *)mtl_buffer;
+    cached_contents_ = [mtl_buffer contents];
+}
+
+UnifiedStorage::UnifiedStorage(void *device, void *buffer,
+                               void *cached_contents, size_t size_bytes,
+                               size_t offset, Device tag)
+    : device_(device), cached_contents_(cached_contents),
+      size_bytes_(size_bytes), offset_(offset), device_tag_(tag) {
+    // ARC-retain the shared buffer
+    id<MTLBuffer> shared = (__bridge id<MTLBuffer>)buffer;
+    buffer_ = (__bridge_retained void *)shared;
 }
 
 UnifiedStorage::~UnifiedStorage() {
@@ -55,13 +67,11 @@ UnifiedStorage::~UnifiedStorage() {
 // ============================================================================
 
 void *UnifiedStorage::data() {
-    id<MTLBuffer> mtl_buffer = (__bridge id<MTLBuffer>)buffer_;
-    return static_cast<uint8_t *>([mtl_buffer contents]) + offset_;
+    return static_cast<uint8_t *>(cached_contents_) + offset_;
 }
 
 const void *UnifiedStorage::data() const {
-    id<MTLBuffer> mtl_buffer = (__bridge id<MTLBuffer>)buffer_;
-    return static_cast<const uint8_t *>([mtl_buffer contents]) + offset_;
+    return static_cast<const uint8_t *>(cached_contents_) + offset_;
 }
 
 size_t UnifiedStorage::size_bytes() const { return size_bytes_; }
@@ -153,18 +163,8 @@ std::unique_ptr<Storage> UnifiedStorage::clone() const {
 
 std::unique_ptr<UnifiedStorage>
 UnifiedStorage::with_device_tag(Device tag) const {
-    auto result = std::make_unique<UnifiedStorage>(device_, size_bytes_, tag);
-    // Release the freshly allocated buffer — we'll share ours instead
-    if (result->buffer_) {
-        id<MTLBuffer> discard =
-            (__bridge_transfer id<MTLBuffer>)result->buffer_;
-        (void)discard;
-    }
-    // Share the same underlying MTLBuffer (ARC retain)
-    id<MTLBuffer> shared = (__bridge id<MTLBuffer>)buffer_;
-    result->buffer_ = (__bridge_retained void *)shared;
-    result->offset_ = offset_;
-    return result;
+    return std::unique_ptr<UnifiedStorage>(new UnifiedStorage(
+        device_, buffer_, cached_contents_, size_bytes_, offset_, tag));
 }
 
 // ============================================================================

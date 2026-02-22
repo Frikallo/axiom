@@ -15,11 +15,16 @@ namespace metal {
 // which device should be used for compute, not where the memory lives.
 class UnifiedStorage : public Storage, public MetalBufferProvider {
   private:
-    void *device_; // id<MTLDevice>
-    void *buffer_; // id<MTLBuffer> (StorageModeShared)
+    void *device_;          // id<MTLDevice>
+    void *buffer_;          // id<MTLBuffer> (StorageModeShared)
+    void *cached_contents_; // Cached [MTLBuffer contents] pointer
     size_t size_bytes_;
     size_t offset_;
     Device device_tag_; // CPU or GPU — indicates compute target
+
+    // Private sharing constructor — shares an existing MTLBuffer (ARC retain)
+    UnifiedStorage(void *device, void *buffer, void *cached_contents,
+                   size_t size_bytes, size_t offset, Device tag);
 
   public:
     UnifiedStorage(void *device, size_t size_bytes, Device device_tag);

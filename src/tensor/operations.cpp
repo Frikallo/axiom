@@ -905,11 +905,28 @@ static Tensor execute_matmul_operation(const Tensor &a, const Tensor &b,
     // Force CPU for complex types (GPU complex support is limited/unstable)
     DType promoted_dtype = promote_types(a.dtype(), b.dtype());
     if (is_complex_dtype(promoted_dtype)) {
-        // Execute eagerly for complex types
         return execute_matmul_operation_eager(a, b, transpose_a, transpose_b);
     }
 
-    // Use lazy evaluation for non-complex types
+    // For small matrices, the lazy graph overhead (node creation, signature
+    // computation, plan lookup, pending-node cleanup) exceeds the actual BLAS
+    // time. Execute eagerly when 2*M*N*K is below the threshold (~512^3).
+    // This covers matrices up to ~512x512 where overhead is >10% of compute.
+    static constexpr size_t kEagerMatmulFlopThreshold = 256ULL * 1024 * 1024;
+    if (a.ndim() <= 2 && b.ndim() <= 2) {
+        size_t M =
+            a.ndim() >= 1 ? a.shape()[transpose_a ? a.ndim() - 1 : 0] : 1;
+        size_t K =
+            a.ndim() >= 2 ? a.shape()[transpose_a ? 0 : a.ndim() - 1] : 1;
+        size_t N =
+            b.ndim() >= 2 ? b.shape()[transpose_b ? 0 : b.ndim() - 1] : 1;
+        if (2 * M * N * K < kEagerMatmulFlopThreshold) {
+            return execute_matmul_operation_eager(a, b, transpose_a,
+                                                  transpose_b);
+        }
+    }
+
+    // Use lazy evaluation for large non-complex matmuls (enables fusion)
     return graph::GraphRegistry::create_lazy_matmul(a, b, transpose_a,
                                                     transpose_b);
 }
