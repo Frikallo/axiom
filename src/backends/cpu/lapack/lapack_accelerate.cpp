@@ -410,6 +410,30 @@ int AccelerateLapackBackend::zheev(char jobz, char uplo, int n, complex128_t *a,
 }
 
 // ============================================================================
+// Symmetric Eigenvalue Decomposition (Divide-and-Conquer)
+// ============================================================================
+
+int AccelerateLapackBackend::ssyevd(char jobz, char uplo, int n, float *a,
+                                    int lda, float *w, float *work, int lwork,
+                                    int *iwork, int liwork) {
+    __LAPACK_int info = 0;
+    __LAPACK_int n_ = n, lda_ = lda, lwork_ = lwork, liwork_ = liwork;
+    ssyevd_(&jobz, &uplo, &n_, a, &lda_, w, work, &lwork_, iwork, &liwork_,
+            &info);
+    return static_cast<int>(info);
+}
+
+int AccelerateLapackBackend::dsyevd(char jobz, char uplo, int n, double *a,
+                                    int lda, double *w, double *work, int lwork,
+                                    int *iwork, int liwork) {
+    __LAPACK_int info = 0;
+    __LAPACK_int n_ = n, lda_ = lda, lwork_ = lwork, liwork_ = liwork;
+    dsyevd_(&jobz, &uplo, &n_, a, &lda_, w, work, &lwork_, iwork, &liwork_,
+            &info);
+    return static_cast<int>(info);
+}
+
+// ============================================================================
 // Least Squares
 // ============================================================================
 

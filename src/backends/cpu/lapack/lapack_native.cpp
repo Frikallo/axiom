@@ -224,6 +224,20 @@ int NativeLapackBackend::zheev(char, char, int, complex128_t *, int, double *,
 }
 
 // ============================================================================
+// Symmetric Eigenvalue Decomposition (Divide-and-Conquer)
+// ============================================================================
+
+int NativeLapackBackend::ssyevd(char, char, int, float *, int, float *, float *,
+                                int, int *, int) {
+    throw_no_lapack("symmetric eigenvalue decomposition (ssyevd)");
+}
+
+int NativeLapackBackend::dsyevd(char, char, int, double *, int, double *,
+                                double *, int, int *, int) {
+    throw_no_lapack("symmetric eigenvalue decomposition (dsyevd)");
+}
+
+// ============================================================================
 // Least Squares
 // ============================================================================
 

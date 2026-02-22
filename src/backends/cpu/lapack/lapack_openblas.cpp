@@ -384,6 +384,29 @@ int OpenBlasLapackBackend::zheev(char jobz, char uplo, int n, complex128_t *a,
 }
 
 // ============================================================================
+// Symmetric Eigenvalue Decomposition (Divide-and-Conquer)
+// ============================================================================
+
+int OpenBlasLapackBackend::ssyevd(char jobz, char uplo, int n, float *a,
+                                  int lda, float *w, float *, int lwork, int *,
+                                  int) {
+    if (lwork == -1) {
+        // LAPACKE handles workspace automatically
+        return 0;
+    }
+    return LAPACKE_ssyevd(LAPACK_COL_MAJOR, jobz, uplo, n, a, lda, w);
+}
+
+int OpenBlasLapackBackend::dsyevd(char jobz, char uplo, int n, double *a,
+                                  int lda, double *w, double *, int lwork,
+                                  int *, int) {
+    if (lwork == -1) {
+        return 0;
+    }
+    return LAPACKE_dsyevd(LAPACK_COL_MAJOR, jobz, uplo, n, a, lda, w);
+}
+
+// ============================================================================
 // Least Squares
 // ============================================================================
 

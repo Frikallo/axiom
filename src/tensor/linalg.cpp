@@ -1294,8 +1294,77 @@ EigResult eig(const Tensor &a) {
 
     EigResult result;
 
-    if (a.dtype() == DType::Float32 || a.dtype() == DType::Float64) {
-        // Real input -> complex eigenvalues possible
+    if (a.dtype() == DType::Float32) {
+        // Float32 input -> Complex64 output using sgeev
+        auto a_work = ensure_cpu_contiguous_colmajor(a).clone();
+        float *a_data = a_work.typed_data<float>();
+
+        result.eigenvalues = Tensor(eigenval_shape, DType::Complex64);
+        result.eigenvectors = Tensor(a.shape(), DType::Complex64);
+
+        using complex64_t = std::complex<float>;
+        complex64_t *eigenval_data =
+            result.eigenvalues.typed_data<complex64_t>();
+        complex64_t *eigenvec_data =
+            result.eigenvectors.typed_data<complex64_t>();
+
+        std::vector<float> wr(n), wi(n);
+        std::vector<float> vr(n * n);
+
+        int ni = static_cast<int>(n);
+
+        // Query optimal workspace size
+        float work_query;
+        backend.sgeev('N', 'V', ni, nullptr, ni, nullptr, nullptr, nullptr, 1,
+                      nullptr, ni, &work_query, -1);
+        int optimal_work =
+            std::max(static_cast<int>(work_query), static_cast<int>(4 * n));
+        std::vector<float> work(optimal_work);
+
+        std::vector<float> a_col(n * n);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            float *a_batch = a_data + b * n * n;
+            complex64_t *eigenval_batch = eigenval_data + b * n;
+            complex64_t *eigenvec_batch = eigenvec_data + b * n * n;
+
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * n + i] = a_batch[i * n + j];
+                }
+            }
+
+            int info = backend.sgeev(
+                'N', 'V', ni, a_col.data(), ni, wr.data(), wi.data(), nullptr,
+                1, vr.data(), ni, work.data(), static_cast<int>(work.size()));
+            check_lapack_info(info, "sgeev");
+
+            for (size_t i = 0; i < n; ++i) {
+                eigenval_batch[i] = complex64_t(wr[i], wi[i]);
+            }
+
+            // Convert eigenvectors to complex (LAPACK stores complex conjugate
+            // pairs)
+            for (size_t j = 0; j < n;) {
+                if (wi[j] == 0.0f) {
+                    for (size_t i = 0; i < n; ++i) {
+                        eigenvec_batch[i * n + j] =
+                            complex64_t(vr[j * n + i], 0.0f);
+                    }
+                    ++j;
+                } else {
+                    for (size_t i = 0; i < n; ++i) {
+                        eigenvec_batch[i * n + j] =
+                            complex64_t(vr[j * n + i], vr[(j + 1) * n + i]);
+                        eigenvec_batch[i * n + j + 1] =
+                            complex64_t(vr[j * n + i], -vr[(j + 1) * n + i]);
+                    }
+                    j += 2;
+                }
+            }
+        }
+    } else if (a.dtype() == DType::Float64) {
+        // Float64 input -> Complex128 output using dgeev
         auto a_work =
             ensure_cpu_contiguous_colmajor(a.astype(DType::Float64)).clone();
         double *a_data = a_work.typed_data<double>();
@@ -1312,17 +1381,16 @@ EigResult eig(const Tensor &a) {
         std::vector<double> wr(n), wi(n);
         std::vector<double> vr(n * n);
 
+        int ni = static_cast<int>(n);
+
         // Query optimal workspace size
         double work_query;
-        int lda_q = static_cast<int>(n);
-        int ldvr_q = static_cast<int>(n);
-        backend.dgeev('N', 'V', static_cast<int>(n), nullptr, lda_q, nullptr,
-                      nullptr, nullptr, 1, nullptr, ldvr_q, &work_query, -1);
+        backend.dgeev('N', 'V', ni, nullptr, ni, nullptr, nullptr, nullptr, 1,
+                      nullptr, ni, &work_query, -1);
         int optimal_work =
             std::max(static_cast<int>(work_query), static_cast<int>(4 * n));
         std::vector<double> work(optimal_work);
 
-        // Pre-allocate transpose buffer outside loop
         std::vector<double> a_col(n * n);
 
         for (size_t b = 0; b < batch_size; ++b) {
@@ -1336,16 +1404,11 @@ EigResult eig(const Tensor &a) {
                 }
             }
 
-            int lda = static_cast<int>(n);
-            int ldvr = static_cast<int>(n);
-
-            int info =
-                backend.dgeev('N', 'V', static_cast<int>(n), a_col.data(), lda,
-                              wr.data(), wi.data(), nullptr, 1, vr.data(), ldvr,
-                              work.data(), static_cast<int>(work.size()));
+            int info = backend.dgeev(
+                'N', 'V', ni, a_col.data(), ni, wr.data(), wi.data(), nullptr,
+                1, vr.data(), ni, work.data(), static_cast<int>(work.size()));
             check_lapack_info(info, "dgeev");
 
-            // Convert real/imag parts to complex
             for (size_t i = 0; i < n; ++i) {
                 eigenval_batch[i] = complex128_t(wr[i], wi[i]);
             }
@@ -1354,14 +1417,12 @@ EigResult eig(const Tensor &a) {
             // pairs)
             for (size_t j = 0; j < n;) {
                 if (wi[j] == 0.0) {
-                    // Real eigenvalue
                     for (size_t i = 0; i < n; ++i) {
                         eigenvec_batch[i * n + j] =
                             complex128_t(vr[j * n + i], 0.0);
                     }
                     ++j;
                 } else {
-                    // Complex conjugate pair
                     for (size_t i = 0; i < n; ++i) {
                         eigenvec_batch[i * n + j] =
                             complex128_t(vr[j * n + i], vr[(j + 1) * n + i]);
@@ -1403,14 +1464,18 @@ EigResult eigh(const Tensor &a) {
         float *eigenval_data = result.eigenvalues.typed_data<float>();
         float *eigenvec_data = result.eigenvectors.typed_data<float>();
 
-        // Query optimal workspace size
+        int ni = static_cast<int>(n);
+
+        // Query optimal workspace sizes for divide-and-conquer
         float work_query;
-        int lda_q = static_cast<int>(n);
-        backend.ssyev('V', 'U', static_cast<int>(n), nullptr, lda_q, nullptr,
-                      &work_query, -1);
+        int iwork_query;
+        backend.ssyevd('V', 'U', ni, nullptr, ni, nullptr, &work_query, -1,
+                       &iwork_query, -1);
         int optimal_work =
             std::max(static_cast<int>(work_query), static_cast<int>(3 * n));
+        int optimal_iwork = std::max(iwork_query, 1);
         std::vector<float> work(optimal_work);
+        std::vector<int> iwork(optimal_iwork);
 
         // Pre-allocate transpose buffer outside loop
         std::vector<float> a_col(n * n);
@@ -1426,11 +1491,11 @@ EigResult eigh(const Tensor &a) {
                 }
             }
 
-            int lda = static_cast<int>(n);
-            int info = backend.ssyev(
-                'V', 'U', static_cast<int>(n), a_col.data(), lda,
-                eigenval_batch, work.data(), static_cast<int>(work.size()));
-            check_lapack_info(info, "ssyev");
+            int info =
+                backend.ssyevd('V', 'U', ni, a_col.data(), ni, eigenval_batch,
+                               work.data(), static_cast<int>(work.size()),
+                               iwork.data(), static_cast<int>(iwork.size()));
+            check_lapack_info(info, "ssyevd");
 
             // Transpose eigenvectors back
             for (size_t i = 0; i < n; ++i) {
@@ -1450,14 +1515,18 @@ EigResult eigh(const Tensor &a) {
         double *eigenval_data = result.eigenvalues.typed_data<double>();
         double *eigenvec_data = result.eigenvectors.typed_data<double>();
 
-        // Query optimal workspace size
+        int ni = static_cast<int>(n);
+
+        // Query optimal workspace sizes for divide-and-conquer
         double work_query;
-        int lda_q = static_cast<int>(n);
-        backend.dsyev('V', 'U', static_cast<int>(n), nullptr, lda_q, nullptr,
-                      &work_query, -1);
+        int iwork_query;
+        backend.dsyevd('V', 'U', ni, nullptr, ni, nullptr, &work_query, -1,
+                       &iwork_query, -1);
         int optimal_work =
             std::max(static_cast<int>(work_query), static_cast<int>(3 * n));
+        int optimal_iwork = std::max(iwork_query, 1);
         std::vector<double> work(optimal_work);
+        std::vector<int> iwork(optimal_iwork);
 
         // Pre-allocate transpose buffer outside loop
         std::vector<double> a_col(n * n);
@@ -1473,11 +1542,11 @@ EigResult eigh(const Tensor &a) {
                 }
             }
 
-            int lda = static_cast<int>(n);
-            int info = backend.dsyev(
-                'V', 'U', static_cast<int>(n), a_col.data(), lda,
-                eigenval_batch, work.data(), static_cast<int>(work.size()));
-            check_lapack_info(info, "dsyev");
+            int info =
+                backend.dsyevd('V', 'U', ni, a_col.data(), ni, eigenval_batch,
+                               work.data(), static_cast<int>(work.size()),
+                               iwork.data(), static_cast<int>(iwork.size()));
+            check_lapack_info(info, "dsyevd");
 
             for (size_t i = 0; i < n; ++i) {
                 for (size_t j = 0; j < n; ++j) {
@@ -2885,15 +2954,199 @@ Tensor svdvals(const Tensor &x) {
 }
 
 Tensor eigvals(const Tensor &a) {
-    // Eigenvalues only - wrapper around eig
-    auto [eigenvalues, eigenvectors] = eig(a);
-    return eigenvalues;
+    validate_square_matrix(a, "eigvals");
+
+    auto &backend = get_lapack_backend();
+
+    size_t n = a.shape()[a.ndim() - 1];
+    size_t batch_size = compute_batch_size(a.shape());
+    Shape batch_shape = get_batch_shape(a.shape());
+
+    Shape eigenval_shape = batch_shape;
+    eigenval_shape.push_back(n);
+
+    if (a.dtype() == DType::Float32) {
+        auto a_work = ensure_cpu_contiguous_colmajor(a).clone();
+        float *a_data = a_work.typed_data<float>();
+
+        Tensor eigenvalues(eigenval_shape, DType::Complex64);
+        using complex64_t = std::complex<float>;
+        complex64_t *eigenval_data = eigenvalues.typed_data<complex64_t>();
+
+        std::vector<float> wr(n), wi(n);
+        int ni = static_cast<int>(n);
+
+        // Query optimal workspace size
+        float work_query;
+        backend.sgeev('N', 'N', ni, nullptr, ni, nullptr, nullptr, nullptr, 1,
+                      nullptr, 1, &work_query, -1);
+        int optimal_work =
+            std::max(static_cast<int>(work_query), static_cast<int>(4 * n));
+        std::vector<float> work(optimal_work);
+
+        std::vector<float> a_col(n * n);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            float *a_batch = a_data + b * n * n;
+            complex64_t *eigenval_batch = eigenval_data + b * n;
+
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * n + i] = a_batch[i * n + j];
+                }
+            }
+
+            int info = backend.sgeev(
+                'N', 'N', ni, a_col.data(), ni, wr.data(), wi.data(), nullptr,
+                1, nullptr, 1, work.data(), static_cast<int>(work.size()));
+            check_lapack_info(info, "sgeev");
+
+            for (size_t i = 0; i < n; ++i) {
+                eigenval_batch[i] = complex64_t(wr[i], wi[i]);
+            }
+        }
+        return eigenvalues;
+    } else if (a.dtype() == DType::Float64) {
+        auto a_work =
+            ensure_cpu_contiguous_colmajor(a.astype(DType::Float64)).clone();
+        double *a_data = a_work.typed_data<double>();
+
+        Tensor eigenvalues(eigenval_shape, DType::Complex128);
+        using complex128_t = std::complex<double>;
+        complex128_t *eigenval_data = eigenvalues.typed_data<complex128_t>();
+
+        std::vector<double> wr(n), wi(n);
+        int ni = static_cast<int>(n);
+
+        // Query optimal workspace size
+        double work_query;
+        backend.dgeev('N', 'N', ni, nullptr, ni, nullptr, nullptr, nullptr, 1,
+                      nullptr, 1, &work_query, -1);
+        int optimal_work =
+            std::max(static_cast<int>(work_query), static_cast<int>(4 * n));
+        std::vector<double> work(optimal_work);
+
+        std::vector<double> a_col(n * n);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            double *a_batch = a_data + b * n * n;
+            complex128_t *eigenval_batch = eigenval_data + b * n;
+
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * n + i] = a_batch[i * n + j];
+                }
+            }
+
+            int info = backend.dgeev(
+                'N', 'N', ni, a_col.data(), ni, wr.data(), wi.data(), nullptr,
+                1, nullptr, 1, work.data(), static_cast<int>(work.size()));
+            check_lapack_info(info, "dgeev");
+
+            for (size_t i = 0; i < n; ++i) {
+                eigenval_batch[i] = complex128_t(wr[i], wi[i]);
+            }
+        }
+        return eigenvalues;
+    } else {
+        return eigvals(a.astype(DType::Float64));
+    }
 }
 
 Tensor eigvalsh(const Tensor &a) {
-    // Eigenvalues of symmetric/Hermitian matrix only
-    auto [eigenvalues, eigenvectors] = eigh(a);
-    return eigenvalues;
+    validate_square_matrix(a, "eigvalsh");
+
+    auto &backend = get_lapack_backend();
+
+    size_t n = a.shape()[a.ndim() - 1];
+    size_t batch_size = compute_batch_size(a.shape());
+    Shape batch_shape = get_batch_shape(a.shape());
+
+    Shape eigenval_shape = batch_shape;
+    eigenval_shape.push_back(n);
+
+    if (a.dtype() == DType::Float32) {
+        auto a_work = ensure_cpu_contiguous_colmajor(a).clone();
+        float *a_data = a_work.typed_data<float>();
+
+        Tensor eigenvalues(eigenval_shape, DType::Float32);
+        float *eigenval_data = eigenvalues.typed_data<float>();
+
+        int ni = static_cast<int>(n);
+
+        // Query optimal workspace sizes for divide-and-conquer
+        float work_query;
+        int iwork_query;
+        backend.ssyevd('N', 'U', ni, nullptr, ni, nullptr, &work_query, -1,
+                       &iwork_query, -1);
+        int optimal_work =
+            std::max(static_cast<int>(work_query), static_cast<int>(3 * n));
+        int optimal_iwork = std::max(iwork_query, 1);
+        std::vector<float> work(optimal_work);
+        std::vector<int> iwork(optimal_iwork);
+
+        std::vector<float> a_col(n * n);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            float *a_batch = a_data + b * n * n;
+            float *eigenval_batch = eigenval_data + b * n;
+
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * n + i] = a_batch[i * n + j];
+                }
+            }
+
+            int info =
+                backend.ssyevd('N', 'U', ni, a_col.data(), ni, eigenval_batch,
+                               work.data(), static_cast<int>(work.size()),
+                               iwork.data(), static_cast<int>(iwork.size()));
+            check_lapack_info(info, "ssyevd");
+        }
+        return eigenvalues;
+    } else if (a.dtype() == DType::Float64) {
+        auto a_work =
+            ensure_cpu_contiguous_colmajor(a.astype(DType::Float64)).clone();
+        double *a_data = a_work.typed_data<double>();
+
+        Tensor eigenvalues(eigenval_shape, DType::Float64);
+        double *eigenval_data = eigenvalues.typed_data<double>();
+
+        int ni = static_cast<int>(n);
+
+        // Query optimal workspace sizes for divide-and-conquer
+        double work_query;
+        int iwork_query;
+        backend.dsyevd('N', 'U', ni, nullptr, ni, nullptr, &work_query, -1,
+                       &iwork_query, -1);
+        int optimal_work =
+            std::max(static_cast<int>(work_query), static_cast<int>(3 * n));
+        int optimal_iwork = std::max(iwork_query, 1);
+        std::vector<double> work(optimal_work);
+        std::vector<int> iwork(optimal_iwork);
+
+        std::vector<double> a_col(n * n);
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            double *a_batch = a_data + b * n * n;
+            double *eigenval_batch = eigenval_data + b * n;
+
+            for (size_t i = 0; i < n; ++i) {
+                for (size_t j = 0; j < n; ++j) {
+                    a_col[j * n + i] = a_batch[i * n + j];
+                }
+            }
+
+            int info =
+                backend.dsyevd('N', 'U', ni, a_col.data(), ni, eigenval_batch,
+                               work.data(), static_cast<int>(work.size()),
+                               iwork.data(), static_cast<int>(iwork.size()));
+            check_lapack_info(info, "dsyevd");
+        }
+        return eigenvalues;
+    } else {
+        return eigvalsh(a.astype(DType::Float64));
+    }
 }
 
 std::pair<Tensor, Tensor> slogdet(const Tensor &a) {

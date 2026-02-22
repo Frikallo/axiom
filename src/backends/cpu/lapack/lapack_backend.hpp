@@ -202,6 +202,19 @@ class LapackBackend {
                       double *rwork) = 0;
 
     // ========================================================================
+    // Eigenvalue Decomposition - Symmetric/Hermitian Divide-and-Conquer
+    // (syevd) Faster than syev for matrices >25x25
+    // ========================================================================
+
+    // Float symmetric
+    virtual int ssyevd(char jobz, char uplo, int n, float *a, int lda, float *w,
+                       float *work, int lwork, int *iwork, int liwork) = 0;
+    // Double symmetric
+    virtual int dsyevd(char jobz, char uplo, int n, double *a, int lda,
+                       double *w, double *work, int lwork, int *iwork,
+                       int liwork) = 0;
+
+    // ========================================================================
     // Least Squares (gelsd) - SVD-based
     // Solves min ||A*X - B||_2 using SVD
     // ========================================================================

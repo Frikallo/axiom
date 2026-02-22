@@ -111,6 +111,12 @@ class AccelerateLapackBackend : public LapackBackend {
     int zheev(char jobz, char uplo, int n, complex128_t *a, int lda, double *w,
               complex128_t *work, int lwork, double *rwork) override;
 
+    // Symmetric eigenvalue decomposition (divide-and-conquer)
+    int ssyevd(char jobz, char uplo, int n, float *a, int lda, float *w,
+               float *work, int lwork, int *iwork, int liwork) override;
+    int dsyevd(char jobz, char uplo, int n, double *a, int lda, double *w,
+               double *work, int lwork, int *iwork, int liwork) override;
+
     // Least squares
     int sgelsd(int m, int n, int nrhs, float *a, int lda, float *b, int ldb,
                float *s, float rcond, int *rank, float *work, int lwork,
