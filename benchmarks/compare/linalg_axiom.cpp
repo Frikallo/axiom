@@ -46,7 +46,7 @@ BenchResult benchmark_op(const std::string& op, size_t n, int warmup = 2,
         } else if (op == "cholesky") {
             result_tensor = linalg::cholesky(A);
         } else if (op == "eig") {
-            auto [vals, vecs] = linalg::eig(A);
+            auto [vals, vecs] = linalg::eigh(A);
             result_tensor = vals;
         } else if (op == "inv") {
             result_tensor = linalg::inv(A);
@@ -71,7 +71,7 @@ BenchResult benchmark_op(const std::string& op, size_t n, int warmup = 2,
         } else if (op == "cholesky") {
             result_tensor = linalg::cholesky(A);
         } else if (op == "eig") {
-            auto [vals, vecs] = linalg::eig(A);
+            auto [vals, vecs] = linalg::eigh(A);
             result_tensor = vals;
         } else if (op == "inv") {
             result_tensor = linalg::inv(A);

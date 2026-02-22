@@ -32,7 +32,7 @@ BenchResult benchmark_op(const std::string& op, int n, int warmup = 2,
     // Warmup
     for (int i = 0; i < warmup; i++) {
         if (op == "svd") {
-            Eigen::JacobiSVD<Eigen::MatrixXf> svd(
+            Eigen::BDCSVD<Eigen::MatrixXf> svd(
                 A, Eigen::ComputeThinU | Eigen::ComputeThinV);
         } else if (op == "qr") {
             Eigen::HouseholderQR<Eigen::MatrixXf> qr(A);
@@ -54,7 +54,7 @@ BenchResult benchmark_op(const std::string& op, int n, int warmup = 2,
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; i++) {
         if (op == "svd") {
-            Eigen::JacobiSVD<Eigen::MatrixXf> svd(
+            Eigen::BDCSVD<Eigen::MatrixXf> svd(
                 A, Eigen::ComputeThinU | Eigen::ComputeThinV);
         } else if (op == "qr") {
             Eigen::HouseholderQR<Eigen::MatrixXf> qr(A);
