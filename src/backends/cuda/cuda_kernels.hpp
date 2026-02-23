@@ -154,6 +154,33 @@ void launch_full_argreduce(bool is_max, const void *src, void *dst,
 void launch_axis_argreduce(bool is_max, const void *src, void *dst,
                            size_t outer, size_t axis_len, size_t inner,
                            size_t element_size, cudaStream_t stream);
+
+// ============================================================================
+// Where / MaskedFill / MaskedSelect kernels
+// ============================================================================
+
+// Where: out[i] = cond[i] ? a[i] : b[i]
+// cond is uint8_t, a/b/out share element_size.
+void launch_where(const void *cond, const void *a, const void *b,
+                  void *dst, size_t n, size_t element_size,
+                  cudaStream_t stream);
+
+// MaskedFill: out[i] = mask[i] ? fill_value_ptr[0] : src[i]
+// mask is uint8_t, src/out/fill_value share element_size.
+void launch_masked_fill(const void *src, const void *mask,
+                        const void *fill_value, void *dst, size_t n,
+                        size_t element_size, cudaStream_t stream);
+
+// MaskedSelect: compact src elements where mask is true into dst.
+// Uses CUB DeviceSelect::Flagged.  Returns selected count via
+// d_num_selected (device pointer to size_t).
+// Two-pass API: call with temp==nullptr to query temp_bytes, then
+// call again with allocated temp.
+void launch_masked_select(const void *src, const void *mask, void *dst,
+                          size_t n, size_t element_size,
+                          void *d_num_selected,
+                          void *temp, size_t &temp_bytes,
+                          cudaStream_t stream);
 #endif
 
 } // namespace cuda

@@ -723,6 +723,225 @@ class CudaArgReduceOperation : public ops::Operation {
 };
 
 // ============================================================================
+// CudaWhereOperation
+// ============================================================================
+
+class CudaWhereOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::Where; }
+    std::string name() const override { return "where"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_where for Where operations");
+    }
+
+    Tensor execute_where(const Tensor &condition, const Tensor &a,
+                         const Tensor &b) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        // Type promotion for a and b
+        DType result_dtype = ops::promote_types(a.dtype(), b.dtype());
+
+        Tensor a_p = (a.dtype() == result_dtype) ? a : a.astype(result_dtype);
+        Tensor b_p = (b.dtype() == result_dtype) ? b : b.astype(result_dtype);
+
+        // Broadcast all three to common shape
+        auto bcast_ab = ops::compute_broadcast_info(a_p.shape(), b_p.shape());
+        auto bcast_all = ops::compute_broadcast_info(
+            condition.shape(), bcast_ab.result_shape);
+        const Shape &out_shape = bcast_all.result_shape;
+
+        Tensor cond_bc = condition.broadcast_to(out_shape);
+        Tensor a_bc = a_p.broadcast_to(out_shape);
+        Tensor b_bc = b_p.broadcast_to(out_shape);
+
+        Tensor cond_c = ensure_gpu_contiguous(cond_bc);
+        Tensor a_c = ensure_gpu_contiguous(a_bc);
+        Tensor b_c = ensure_gpu_contiguous(b_bc);
+
+        Tensor result(out_shape, result_dtype, Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *cond_buf = as_cuda_buffer_provider(cond_c.storage().get());
+        auto *a_buf = as_cuda_buffer_provider(a_c.storage().get());
+        auto *b_buf = as_cuda_buffer_provider(b_c.storage().get());
+        auto *out_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!cond_buf || !a_buf || !b_buf || !out_buf) {
+            throw DeviceError("CudaWhereOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        launch_where(cond_buf->device_ptr(), a_buf->device_ptr(),
+                     b_buf->device_ptr(), out_buf->device_ptr(),
+                     numel, dtype_size(result_dtype), stream);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)condition;
+        (void)a;
+        (void)b;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaMaskedFillOperation
+// ============================================================================
+
+class CudaMaskedFillOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::MaskedFill; }
+    std::string name() const override { return "masked_fill"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_masked_fill for MaskedFill operations");
+    }
+
+    Tensor execute_masked_fill(const Tensor &input, const Tensor &mask,
+                               const Tensor &value) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        // Broadcast mask to input shape
+        Tensor mask_bc = mask.broadcast_to(input.shape());
+
+        Tensor in_c = ensure_gpu_contiguous(input);
+        Tensor mask_c = ensure_gpu_contiguous(mask_bc);
+
+        // Value must be a scalar tensor of matching dtype
+        Tensor val = (value.dtype() == input.dtype())
+                         ? value
+                         : value.astype(input.dtype());
+        Tensor val_c = ensure_gpu_contiguous(val);
+
+        Tensor result(input.shape(), input.dtype(), Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *in_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *mask_buf = as_cuda_buffer_provider(mask_c.storage().get());
+        auto *val_buf = as_cuda_buffer_provider(val_c.storage().get());
+        auto *out_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!in_buf || !mask_buf || !val_buf || !out_buf) {
+            throw DeviceError(
+                "CudaMaskedFillOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        launch_masked_fill(in_buf->device_ptr(), mask_buf->device_ptr(),
+                           val_buf->device_ptr(), out_buf->device_ptr(),
+                           numel, dtype_size(input.dtype()), stream);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)mask;
+        (void)value;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaMaskedSelectOperation
+// ============================================================================
+
+class CudaMaskedSelectOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::MaskedSelect; }
+    std::string name() const override { return "masked_select"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_masked_select for MaskedSelect operations");
+    }
+
+    Tensor execute_masked_select(const Tensor &input,
+                                 const Tensor &mask) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        // Broadcast mask to input shape
+        auto bcast = ops::compute_broadcast_info(input.shape(), mask.shape());
+        Tensor input_bc = input.broadcast_to(bcast.result_shape);
+        Tensor mask_bc = mask.broadcast_to(bcast.result_shape);
+
+        Tensor in_c = ensure_gpu_contiguous(input_bc);
+        Tensor mask_c = ensure_gpu_contiguous(mask_bc);
+
+        size_t numel = in_c.size();
+        size_t elem_size = dtype_size(in_c.dtype());
+
+        auto *in_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *mask_buf = as_cuda_buffer_provider(mask_c.storage().get());
+        if (!in_buf || !mask_buf) {
+            throw DeviceError(
+                "CudaMaskedSelectOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        // Allocate output conservatively (worst case: all selected)
+        Tensor result({numel}, in_c.dtype(), Device::GPU);
+        auto *out_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!out_buf) {
+            throw DeviceError(
+                "CudaMaskedSelectOperation: output storage is not CUDA-backed");
+        }
+
+        // Allocate device counter for CUB
+        int *d_num_selected = nullptr;
+        cudaMalloc(&d_num_selected, sizeof(int));
+
+        // Two-pass CUB: query temp size, then execute
+        size_t temp_bytes = 0;
+        launch_masked_select(in_buf->device_ptr(), mask_buf->device_ptr(),
+                             out_buf->device_ptr(), numel, elem_size,
+                             d_num_selected, nullptr, temp_bytes, stream);
+
+        void *temp = nullptr;
+        cudaMalloc(&temp, temp_bytes);
+        launch_masked_select(in_buf->device_ptr(), mask_buf->device_ptr(),
+                             out_buf->device_ptr(), numel, elem_size,
+                             d_num_selected, temp, temp_bytes, stream);
+        cudaFree(temp);
+
+        // Copy selected count to host
+        int h_count = 0;
+        cudaMemcpyAsync(&h_count, d_num_selected, sizeof(int),
+                         cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream);
+        cudaFree(d_num_selected);
+
+        // Slice result to actual count
+        if (static_cast<size_t>(h_count) < numel) {
+            result = result.slice(0, 0, h_count);
+            result = ensure_gpu_contiguous(result);
+        }
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)mask;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
 // Operation registration
 // ============================================================================
 
@@ -828,6 +1047,17 @@ void register_cuda_operations() {
         ops::OpType::ArgMin, Device::GPU,
         std::make_unique<CudaArgReduceOperation>(ops::OpType::ArgMin,
                                                   "argmin", false));
+
+    // Where / MaskedFill / MaskedSelect
+    ops::OperationRegistry::register_operation(
+        ops::OpType::Where, Device::GPU,
+        std::make_unique<CudaWhereOperation>());
+    ops::OperationRegistry::register_operation(
+        ops::OpType::MaskedFill, Device::GPU,
+        std::make_unique<CudaMaskedFillOperation>());
+    ops::OperationRegistry::register_operation(
+        ops::OpType::MaskedSelect, Device::GPU,
+        std::make_unique<CudaMaskedSelectOperation>());
 
     register_cublas_operations();
 }

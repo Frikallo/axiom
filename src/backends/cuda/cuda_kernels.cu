@@ -1,6 +1,7 @@
 #include "cuda_kernels.hpp"
 
 #ifdef AXIOM_CUDA_SUPPORT
+#include <cub/cub.cuh>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
@@ -940,6 +941,178 @@ void launch_unary_elementwise(UnaryOpKind op, const void *src, void *dst,
         launch_unary(SiLUOp{}, src, dst, n, element_size, stream); break;
     case UnaryOpKind::GELU:
         launch_unary(GELUOp{}, src, dst, n, element_size, stream); break;
+    }
+}
+
+// ============================================================================
+// Where Kernel: out[i] = cond[i] ? a[i] : b[i]
+// ============================================================================
+
+template <typename T>
+__global__ void where_kernel(const uint8_t *cond, const T *a, const T *b,
+                             T *out, size_t n) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+    out[gid] = cond[gid] ? a[gid] : b[gid];
+}
+
+void launch_where(const void *cond, const void *a, const void *b,
+                  void *dst, size_t n, size_t element_size,
+                  cudaStream_t stream) {
+    unsigned int grid =
+        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    const auto *cond_ptr = static_cast<const uint8_t *>(cond);
+
+    switch (element_size) {
+    case 4:
+        where_kernel<float><<<grid, BLOCK_SIZE, 0, stream>>>(
+            cond_ptr, static_cast<const float *>(a),
+            static_cast<const float *>(b), static_cast<float *>(dst), n);
+        break;
+    case 8:
+        where_kernel<double><<<grid, BLOCK_SIZE, 0, stream>>>(
+            cond_ptr, static_cast<const double *>(a),
+            static_cast<const double *>(b), static_cast<double *>(dst), n);
+        break;
+    case 2:
+        where_kernel<int16_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            cond_ptr, static_cast<const int16_t *>(a),
+            static_cast<const int16_t *>(b),
+            static_cast<int16_t *>(dst), n);
+        break;
+    case 1:
+        where_kernel<int8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            cond_ptr, static_cast<const int8_t *>(a),
+            static_cast<const int8_t *>(b),
+            static_cast<int8_t *>(dst), n);
+        break;
+    default:
+        throw std::runtime_error(
+            "launch_where: unsupported element size " +
+            std::to_string(element_size));
+    }
+}
+
+// ============================================================================
+// MaskedFill Kernel: out[i] = mask[i] ? fill_value : src[i]
+// ============================================================================
+
+template <typename T>
+__global__ void masked_fill_kernel(const T *src, const uint8_t *mask,
+                                   T fill_value, T *out, size_t n) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+    out[gid] = mask[gid] ? fill_value : src[gid];
+}
+
+void launch_masked_fill(const void *src, const void *mask,
+                        const void *fill_value, void *dst, size_t n,
+                        size_t element_size, cudaStream_t stream) {
+    unsigned int grid =
+        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    const auto *mask_ptr = static_cast<const uint8_t *>(mask);
+
+    switch (element_size) {
+    case 4: {
+        // Read the scalar fill value from device memory via a small
+        // device-side kernel parameter.  fill_value points to device memory
+        // holding one T element, so we copy it to host for the kernel param.
+        float fv;
+        cudaMemcpyAsync(&fv, fill_value, sizeof(float),
+                         cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream);
+        masked_fill_kernel<float><<<grid, BLOCK_SIZE, 0, stream>>>(
+            static_cast<const float *>(src), mask_ptr, fv,
+            static_cast<float *>(dst), n);
+        break;
+    }
+    case 8: {
+        double fv;
+        cudaMemcpyAsync(&fv, fill_value, sizeof(double),
+                         cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream);
+        masked_fill_kernel<double><<<grid, BLOCK_SIZE, 0, stream>>>(
+            static_cast<const double *>(src), mask_ptr, fv,
+            static_cast<double *>(dst), n);
+        break;
+    }
+    case 2: {
+        int16_t fv;
+        cudaMemcpyAsync(&fv, fill_value, sizeof(int16_t),
+                         cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream);
+        masked_fill_kernel<int16_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            static_cast<const int16_t *>(src), mask_ptr, fv,
+            static_cast<int16_t *>(dst), n);
+        break;
+    }
+    case 1: {
+        int8_t fv;
+        cudaMemcpyAsync(&fv, fill_value, sizeof(int8_t),
+                         cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream);
+        masked_fill_kernel<int8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            static_cast<const int8_t *>(src), mask_ptr, fv,
+            static_cast<int8_t *>(dst), n);
+        break;
+    }
+    default:
+        throw std::runtime_error(
+            "launch_masked_fill: unsupported element size " +
+            std::to_string(element_size));
+    }
+}
+
+// ============================================================================
+// MaskedSelect via CUB DeviceSelect::Flagged
+// ============================================================================
+// CUB expects a "flags" iterator of the same length as input where
+// flag[i] != 0 means select.  Our mask is uint8_t which works directly.
+// ============================================================================
+
+template <typename T>
+static void masked_select_typed(const T *src, const uint8_t *flags, T *dst,
+                                size_t n, int *d_num_selected,
+                                void *temp, size_t &temp_bytes,
+                                cudaStream_t stream) {
+    cub::DeviceSelect::Flagged(temp, temp_bytes, src, flags, dst,
+                                d_num_selected, static_cast<int>(n),
+                                stream);
+}
+
+void launch_masked_select(const void *src, const void *mask, void *dst,
+                          size_t n, size_t element_size,
+                          void *d_num_selected,
+                          void *temp, size_t &temp_bytes,
+                          cudaStream_t stream) {
+    const auto *flags = static_cast<const uint8_t *>(mask);
+    auto *d_count = static_cast<int *>(d_num_selected);
+
+    switch (element_size) {
+    case 4:
+        masked_select_typed(static_cast<const float *>(src), flags,
+                            static_cast<float *>(dst), n, d_count,
+                            temp, temp_bytes, stream);
+        break;
+    case 8:
+        masked_select_typed(static_cast<const double *>(src), flags,
+                            static_cast<double *>(dst), n, d_count,
+                            temp, temp_bytes, stream);
+        break;
+    case 2:
+        masked_select_typed(static_cast<const int16_t *>(src), flags,
+                            static_cast<int16_t *>(dst), n, d_count,
+                            temp, temp_bytes, stream);
+        break;
+    case 1:
+        masked_select_typed(static_cast<const int8_t *>(src), flags,
+                            static_cast<int8_t *>(dst), n, d_count,
+                            temp, temp_bytes, stream);
+        break;
+    default:
+        throw std::runtime_error(
+            "launch_masked_select: unsupported element size " +
+            std::to_string(element_size));
     }
 }
 
