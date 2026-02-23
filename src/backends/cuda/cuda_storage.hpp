@@ -11,8 +11,9 @@ namespace cuda {
 
 class CudaStorage : public Storage, public CudaBufferProvider {
   private:
-    void *device_ptr_; // Device memory pointer
-    size_t size_bytes_;
+    void *device_ptr_;   // Device memory pointer
+    size_t size_bytes_;  // Requested size
+    size_t alloc_size_;  // Rounded-up bucket size used by the allocator
     size_t offset_;
 
   public:

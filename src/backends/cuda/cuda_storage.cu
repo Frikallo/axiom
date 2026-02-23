@@ -1,4 +1,5 @@
 #include "cuda_storage.hpp"
+#include "cuda_allocator.hpp"
 #include "cuda_context.hpp"
 
 #include "axiom/error.hpp"
@@ -12,13 +13,12 @@ namespace backends {
 namespace cuda {
 
 CudaStorage::CudaStorage(size_t size_bytes)
-    : device_ptr_(nullptr), size_bytes_(size_bytes), offset_(0) {
+    : device_ptr_(nullptr),
+      size_bytes_(size_bytes),
+      alloc_size_(CudaAllocator::round_up(size_bytes)),
+      offset_(0) {
 #ifdef AXIOM_CUDA_SUPPORT
-    cudaError_t err = cudaMalloc(&device_ptr_, size_bytes);
-    if (err != cudaSuccess) {
-        throw DeviceError(std::string("cudaMalloc failed: ") +
-                          cudaGetErrorString(err));
-    }
+    device_ptr_ = CudaAllocator::instance().allocate(size_bytes);
 #else
     throw DeviceError("CUDA support not compiled");
 #endif
@@ -27,7 +27,7 @@ CudaStorage::CudaStorage(size_t size_bytes)
 CudaStorage::~CudaStorage() {
 #ifdef AXIOM_CUDA_SUPPORT
     if (device_ptr_) {
-        cudaFree(device_ptr_);
+        CudaAllocator::instance().deallocate(device_ptr_, alloc_size_);
     }
 #endif
 }

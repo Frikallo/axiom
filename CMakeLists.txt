@@ -402,6 +402,7 @@ endif()
 if(AXIOM_HAS_CUDA)
     list(APPEND AXIOM_SOURCES
         src/backends/cuda/cuda_context.cu
+        src/backends/cuda/cuda_allocator.cu
         src/backends/cuda/cuda_storage.cu
         src/backends/cuda/cuda_operations.cu
         src/backends/cuda/cublas_operations.cu
