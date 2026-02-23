@@ -1,4 +1,5 @@
 #include "cuda_kernels.hpp"
+#include "cuda_launch_cache.hpp"
 
 #ifdef AXIOM_CUDA_SUPPORT
 #include <cub/cub.cuh>
@@ -74,29 +75,36 @@ template __global__ void gather_strided<uint32_t>(const uint32_t *,
 void launch_gather_strided(const void *src, void *dst,
                            const GatherStridedParams &params,
                            size_t element_size, cudaStream_t stream) {
-    unsigned int grid = (params.numel + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
+    auto &lc = CudaLaunchCache::instance();
     switch (element_size) {
-    case 1:
-        gather_strided<uint8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    case 1: {
+        auto lp = lc.params_for(gather_strided<uint8_t>, params.numel);
+        gather_strided<uint8_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const uint8_t *>(src),
             static_cast<uint8_t *>(dst), params);
         break;
-    case 2:
-        gather_strided<uint16_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(gather_strided<uint16_t>, params.numel);
+        gather_strided<uint16_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const uint16_t *>(src),
             static_cast<uint16_t *>(dst), params);
         break;
-    case 4:
-        gather_strided<uint32_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case 4: {
+        auto lp = lc.params_for(gather_strided<uint32_t>, params.numel);
+        gather_strided<uint32_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const uint32_t *>(src),
             static_cast<uint32_t *>(dst), params);
         break;
-    case 8:
-        gather_strided<int64_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(gather_strided<int64_t>, params.numel);
+        gather_strided<int64_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const int64_t *>(src),
             static_cast<int64_t *>(dst), params);
         break;
+    }
     default:
         throw std::runtime_error(
             "gather_strided: unsupported element size " +
@@ -295,30 +303,38 @@ __global__ void binary_elementwise_cmp(const T *a, const T *b,
 template <typename Op>
 static void launch_arith(Op op, const void *a, const void *b, void *dst,
                          size_t n, size_t elem, cudaStream_t s) {
-    unsigned int grid = static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     switch (elem) {
-    case 4:
-        binary_elementwise<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    case 4: {
+        auto lp = lc.params_for(binary_elementwise<float, Op>, n);
+        binary_elementwise<float, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const float *>(a), static_cast<const float *>(b),
             static_cast<float *>(dst), n, op);
         break;
-    case 8:
-        binary_elementwise<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(binary_elementwise<double, Op>, n);
+        binary_elementwise<double, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const double *>(a), static_cast<const double *>(b),
             static_cast<double *>(dst), n, op);
         break;
-    case 2:
-        binary_elementwise<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(binary_elementwise<int16_t, Op>, n);
+        binary_elementwise<int16_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int16_t *>(a),
             static_cast<const int16_t *>(b),
             static_cast<int16_t *>(dst), n, op);
         break;
-    case 1:
-        binary_elementwise<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(binary_elementwise<int8_t, Op>, n);
+        binary_elementwise<int8_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int8_t *>(a),
             static_cast<const int8_t *>(b),
             static_cast<int8_t *>(dst), n, op);
         break;
+    }
     default:
         throw std::runtime_error(
             "binary_elementwise: unsupported element size " +
@@ -330,30 +346,38 @@ static void launch_arith(Op op, const void *a, const void *b, void *dst,
 template <typename Op>
 static void launch_cmp(Op op, const void *a, const void *b, void *dst,
                        size_t n, size_t elem, cudaStream_t s) {
-    unsigned int grid = static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     switch (elem) {
-    case 4:
-        binary_elementwise_cmp<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    case 4: {
+        auto lp = lc.params_for(binary_elementwise_cmp<float, Op>, n);
+        binary_elementwise_cmp<float, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const float *>(a), static_cast<const float *>(b),
             static_cast<uint8_t *>(dst), n, op);
         break;
-    case 8:
-        binary_elementwise_cmp<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(binary_elementwise_cmp<double, Op>, n);
+        binary_elementwise_cmp<double, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const double *>(a), static_cast<const double *>(b),
             static_cast<uint8_t *>(dst), n, op);
         break;
-    case 2:
-        binary_elementwise_cmp<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(binary_elementwise_cmp<int16_t, Op>, n);
+        binary_elementwise_cmp<int16_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int16_t *>(a),
             static_cast<const int16_t *>(b),
             static_cast<uint8_t *>(dst), n, op);
         break;
-    case 1:
-        binary_elementwise_cmp<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(binary_elementwise_cmp<int8_t, Op>, n);
+        binary_elementwise_cmp<int8_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int8_t *>(a),
             static_cast<const int8_t *>(b),
             static_cast<uint8_t *>(dst), n, op);
         break;
+    }
     default:
         throw std::runtime_error(
             "binary_elementwise_cmp: unsupported element size " +
@@ -366,30 +390,38 @@ static void launch_cmp(Op op, const void *a, const void *b, void *dst,
 template <typename Op>
 static void launch_int_arith(Op op, const void *a, const void *b, void *dst,
                              size_t n, size_t elem, cudaStream_t s) {
-    unsigned int grid = static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     switch (elem) {
-    case 4:
-        binary_elementwise<int32_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    case 4: {
+        auto lp = lc.params_for(binary_elementwise<int32_t, Op>, n);
+        binary_elementwise<int32_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int32_t *>(a), static_cast<const int32_t *>(b),
             static_cast<int32_t *>(dst), n, op);
         break;
-    case 8:
-        binary_elementwise<int64_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(binary_elementwise<int64_t, Op>, n);
+        binary_elementwise<int64_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int64_t *>(a), static_cast<const int64_t *>(b),
             static_cast<int64_t *>(dst), n, op);
         break;
-    case 2:
-        binary_elementwise<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(binary_elementwise<int16_t, Op>, n);
+        binary_elementwise<int16_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int16_t *>(a),
             static_cast<const int16_t *>(b),
             static_cast<int16_t *>(dst), n, op);
         break;
-    case 1:
-        binary_elementwise<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(binary_elementwise<int8_t, Op>, n);
+        binary_elementwise<int8_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int8_t *>(a),
             static_cast<const int8_t *>(b),
             static_cast<int8_t *>(dst), n, op);
         break;
+    }
     default:
         throw std::runtime_error(
             "binary_elementwise (int): unsupported element size " +
@@ -542,32 +574,39 @@ static void launch_bcast_arith(Op op, const void *a, const void *b,
                                void *dst, size_t n,
                                const BroadcastParams &p, size_t elem,
                                cudaStream_t s) {
-    unsigned int grid =
-        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     switch (elem) {
-    case 4:
-        binary_broadcast<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    case 4: {
+        auto lp = lc.params_for(binary_broadcast<float, Op>, n);
+        binary_broadcast<float, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const float *>(a), static_cast<const float *>(b),
             static_cast<float *>(dst), n, p, op);
         break;
-    case 8:
-        binary_broadcast<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(binary_broadcast<double, Op>, n);
+        binary_broadcast<double, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const double *>(a),
             static_cast<const double *>(b),
             static_cast<double *>(dst), n, p, op);
         break;
-    case 2:
-        binary_broadcast<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(binary_broadcast<int16_t, Op>, n);
+        binary_broadcast<int16_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int16_t *>(a),
             static_cast<const int16_t *>(b),
             static_cast<int16_t *>(dst), n, p, op);
         break;
-    case 1:
-        binary_broadcast<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(binary_broadcast<int8_t, Op>, n);
+        binary_broadcast<int8_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int8_t *>(a),
             static_cast<const int8_t *>(b),
             static_cast<int8_t *>(dst), n, p, op);
         break;
+    }
     default:
         throw std::runtime_error(
             "binary_broadcast: unsupported element size " +
@@ -580,32 +619,39 @@ static void launch_bcast_cmp(Op op, const void *a, const void *b,
                              void *dst, size_t n,
                              const BroadcastParams &p, size_t elem,
                              cudaStream_t s) {
-    unsigned int grid =
-        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     switch (elem) {
-    case 4:
-        binary_broadcast_cmp<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    case 4: {
+        auto lp = lc.params_for(binary_broadcast_cmp<float, Op>, n);
+        binary_broadcast_cmp<float, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const float *>(a), static_cast<const float *>(b),
             static_cast<uint8_t *>(dst), n, p, op);
         break;
-    case 8:
-        binary_broadcast_cmp<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(binary_broadcast_cmp<double, Op>, n);
+        binary_broadcast_cmp<double, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const double *>(a),
             static_cast<const double *>(b),
             static_cast<uint8_t *>(dst), n, p, op);
         break;
-    case 2:
-        binary_broadcast_cmp<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(binary_broadcast_cmp<int16_t, Op>, n);
+        binary_broadcast_cmp<int16_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int16_t *>(a),
             static_cast<const int16_t *>(b),
             static_cast<uint8_t *>(dst), n, p, op);
         break;
-    case 1:
-        binary_broadcast_cmp<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(binary_broadcast_cmp<int8_t, Op>, n);
+        binary_broadcast_cmp<int8_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int8_t *>(a),
             static_cast<const int8_t *>(b),
             static_cast<uint8_t *>(dst), n, p, op);
         break;
+    }
     default:
         throw std::runtime_error(
             "binary_broadcast_cmp: unsupported element size " +
@@ -619,32 +665,39 @@ static void launch_bcast_int_arith(Op op, const void *a, const void *b,
                                    void *dst, size_t n,
                                    const BroadcastParams &p, size_t elem,
                                    cudaStream_t s) {
-    unsigned int grid =
-        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     switch (elem) {
-    case 4:
-        binary_broadcast<int32_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    case 4: {
+        auto lp = lc.params_for(binary_broadcast<int32_t, Op>, n);
+        binary_broadcast<int32_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int32_t *>(a), static_cast<const int32_t *>(b),
             static_cast<int32_t *>(dst), n, p, op);
         break;
-    case 8:
-        binary_broadcast<int64_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(binary_broadcast<int64_t, Op>, n);
+        binary_broadcast<int64_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int64_t *>(a),
             static_cast<const int64_t *>(b),
             static_cast<int64_t *>(dst), n, p, op);
         break;
-    case 2:
-        binary_broadcast<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(binary_broadcast<int16_t, Op>, n);
+        binary_broadcast<int16_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int16_t *>(a),
             static_cast<const int16_t *>(b),
             static_cast<int16_t *>(dst), n, p, op);
         break;
-    case 1:
-        binary_broadcast<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(binary_broadcast<int8_t, Op>, n);
+        binary_broadcast<int8_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int8_t *>(a),
             static_cast<const int8_t *>(b),
             static_cast<int8_t *>(dst), n, p, op);
         break;
+    }
     default:
         throw std::runtime_error(
             "binary_broadcast (int): unsupported element size " +
@@ -955,29 +1008,36 @@ __global__ void unary_elementwise_test(const T *in, uint8_t *out,
 template <typename Op>
 static void launch_unary(Op op, const void *src, void *dst, size_t n,
                          size_t elem, cudaStream_t s) {
-    unsigned int grid =
-        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     switch (elem) {
-    case 4:
-        unary_elementwise<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    case 4: {
+        auto lp = lc.params_for(unary_elementwise<float, Op>, n);
+        unary_elementwise<float, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const float *>(src), static_cast<float *>(dst),
             n, op);
         break;
-    case 8:
-        unary_elementwise<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(unary_elementwise<double, Op>, n);
+        unary_elementwise<double, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const double *>(src),
             static_cast<double *>(dst), n, op);
         break;
-    case 2:
-        unary_elementwise<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(unary_elementwise<int16_t, Op>, n);
+        unary_elementwise<int16_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int16_t *>(src),
             static_cast<int16_t *>(dst), n, op);
         break;
-    case 1:
-        unary_elementwise<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(unary_elementwise<int8_t, Op>, n);
+        unary_elementwise<int8_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int8_t *>(src),
             static_cast<int8_t *>(dst), n, op);
         break;
+    }
     default:
         throw std::runtime_error(
             "unary_elementwise: unsupported element size " +
@@ -988,29 +1048,36 @@ static void launch_unary(Op op, const void *src, void *dst, size_t n,
 template <typename Op>
 static void launch_unary_test(Op op, const void *src, void *dst, size_t n,
                               size_t elem, cudaStream_t s) {
-    unsigned int grid =
-        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     switch (elem) {
-    case 4:
-        unary_elementwise_test<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    case 4: {
+        auto lp = lc.params_for(unary_elementwise_test<float, Op>, n);
+        unary_elementwise_test<float, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const float *>(src), static_cast<uint8_t *>(dst),
             n, op);
         break;
-    case 8:
-        unary_elementwise_test<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(unary_elementwise_test<double, Op>, n);
+        unary_elementwise_test<double, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const double *>(src),
             static_cast<uint8_t *>(dst), n, op);
         break;
-    case 2:
-        unary_elementwise_test<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(unary_elementwise_test<int16_t, Op>, n);
+        unary_elementwise_test<int16_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int16_t *>(src),
             static_cast<uint8_t *>(dst), n, op);
         break;
-    case 1:
-        unary_elementwise_test<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(unary_elementwise_test<int8_t, Op>, n);
+        unary_elementwise_test<int8_t, Op><<<lp.grid, lp.block, 0, s>>>(
             static_cast<const int8_t *>(src),
             static_cast<uint8_t *>(dst), n, op);
         break;
+    }
     default:
         throw std::runtime_error(
             "unary_elementwise_test: unsupported element size " +
@@ -1101,33 +1168,40 @@ __global__ void where_kernel(const uint8_t *cond, const T *a, const T *b,
 void launch_where(const void *cond, const void *a, const void *b,
                   void *dst, size_t n, size_t element_size,
                   cudaStream_t stream) {
-    unsigned int grid =
-        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     const auto *cond_ptr = static_cast<const uint8_t *>(cond);
 
     switch (element_size) {
-    case 4:
-        where_kernel<float><<<grid, BLOCK_SIZE, 0, stream>>>(
+    case 4: {
+        auto lp = lc.params_for(where_kernel<float>, n);
+        where_kernel<float><<<lp.grid, lp.block, 0, stream>>>(
             cond_ptr, static_cast<const float *>(a),
             static_cast<const float *>(b), static_cast<float *>(dst), n);
         break;
-    case 8:
-        where_kernel<double><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(where_kernel<double>, n);
+        where_kernel<double><<<lp.grid, lp.block, 0, stream>>>(
             cond_ptr, static_cast<const double *>(a),
             static_cast<const double *>(b), static_cast<double *>(dst), n);
         break;
-    case 2:
-        where_kernel<int16_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(where_kernel<int16_t>, n);
+        where_kernel<int16_t><<<lp.grid, lp.block, 0, stream>>>(
             cond_ptr, static_cast<const int16_t *>(a),
             static_cast<const int16_t *>(b),
             static_cast<int16_t *>(dst), n);
         break;
-    case 1:
-        where_kernel<int8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(where_kernel<int8_t>, n);
+        where_kernel<int8_t><<<lp.grid, lp.block, 0, stream>>>(
             cond_ptr, static_cast<const int8_t *>(a),
             static_cast<const int8_t *>(b),
             static_cast<int8_t *>(dst), n);
         break;
+    }
     default:
         throw std::runtime_error(
             "launch_where: unsupported element size " +
@@ -1150,8 +1224,7 @@ __global__ void masked_fill_kernel(const T *src, const uint8_t *mask,
 void launch_masked_fill(const void *src, const void *mask,
                         const void *fill_value, void *dst, size_t n,
                         size_t element_size, cudaStream_t stream) {
-    unsigned int grid =
-        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
     const auto *mask_ptr = static_cast<const uint8_t *>(mask);
 
     switch (element_size) {
@@ -1163,7 +1236,8 @@ void launch_masked_fill(const void *src, const void *mask,
         cudaMemcpyAsync(&fv, fill_value, sizeof(float),
                          cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream);
-        masked_fill_kernel<float><<<grid, BLOCK_SIZE, 0, stream>>>(
+        auto lp = lc.params_for(masked_fill_kernel<float>, n);
+        masked_fill_kernel<float><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const float *>(src), mask_ptr, fv,
             static_cast<float *>(dst), n);
         break;
@@ -1173,7 +1247,8 @@ void launch_masked_fill(const void *src, const void *mask,
         cudaMemcpyAsync(&fv, fill_value, sizeof(double),
                          cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream);
-        masked_fill_kernel<double><<<grid, BLOCK_SIZE, 0, stream>>>(
+        auto lp = lc.params_for(masked_fill_kernel<double>, n);
+        masked_fill_kernel<double><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const double *>(src), mask_ptr, fv,
             static_cast<double *>(dst), n);
         break;
@@ -1183,7 +1258,8 @@ void launch_masked_fill(const void *src, const void *mask,
         cudaMemcpyAsync(&fv, fill_value, sizeof(int16_t),
                          cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream);
-        masked_fill_kernel<int16_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+        auto lp = lc.params_for(masked_fill_kernel<int16_t>, n);
+        masked_fill_kernel<int16_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const int16_t *>(src), mask_ptr, fv,
             static_cast<int16_t *>(dst), n);
         break;
@@ -1193,7 +1269,8 @@ void launch_masked_fill(const void *src, const void *mask,
         cudaMemcpyAsync(&fv, fill_value, sizeof(int8_t),
                          cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream);
-        masked_fill_kernel<int8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+        auto lp = lc.params_for(masked_fill_kernel<int8_t>, n);
+        masked_fill_kernel<int8_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const int8_t *>(src), mask_ptr, fv,
             static_cast<int8_t *>(dst), n);
         break;
@@ -1303,9 +1380,8 @@ static void launch_gather_typed(const T *src, const int64_t *indices, T *dst,
                                 const int64_t *out_shape,
                                 const int64_t *src_strides,
                                 int64_t dim_size, cudaStream_t stream) {
-    unsigned int grid =
-        static_cast<unsigned int>((numel + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    gather_kernel<T><<<grid, BLOCK_SIZE, 0, stream>>>(
+    auto lp = CudaLaunchCache::instance().params_for(gather_kernel<T>, numel);
+    gather_kernel<T><<<lp.grid, lp.block, 0, stream>>>(
         src, indices, dst, numel, ndim, dim, out_shape, src_strides, dim_size);
 }
 
@@ -1449,39 +1525,46 @@ void launch_scatter(const void *src_vals, const int64_t *indices,
                     const int64_t *idx_shape, const int64_t *dst_strides,
                     int64_t dim_size, size_t element_size,
                     cudaStream_t stream) {
-    unsigned int grid =
-        static_cast<unsigned int>((numel + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
 
     switch (element_size) {
-    case 4:
+    case 4: {
         // Use atomic version for float32/int32
-        scatter_kernel_f32_atomic<<<grid, BLOCK_SIZE, 0, stream>>>(
+        auto lp = lc.params_for(scatter_kernel_f32_atomic, numel);
+        scatter_kernel_f32_atomic<<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const float *>(src_vals), indices,
             static_cast<float *>(dst), numel, ndim, dim,
             idx_shape, dst_strides, dim_size);
         break;
-    case 8:
+    }
+    case 8: {
         // 64-bit atomicExch requires sm_60+; use plain write
         // (our minimum is sm_70, but CAS-based atomicExch for
         // double is not natively supported — plain write is fine
         // as PyTorch scatter is also non-deterministic for dupes)
-        scatter_kernel<double><<<grid, BLOCK_SIZE, 0, stream>>>(
+        auto lp = lc.params_for(scatter_kernel<double>, numel);
+        scatter_kernel<double><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const double *>(src_vals), indices,
             static_cast<double *>(dst), numel, ndim, dim,
             idx_shape, dst_strides, dim_size);
         break;
-    case 2:
-        scatter_kernel<int16_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(scatter_kernel<int16_t>, numel);
+        scatter_kernel<int16_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const int16_t *>(src_vals), indices,
             static_cast<int16_t *>(dst), numel, ndim, dim,
             idx_shape, dst_strides, dim_size);
         break;
-    case 1:
-        scatter_kernel<int8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(scatter_kernel<int8_t>, numel);
+        scatter_kernel<int8_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const int8_t *>(src_vals), indices,
             static_cast<int8_t *>(dst), numel, ndim, dim,
             idx_shape, dst_strides, dim_size);
         break;
+    }
     default:
         throw std::runtime_error(
             "launch_scatter: unsupported element size " +
@@ -1535,9 +1618,9 @@ static void launch_index_select_typed(const T *src, const int64_t *indices,
                                       const int64_t *src_strides,
                                       int64_t dim_size,
                                       cudaStream_t stream) {
-    unsigned int grid =
-        static_cast<unsigned int>((numel + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    index_select_kernel<T><<<grid, BLOCK_SIZE, 0, stream>>>(
+    auto lp = CudaLaunchCache::instance().params_for(
+        index_select_kernel<T>, numel);
+    index_select_kernel<T><<<lp.grid, lp.block, 0, stream>>>(
         src, indices, dst, numel, ndim, dim, out_shape, src_strides,
         dim_size);
 }
@@ -1606,46 +1689,63 @@ __global__ void cast_to_bool_kernel(const Src *in, uint8_t *out, size_t n) {
 template <typename Src>
 static void launch_cast_from(CastDType dst_dtype, const Src *src, void *dst,
                              size_t n, cudaStream_t stream) {
-    unsigned int grid =
-        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    auto &lc = CudaLaunchCache::instance();
 
     switch (dst_dtype) {
-    case CastDType::Float16:
-        cast_kernel<Src, __half><<<grid, BLOCK_SIZE, 0, stream>>>(
+    case CastDType::Float16: {
+        auto lp = lc.params_for(cast_kernel<Src, __half>, n);
+        cast_kernel<Src, __half><<<lp.grid, lp.block, 0, stream>>>(
             src, static_cast<__half *>(dst), n);
         break;
-    case CastDType::Float32:
-        cast_kernel<Src, float><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case CastDType::Float32: {
+        auto lp = lc.params_for(cast_kernel<Src, float>, n);
+        cast_kernel<Src, float><<<lp.grid, lp.block, 0, stream>>>(
             src, static_cast<float *>(dst), n);
         break;
-    case CastDType::Float64:
-        cast_kernel<Src, double><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case CastDType::Float64: {
+        auto lp = lc.params_for(cast_kernel<Src, double>, n);
+        cast_kernel<Src, double><<<lp.grid, lp.block, 0, stream>>>(
             src, static_cast<double *>(dst), n);
         break;
-    case CastDType::Int8:
-        cast_kernel<Src, int8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case CastDType::Int8: {
+        auto lp = lc.params_for(cast_kernel<Src, int8_t>, n);
+        cast_kernel<Src, int8_t><<<lp.grid, lp.block, 0, stream>>>(
             src, static_cast<int8_t *>(dst), n);
         break;
-    case CastDType::Int16:
-        cast_kernel<Src, int16_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case CastDType::Int16: {
+        auto lp = lc.params_for(cast_kernel<Src, int16_t>, n);
+        cast_kernel<Src, int16_t><<<lp.grid, lp.block, 0, stream>>>(
             src, static_cast<int16_t *>(dst), n);
         break;
-    case CastDType::Int32:
-        cast_kernel<Src, int32_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case CastDType::Int32: {
+        auto lp = lc.params_for(cast_kernel<Src, int32_t>, n);
+        cast_kernel<Src, int32_t><<<lp.grid, lp.block, 0, stream>>>(
             src, static_cast<int32_t *>(dst), n);
         break;
-    case CastDType::Int64:
-        cast_kernel<Src, int64_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case CastDType::Int64: {
+        auto lp = lc.params_for(cast_kernel<Src, int64_t>, n);
+        cast_kernel<Src, int64_t><<<lp.grid, lp.block, 0, stream>>>(
             src, static_cast<int64_t *>(dst), n);
         break;
-    case CastDType::UInt8:
-        cast_kernel<Src, uint8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case CastDType::UInt8: {
+        auto lp = lc.params_for(cast_kernel<Src, uint8_t>, n);
+        cast_kernel<Src, uint8_t><<<lp.grid, lp.block, 0, stream>>>(
             src, static_cast<uint8_t *>(dst), n);
         break;
-    case CastDType::Bool:
-        cast_to_bool_kernel<Src><<<grid, BLOCK_SIZE, 0, stream>>>(
+    }
+    case CastDType::Bool: {
+        auto lp = lc.params_for(cast_to_bool_kernel<Src>, n);
+        cast_to_bool_kernel<Src><<<lp.grid, lp.block, 0, stream>>>(
             src, static_cast<uint8_t *>(dst), n);
         break;
+    }
     }
 }
 

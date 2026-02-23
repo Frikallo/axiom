@@ -1,4 +1,5 @@
 #include "cuda_kernels.hpp"
+#include "cuda_launch_cache.hpp"
 
 #ifdef AXIOM_CUDA_SUPPORT
 #include <cub/cub.cuh>
@@ -171,40 +172,57 @@ static void axis_reduce_typed(ReduceOpKind op, const T *src, T *dst,
                               size_t outer, size_t axis_len, size_t inner,
                               cudaStream_t stream) {
     size_t total = outer * inner;
-    unsigned int grid =
-        static_cast<unsigned int>((total + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
+    auto &lc = CudaLaunchCache::instance();
 
     switch (op) {
-    case ReduceOpKind::Sum:
+    case ReduceOpKind::Sum: {
+        auto lp = lc.params_for(
+            axis_reduce_kernel<T, cub::Sum, SumIdentity<T>>, total);
         axis_reduce_kernel<T, cub::Sum, SumIdentity<T>>
-            <<<grid, REDUCE_BLOCK, 0, stream>>>(
+            <<<lp.grid, lp.block, 0, stream>>>(
                 src, dst, outer, axis_len, inner, cub::Sum{});
         break;
-    case ReduceOpKind::Max:
+    }
+    case ReduceOpKind::Max: {
+        auto lp = lc.params_for(
+            axis_reduce_kernel<T, cub::Max, MaxIdentity<T>>, total);
         axis_reduce_kernel<T, cub::Max, MaxIdentity<T>>
-            <<<grid, REDUCE_BLOCK, 0, stream>>>(
+            <<<lp.grid, lp.block, 0, stream>>>(
                 src, dst, outer, axis_len, inner, cub::Max{});
         break;
-    case ReduceOpKind::Min:
+    }
+    case ReduceOpKind::Min: {
+        auto lp = lc.params_for(
+            axis_reduce_kernel<T, cub::Min, MinIdentity<T>>, total);
         axis_reduce_kernel<T, cub::Min, MinIdentity<T>>
-            <<<grid, REDUCE_BLOCK, 0, stream>>>(
+            <<<lp.grid, lp.block, 0, stream>>>(
                 src, dst, outer, axis_len, inner, cub::Min{});
         break;
-    case ReduceOpKind::Prod:
+    }
+    case ReduceOpKind::Prod: {
+        auto lp = lc.params_for(
+            axis_reduce_kernel<T, CubProdOp, ProdIdentity<T>>, total);
         axis_reduce_kernel<T, CubProdOp, ProdIdentity<T>>
-            <<<grid, REDUCE_BLOCK, 0, stream>>>(
+            <<<lp.grid, lp.block, 0, stream>>>(
                 src, dst, outer, axis_len, inner, CubProdOp{});
         break;
-    case ReduceOpKind::Any:
+    }
+    case ReduceOpKind::Any: {
+        auto lp = lc.params_for(
+            axis_reduce_kernel<T, CubAnyOp, SumIdentity<T>>, total);
         axis_reduce_kernel<T, CubAnyOp, SumIdentity<T>>
-            <<<grid, REDUCE_BLOCK, 0, stream>>>(
+            <<<lp.grid, lp.block, 0, stream>>>(
                 src, dst, outer, axis_len, inner, CubAnyOp{});
         break;
-    case ReduceOpKind::All:
+    }
+    case ReduceOpKind::All: {
+        auto lp = lc.params_for(
+            axis_reduce_kernel<T, CubAllOp, ProdIdentity<T>>, total);
         axis_reduce_kernel<T, CubAllOp, ProdIdentity<T>>
-            <<<grid, REDUCE_BLOCK, 0, stream>>>(
+            <<<lp.grid, lp.block, 0, stream>>>(
                 src, dst, outer, axis_len, inner, CubAllOp{});
         break;
+    }
     }
 }
 
@@ -353,30 +371,37 @@ void launch_axis_argreduce(bool is_max, const void *src, void *dst,
                            size_t outer, size_t axis_len, size_t inner,
                            size_t element_size, cudaStream_t stream) {
     size_t total = outer * inner;
-    unsigned int grid =
-        static_cast<unsigned int>((total + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
+    auto &lc = CudaLaunchCache::instance();
 
     switch (element_size) {
-    case 4:
-        axis_argreduce_kernel<float><<<grid, REDUCE_BLOCK, 0, stream>>>(
+    case 4: {
+        auto lp = lc.params_for(axis_argreduce_kernel<float>, total);
+        axis_argreduce_kernel<float><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const float *>(src), static_cast<int64_t *>(dst),
             outer, axis_len, inner, is_max);
         break;
-    case 8:
-        axis_argreduce_kernel<double><<<grid, REDUCE_BLOCK, 0, stream>>>(
+    }
+    case 8: {
+        auto lp = lc.params_for(axis_argreduce_kernel<double>, total);
+        axis_argreduce_kernel<double><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const double *>(src), static_cast<int64_t *>(dst),
             outer, axis_len, inner, is_max);
         break;
-    case 2:
-        axis_argreduce_kernel<int16_t><<<grid, REDUCE_BLOCK, 0, stream>>>(
+    }
+    case 2: {
+        auto lp = lc.params_for(axis_argreduce_kernel<int16_t>, total);
+        axis_argreduce_kernel<int16_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const int16_t *>(src), static_cast<int64_t *>(dst),
             outer, axis_len, inner, is_max);
         break;
-    case 1:
-        axis_argreduce_kernel<int8_t><<<grid, REDUCE_BLOCK, 0, stream>>>(
+    }
+    case 1: {
+        auto lp = lc.params_for(axis_argreduce_kernel<int8_t>, total);
+        axis_argreduce_kernel<int8_t><<<lp.grid, lp.block, 0, stream>>>(
             static_cast<const int8_t *>(src), static_cast<int64_t *>(dst),
             outer, axis_len, inner, is_max);
         break;
+    }
     default:
         throw std::runtime_error(
             "launch_axis_argreduce: unsupported element size " +

@@ -1,4 +1,5 @@
 #include "cufft_operations.hpp"
+#include "cuda_launch_cache.hpp"
 
 #ifdef AXIOM_CUDA_SUPPORT
 
@@ -146,8 +147,9 @@ void apply_scale_cf32(cufftComplex *data, size_t n, double scale,
                       cudaStream_t stream) {
     if (scale == 1.0)
         return;
-    int blocks = static_cast<int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    scale_complex_f32_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(
+    auto lp = CudaLaunchCache::instance().params_for(
+        scale_complex_f32_kernel, n);
+    scale_complex_f32_kernel<<<lp.grid, lp.block, 0, stream>>>(
         data, n, static_cast<float>(scale));
 }
 
@@ -156,8 +158,9 @@ void apply_scale_cf64(cufftDoubleComplex *data, size_t n, double scale,
                       cudaStream_t stream) {
     if (scale == 1.0)
         return;
-    int blocks = static_cast<int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    scale_complex_f64_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(data, n, scale);
+    auto lp = CudaLaunchCache::instance().params_for(
+        scale_complex_f64_kernel, n);
+    scale_complex_f64_kernel<<<lp.grid, lp.block, 0, stream>>>(data, n, scale);
 }
 
 // Apply real-float scaling on the stream.
@@ -165,8 +168,9 @@ void apply_scale_rf32(float *data, size_t n, double scale,
                       cudaStream_t stream) {
     if (scale == 1.0)
         return;
-    int blocks = static_cast<int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    scale_real_f32_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(
+    auto lp = CudaLaunchCache::instance().params_for(
+        scale_real_f32_kernel, n);
+    scale_real_f32_kernel<<<lp.grid, lp.block, 0, stream>>>(
         data, n, static_cast<float>(scale));
 }
 
@@ -175,8 +179,9 @@ void apply_scale_rf64(double *data, size_t n, double scale,
                       cudaStream_t stream) {
     if (scale == 1.0)
         return;
-    int blocks = static_cast<int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    scale_real_f64_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(data, n, scale);
+    auto lp = CudaLaunchCache::instance().params_for(
+        scale_real_f64_kernel, n);
+    scale_real_f64_kernel<<<lp.grid, lp.block, 0, stream>>>(data, n, scale);
 }
 
 // Ensure tensor is complex, contiguous, and on GPU.
