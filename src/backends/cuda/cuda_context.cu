@@ -56,6 +56,46 @@ CudaContext::~CudaContext() {
 #endif
 }
 
+// ============================================================================
+// CudaExecutionStream
+// ============================================================================
+
+CudaExecutionStream &CudaExecutionStream::instance() {
+    static CudaExecutionStream stream;
+    return stream;
+}
+
+void CudaExecutionStream::synchronize() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    CudaContext::instance().synchronize();
+    batch_count_ = 0;
+}
+
+void CudaExecutionStream::increment_batch() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++batch_count_;
+    if (batch_count_ >= MAX_BATCH_SIZE) {
+        CudaContext::instance().synchronize();
+        batch_count_ = 0;
+    }
+}
+
+bool CudaExecutionStream::has_pending_work() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return batch_count_ > 0;
+}
+
+CudaExecutionStream::CudaExecutionStream() : batch_count_(0) {}
+
+CudaExecutionStream::~CudaExecutionStream() {
+    // Drain any remaining work before teardown.
+    CudaContext::instance().synchronize();
+}
+
+// ============================================================================
+// Availability check
+// ============================================================================
+
 bool is_cuda_available() {
     static std::once_flag flag;
     static bool available = false;
