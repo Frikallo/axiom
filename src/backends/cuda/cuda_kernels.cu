@@ -4,6 +4,7 @@
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 
@@ -11,12 +12,10 @@ namespace axiom {
 namespace backends {
 namespace cuda {
 
+static constexpr int BLOCK_SIZE = 256;
+
 // ============================================================================
 // Gather Strided Kernel
-// ============================================================================
-// Copies non-contiguous (strided) tensor data to a contiguous buffer.
-// Converts each output index to N-dimensional coordinates, then uses
-// the source strides to compute the correct input offset.
 // ============================================================================
 
 template <typename T>
@@ -25,7 +24,6 @@ __global__ void gather_strided(const T *src, T *dst,
     unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
     if (gid >= p.numel) return;
 
-    // Convert linear index to N-dimensional coordinates
     unsigned int coords[MAX_DIMS];
     unsigned int temp = gid;
 
@@ -35,9 +33,6 @@ __global__ void gather_strided(const T *src, T *dst,
         temp /= p.shape[i];
     }
 
-    // Compute strided source offset using element strides.
-    // For flipped axes (negative stride), transform coord to
-    // (shape - 1 - coord).
     unsigned int src_idx = 0;
     #pragma unroll
     for (unsigned int i = 0; i < p.ndim; ++i) {
@@ -51,7 +46,7 @@ __global__ void gather_strided(const T *src, T *dst,
     dst[gid] = src[src_idx];
 }
 
-// Explicit template instantiations
+// Explicit template instantiations — gather_strided
 template __global__ void gather_strided<float>(const float *, float *,
                                                GatherStridedParams);
 template __global__ void gather_strided<double>(const double *, double *,
@@ -75,17 +70,10 @@ template __global__ void gather_strided<uint32_t>(const uint32_t *,
                                                   uint32_t *,
                                                   GatherStridedParams);
 
-// ============================================================================
-// Launcher — dispatches to the correct template by element size
-// ============================================================================
-
-static constexpr int BLOCK_SIZE = 256;
-
 void launch_gather_strided(const void *src, void *dst,
                            const GatherStridedParams &params,
                            size_t element_size, cudaStream_t stream) {
-    unsigned int grid =
-        (params.numel + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    unsigned int grid = (params.numel + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
     switch (element_size) {
     case 1:
@@ -112,6 +100,305 @@ void launch_gather_strided(const void *src, void *dst,
         throw std::runtime_error(
             "gather_strided: unsupported element size " +
             std::to_string(element_size));
+    }
+}
+
+// ============================================================================
+// Binary Element-wise Functors
+// ============================================================================
+
+struct AddOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a + b; }
+};
+
+struct SubOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a - b; }
+};
+
+struct MulOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a * b; }
+};
+
+struct DivOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a / b; }
+};
+
+struct PowOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return pow(static_cast<double>(a), static_cast<double>(b)); }
+    __device__ float operator()(float a, float b) const { return powf(a, b); }
+    __device__ double operator()(double a, double b) const { return pow(a, b); }
+};
+
+struct ModOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a % b; }
+    __device__ float operator()(float a, float b) const { return fmodf(a, b); }
+    __device__ double operator()(double a, double b) const { return fmod(a, b); }
+};
+
+struct MaxOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a > b ? a : b; }
+    __device__ float operator()(float a, float b) const { return fmaxf(a, b); }
+    __device__ double operator()(double a, double b) const { return fmax(a, b); }
+};
+
+struct MinOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a < b ? a : b; }
+    __device__ float operator()(float a, float b) const { return fminf(a, b); }
+    __device__ double operator()(double a, double b) const { return fmin(a, b); }
+};
+
+struct Atan2Op {
+    __device__ float operator()(float a, float b) const { return atan2f(a, b); }
+    __device__ double operator()(double a, double b) const { return atan2(a, b); }
+    template <typename T>
+    __device__ T operator()(T a, T b) const {
+        return static_cast<T>(atan2(static_cast<double>(a),
+                                    static_cast<double>(b)));
+    }
+};
+
+struct HypotOp {
+    __device__ float operator()(float a, float b) const { return hypotf(a, b); }
+    __device__ double operator()(double a, double b) const { return hypot(a, b); }
+    template <typename T>
+    __device__ T operator()(T a, T b) const {
+        return static_cast<T>(hypot(static_cast<double>(a),
+                                    static_cast<double>(b)));
+    }
+};
+
+// ============================================================================
+// Comparison Functors — output is uint8_t
+// ============================================================================
+
+struct EqualOp {
+    template <typename T>
+    __device__ uint8_t operator()(T a, T b) const { return a == b ? 1 : 0; }
+};
+
+struct NotEqualOp {
+    template <typename T>
+    __device__ uint8_t operator()(T a, T b) const { return a != b ? 1 : 0; }
+};
+
+struct LessOp {
+    template <typename T>
+    __device__ uint8_t operator()(T a, T b) const { return a < b ? 1 : 0; }
+};
+
+struct LessEqualOp {
+    template <typename T>
+    __device__ uint8_t operator()(T a, T b) const { return a <= b ? 1 : 0; }
+};
+
+struct GreaterOp {
+    template <typename T>
+    __device__ uint8_t operator()(T a, T b) const { return a > b ? 1 : 0; }
+};
+
+struct GreaterEqualOp {
+    template <typename T>
+    __device__ uint8_t operator()(T a, T b) const { return a >= b ? 1 : 0; }
+};
+
+// ============================================================================
+// Logical Functors — inputs cast to bool, output is uint8_t
+// ============================================================================
+
+struct LogicalAndOp {
+    template <typename T>
+    __device__ uint8_t operator()(T a, T b) const {
+        return (a != T(0)) && (b != T(0)) ? 1 : 0;
+    }
+};
+
+struct LogicalOrOp {
+    template <typename T>
+    __device__ uint8_t operator()(T a, T b) const {
+        return (a != T(0)) || (b != T(0)) ? 1 : 0;
+    }
+};
+
+struct LogicalXorOp {
+    template <typename T>
+    __device__ uint8_t operator()(T a, T b) const {
+        return ((a != T(0)) != (b != T(0))) ? 1 : 0;
+    }
+};
+
+// ============================================================================
+// Binary Element-wise Kernels
+// ============================================================================
+
+// Arithmetic: same-type input/output
+template <typename T, typename Op>
+__global__ void binary_elementwise(const T *a, const T *b, T *out,
+                                   size_t n, Op op) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+    out[gid] = op(a[gid], b[gid]);
+}
+
+// Comparison / logical: input T, output uint8_t
+template <typename T, typename Op>
+__global__ void binary_elementwise_cmp(const T *a, const T *b,
+                                       uint8_t *out, size_t n, Op op) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+    out[gid] = op(a[gid], b[gid]);
+}
+
+// ============================================================================
+// Typed dispatch helpers
+// ============================================================================
+
+// Arithmetic dispatch — instantiates binary_elementwise<T,Op> for a given Op
+// across float / double / int32 / int64.
+template <typename Op>
+static void launch_arith(Op op, const void *a, const void *b, void *dst,
+                         size_t n, size_t elem, cudaStream_t s) {
+    unsigned int grid = static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    switch (elem) {
+    case 4:
+        binary_elementwise<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const float *>(a), static_cast<const float *>(b),
+            static_cast<float *>(dst), n, op);
+        break;
+    case 8:
+        binary_elementwise<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const double *>(a), static_cast<const double *>(b),
+            static_cast<double *>(dst), n, op);
+        break;
+    case 2:
+        binary_elementwise<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int16_t *>(a),
+            static_cast<const int16_t *>(b),
+            static_cast<int16_t *>(dst), n, op);
+        break;
+    case 1:
+        binary_elementwise<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int8_t *>(a),
+            static_cast<const int8_t *>(b),
+            static_cast<int8_t *>(dst), n, op);
+        break;
+    default:
+        throw std::runtime_error(
+            "binary_elementwise: unsupported element size " +
+            std::to_string(elem));
+    }
+}
+
+// Comparison / logical dispatch — output is always uint8_t.
+template <typename Op>
+static void launch_cmp(Op op, const void *a, const void *b, void *dst,
+                       size_t n, size_t elem, cudaStream_t s) {
+    unsigned int grid = static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    switch (elem) {
+    case 4:
+        binary_elementwise_cmp<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const float *>(a), static_cast<const float *>(b),
+            static_cast<uint8_t *>(dst), n, op);
+        break;
+    case 8:
+        binary_elementwise_cmp<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const double *>(a), static_cast<const double *>(b),
+            static_cast<uint8_t *>(dst), n, op);
+        break;
+    case 2:
+        binary_elementwise_cmp<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int16_t *>(a),
+            static_cast<const int16_t *>(b),
+            static_cast<uint8_t *>(dst), n, op);
+        break;
+    case 1:
+        binary_elementwise_cmp<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int8_t *>(a),
+            static_cast<const int8_t *>(b),
+            static_cast<uint8_t *>(dst), n, op);
+        break;
+    default:
+        throw std::runtime_error(
+            "binary_elementwise_cmp: unsupported element size " +
+            std::to_string(elem));
+    }
+}
+
+// ============================================================================
+// Public launcher
+// ============================================================================
+
+void launch_binary_elementwise(BinaryOpKind op, const void *src_a,
+                               const void *src_b, void *dst, size_t n,
+                               size_t element_size, cudaStream_t stream) {
+    switch (op) {
+    // Arithmetic
+    case BinaryOpKind::Add:
+        launch_arith(AddOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Sub:
+        launch_arith(SubOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Mul:
+        launch_arith(MulOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Div:
+        launch_arith(DivOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Pow:
+        launch_arith(PowOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Mod:
+        launch_arith(ModOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Max:
+        launch_arith(MaxOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Min:
+        launch_arith(MinOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Atan2:
+        launch_arith(Atan2Op{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Hypot:
+        launch_arith(HypotOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    // Comparison
+    case BinaryOpKind::Equal:
+        launch_cmp(EqualOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::NotEqual:
+        launch_cmp(NotEqualOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Less:
+        launch_cmp(LessOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::LessEqual:
+        launch_cmp(LessEqualOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::Greater:
+        launch_cmp(GreaterOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::GreaterEqual:
+        launch_cmp(GreaterEqualOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    // Logical
+    case BinaryOpKind::LogicalAnd:
+        launch_cmp(LogicalAndOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::LogicalOr:
+        launch_cmp(LogicalOrOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::LogicalXor:
+        launch_cmp(LogicalXorOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
     }
 }
 
