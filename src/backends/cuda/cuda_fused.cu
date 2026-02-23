@@ -345,7 +345,8 @@ bool execute_cuda_fused_reduction(const FusedReductionStep &step,
     StepBase chain_step;
     chain_step.output_slot = -1; // will use a temporary
     chain_step.total_elements = step.total_elements;
-    chain_step.output_shape = step.output_shape;
+    chain_step.output_shape =
+        step.chain_shape.empty() ? step.output_shape : step.chain_shape;
     DType chain_dtype =
         step.chain_dtype != DType{} ? step.chain_dtype : step.output_dtype;
     chain_step.output_dtype = chain_dtype;
