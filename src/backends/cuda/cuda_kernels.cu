@@ -1116,6 +1116,326 @@ void launch_masked_select(const void *src, const void *mask, void *dst,
     }
 }
 
+// ============================================================================
+// Gather Kernel
+// ============================================================================
+// For each output element at flat index gid, decompose into N-d coords
+// using out_shape (row-major), replace coord[dim] with indices[gid],
+// then compute the linear offset into src via src_strides.
+// ============================================================================
+
+template <typename T>
+__global__ void gather_kernel(const T *src, const int64_t *indices, T *dst,
+                              size_t numel, int ndim, int dim,
+                              const int64_t *out_shape,
+                              const int64_t *src_strides,
+                              int64_t dim_size) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= numel) return;
+
+    // Decompose gid into N-d coords (row-major)
+    int64_t coords[MAX_DIMS];
+    size_t tmp = gid;
+    for (int i = ndim - 1; i >= 0; --i) {
+        coords[i] = static_cast<int64_t>(tmp % static_cast<size_t>(out_shape[i]));
+        tmp /= static_cast<size_t>(out_shape[i]);
+    }
+
+    // Replace coord at gather dim with the index value
+    int64_t idx = indices[gid];
+    if (idx < 0) idx += dim_size;
+    coords[dim] = idx;
+
+    // Compute linear offset into src
+    int64_t src_offset = 0;
+    for (int i = 0; i < ndim; ++i) {
+        src_offset += coords[i] * src_strides[i];
+    }
+
+    dst[gid] = src[src_offset];
+}
+
+template <typename T>
+static void launch_gather_typed(const T *src, const int64_t *indices, T *dst,
+                                size_t numel, int ndim, int dim,
+                                const int64_t *out_shape,
+                                const int64_t *src_strides,
+                                int64_t dim_size, cudaStream_t stream) {
+    unsigned int grid =
+        static_cast<unsigned int>((numel + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    gather_kernel<T><<<grid, BLOCK_SIZE, 0, stream>>>(
+        src, indices, dst, numel, ndim, dim, out_shape, src_strides, dim_size);
+}
+
+void launch_gather(const void *src, const int64_t *indices, void *dst,
+                   size_t numel, int ndim, int dim,
+                   const int64_t *out_shape, const int64_t *src_strides,
+                   int64_t dim_size, size_t element_size,
+                   cudaStream_t stream) {
+    switch (element_size) {
+    case 4:
+        launch_gather_typed(static_cast<const float *>(src), indices,
+                            static_cast<float *>(dst), numel, ndim, dim,
+                            out_shape, src_strides, dim_size, stream);
+        break;
+    case 8:
+        launch_gather_typed(static_cast<const double *>(src), indices,
+                            static_cast<double *>(dst), numel, ndim, dim,
+                            out_shape, src_strides, dim_size, stream);
+        break;
+    case 2:
+        launch_gather_typed(static_cast<const int16_t *>(src), indices,
+                            static_cast<int16_t *>(dst), numel, ndim, dim,
+                            out_shape, src_strides, dim_size, stream);
+        break;
+    case 1:
+        launch_gather_typed(static_cast<const int8_t *>(src), indices,
+                            static_cast<int8_t *>(dst), numel, ndim, dim,
+                            out_shape, src_strides, dim_size, stream);
+        break;
+    default:
+        throw std::runtime_error(
+            "launch_gather: unsupported element size " +
+            std::to_string(element_size));
+    }
+}
+
+// ============================================================================
+// Scatter Kernel
+// ============================================================================
+// dst starts as a copy of input.  For each position gid in indices,
+// decompose into coords using idx_shape, replace coord[dim] with
+// indices[gid], then write src_vals[gid] into dst at that offset.
+// Uses atomicExch for 32-bit types and a plain write for others
+// (last-write-wins, matching PyTorch scatter semantics).
+// ============================================================================
+
+template <typename T>
+__global__ void scatter_kernel(const T *src_vals, const int64_t *indices,
+                               T *dst, size_t numel, int ndim, int dim,
+                               const int64_t *idx_shape,
+                               const int64_t *dst_strides,
+                               int64_t dim_size) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= numel) return;
+
+    // Decompose gid into N-d coords of the indices tensor
+    int64_t coords[MAX_DIMS];
+    size_t tmp = gid;
+    for (int i = ndim - 1; i >= 0; --i) {
+        coords[i] = static_cast<int64_t>(tmp % static_cast<size_t>(idx_shape[i]));
+        tmp /= static_cast<size_t>(idx_shape[i]);
+    }
+
+    // Replace coord at scatter dim with the index value
+    int64_t idx = indices[gid];
+    if (idx < 0) idx += dim_size;
+    coords[dim] = idx;
+
+    // Compute linear offset into dst
+    int64_t dst_offset = 0;
+    for (int i = 0; i < ndim; ++i) {
+        dst_offset += coords[i] * dst_strides[i];
+    }
+
+    dst[dst_offset] = src_vals[gid];
+}
+
+// Float32 specialisation uses atomicExch for race safety
+__global__ void scatter_kernel_f32_atomic(const float *src_vals,
+                                          const int64_t *indices,
+                                          float *dst, size_t numel,
+                                          int ndim, int dim,
+                                          const int64_t *idx_shape,
+                                          const int64_t *dst_strides,
+                                          int64_t dim_size) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= numel) return;
+
+    int64_t coords[MAX_DIMS];
+    size_t tmp = gid;
+    for (int i = ndim - 1; i >= 0; --i) {
+        coords[i] = static_cast<int64_t>(tmp % static_cast<size_t>(idx_shape[i]));
+        tmp /= static_cast<size_t>(idx_shape[i]);
+    }
+
+    int64_t idx = indices[gid];
+    if (idx < 0) idx += dim_size;
+    coords[dim] = idx;
+
+    int64_t dst_offset = 0;
+    for (int i = 0; i < ndim; ++i) {
+        dst_offset += coords[i] * dst_strides[i];
+    }
+
+    atomicExch(&dst[dst_offset], src_vals[gid]);
+}
+
+// Int32 specialisation uses atomicExch
+__global__ void scatter_kernel_i32_atomic(const int32_t *src_vals,
+                                          const int64_t *indices,
+                                          int32_t *dst, size_t numel,
+                                          int ndim, int dim,
+                                          const int64_t *idx_shape,
+                                          const int64_t *dst_strides,
+                                          int64_t dim_size) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= numel) return;
+
+    int64_t coords[MAX_DIMS];
+    size_t tmp = gid;
+    for (int i = ndim - 1; i >= 0; --i) {
+        coords[i] = static_cast<int64_t>(tmp % static_cast<size_t>(idx_shape[i]));
+        tmp /= static_cast<size_t>(idx_shape[i]);
+    }
+
+    int64_t idx = indices[gid];
+    if (idx < 0) idx += dim_size;
+    coords[dim] = idx;
+
+    int64_t dst_offset = 0;
+    for (int i = 0; i < ndim; ++i) {
+        dst_offset += coords[i] * dst_strides[i];
+    }
+
+    atomicExch(reinterpret_cast<int *>(&dst[dst_offset]),
+               *reinterpret_cast<const int *>(&src_vals[gid]));
+}
+
+void launch_scatter(const void *src_vals, const int64_t *indices,
+                    void *dst, size_t numel, int ndim, int dim,
+                    const int64_t *idx_shape, const int64_t *dst_strides,
+                    int64_t dim_size, size_t element_size,
+                    cudaStream_t stream) {
+    unsigned int grid =
+        static_cast<unsigned int>((numel + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+    switch (element_size) {
+    case 4:
+        // Use atomic version for float32/int32
+        scatter_kernel_f32_atomic<<<grid, BLOCK_SIZE, 0, stream>>>(
+            static_cast<const float *>(src_vals), indices,
+            static_cast<float *>(dst), numel, ndim, dim,
+            idx_shape, dst_strides, dim_size);
+        break;
+    case 8:
+        // 64-bit atomicExch requires sm_60+; use plain write
+        // (our minimum is sm_70, but CAS-based atomicExch for
+        // double is not natively supported — plain write is fine
+        // as PyTorch scatter is also non-deterministic for dupes)
+        scatter_kernel<double><<<grid, BLOCK_SIZE, 0, stream>>>(
+            static_cast<const double *>(src_vals), indices,
+            static_cast<double *>(dst), numel, ndim, dim,
+            idx_shape, dst_strides, dim_size);
+        break;
+    case 2:
+        scatter_kernel<int16_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            static_cast<const int16_t *>(src_vals), indices,
+            static_cast<int16_t *>(dst), numel, ndim, dim,
+            idx_shape, dst_strides, dim_size);
+        break;
+    case 1:
+        scatter_kernel<int8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            static_cast<const int8_t *>(src_vals), indices,
+            static_cast<int8_t *>(dst), numel, ndim, dim,
+            idx_shape, dst_strides, dim_size);
+        break;
+    default:
+        throw std::runtime_error(
+            "launch_scatter: unsupported element size " +
+            std::to_string(element_size));
+    }
+}
+
+// ============================================================================
+// IndexSelect Kernel
+// ============================================================================
+// Simpler than Gather: output has same shape as input except dim is
+// replaced with num_indices.  For each output element, decompose into
+// coords, map coord[dim] through the 1-D indices array, read from src.
+// ============================================================================
+
+template <typename T>
+__global__ void index_select_kernel(const T *src, const int64_t *indices,
+                                    T *dst, size_t numel, int ndim, int dim,
+                                    const int64_t *out_shape,
+                                    const int64_t *src_strides,
+                                    int64_t dim_size) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= numel) return;
+
+    // Decompose gid into N-d coords of the output tensor
+    int64_t coords[MAX_DIMS];
+    size_t tmp = gid;
+    for (int i = ndim - 1; i >= 0; --i) {
+        coords[i] = static_cast<int64_t>(tmp % static_cast<size_t>(out_shape[i]));
+        tmp /= static_cast<size_t>(out_shape[i]);
+    }
+
+    // Map coord[dim] through indices
+    int64_t idx = indices[coords[dim]];
+    if (idx < 0) idx += dim_size;
+    coords[dim] = idx;
+
+    // Compute linear offset into src
+    int64_t src_offset = 0;
+    for (int i = 0; i < ndim; ++i) {
+        src_offset += coords[i] * src_strides[i];
+    }
+
+    dst[gid] = src[src_offset];
+}
+
+template <typename T>
+static void launch_index_select_typed(const T *src, const int64_t *indices,
+                                      T *dst, size_t numel, int ndim, int dim,
+                                      const int64_t *out_shape,
+                                      const int64_t *src_strides,
+                                      int64_t dim_size,
+                                      cudaStream_t stream) {
+    unsigned int grid =
+        static_cast<unsigned int>((numel + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    index_select_kernel<T><<<grid, BLOCK_SIZE, 0, stream>>>(
+        src, indices, dst, numel, ndim, dim, out_shape, src_strides,
+        dim_size);
+}
+
+void launch_index_select(const void *src, const int64_t *indices, void *dst,
+                         size_t numel, int ndim, int dim,
+                         const int64_t *out_shape,
+                         const int64_t *src_strides,
+                         int64_t dim_size, size_t element_size,
+                         cudaStream_t stream) {
+    switch (element_size) {
+    case 4:
+        launch_index_select_typed(static_cast<const float *>(src), indices,
+                                  static_cast<float *>(dst), numel, ndim, dim,
+                                  out_shape, src_strides, dim_size, stream);
+        break;
+    case 8:
+        launch_index_select_typed(static_cast<const double *>(src), indices,
+                                  static_cast<double *>(dst), numel, ndim, dim,
+                                  out_shape, src_strides, dim_size, stream);
+        break;
+    case 2:
+        launch_index_select_typed(static_cast<const int16_t *>(src), indices,
+                                  static_cast<int16_t *>(dst), numel, ndim,
+                                  dim, out_shape, src_strides, dim_size,
+                                  stream);
+        break;
+    case 1:
+        launch_index_select_typed(static_cast<const int8_t *>(src), indices,
+                                  static_cast<int8_t *>(dst), numel, ndim,
+                                  dim, out_shape, src_strides, dim_size,
+                                  stream);
+        break;
+    default:
+        throw std::runtime_error(
+            "launch_index_select: unsupported element size " +
+            std::to_string(element_size));
+    }
+}
+
 } // namespace cuda
 } // namespace backends
 } // namespace axiom

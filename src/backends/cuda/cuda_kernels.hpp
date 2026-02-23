@@ -181,6 +181,41 @@ void launch_masked_select(const void *src, const void *mask, void *dst,
                           void *d_num_selected,
                           void *temp, size_t &temp_bytes,
                           cudaStream_t stream);
+
+// ============================================================================
+// Gather / Scatter / IndexSelect kernels
+// ============================================================================
+
+// Gather along `dim`.  For each output element at flat index i, decompose
+// into N-d coords using `out_shape`, replace coord[dim] with
+// indices[i], then read from `src` using `src_strides`.
+// out_shape/src_strides are element-count strides of length ndim.
+void launch_gather(const void *src, const int64_t *indices, void *dst,
+                   size_t numel, int ndim, int dim,
+                   const int64_t *out_shape, const int64_t *src_strides,
+                   int64_t dim_size, size_t element_size,
+                   cudaStream_t stream);
+
+// Scatter along `dim`.  dst starts as a copy of `input`.  For each
+// position i in indices (total `numel` elements), decompose into coords
+// using `idx_shape`, replace coord[dim] with indices[i], then write
+// src_vals[i] into dst at that position.  Uses atomicExch to handle
+// races (last-write-wins, matching PyTorch semantics).
+void launch_scatter(const void *src_vals, const int64_t *indices,
+                    void *dst, size_t numel, int ndim, int dim,
+                    const int64_t *idx_shape, const int64_t *dst_strides,
+                    int64_t dim_size, size_t element_size,
+                    cudaStream_t stream);
+
+// IndexSelect along `dim`.  Simpler than Gather: output has the same
+// shape as input except dim-size is replaced by num_indices.
+// indices is a 1-D int64 tensor of length num_indices.
+void launch_index_select(const void *src, const int64_t *indices, void *dst,
+                         size_t numel, int ndim, int dim,
+                         const int64_t *out_shape,
+                         const int64_t *src_strides,
+                         int64_t dim_size, size_t element_size,
+                         cudaStream_t stream);
 #endif
 
 } // namespace cuda
