@@ -3,6 +3,7 @@
 #include <mutex>
 
 #ifdef AXIOM_CUDA_SUPPORT
+#include <cublas_v2.h>
 #include <cuda_runtime.h>
 #endif
 
@@ -19,23 +20,36 @@ int CudaContext::device_id() const { return device_id_; }
 
 void *CudaContext::stream() const { return stream_; }
 
+void *CudaContext::cublas_handle() const { return cublas_handle_; }
+
 void CudaContext::synchronize() {
 #ifdef AXIOM_CUDA_SUPPORT
     cudaStreamSynchronize(static_cast<cudaStream_t>(stream_));
 #endif
 }
 
-CudaContext::CudaContext() : device_id_(0), stream_(nullptr) {
+CudaContext::CudaContext()
+    : device_id_(0), stream_(nullptr), cublas_handle_(nullptr) {
 #ifdef AXIOM_CUDA_SUPPORT
     cudaSetDevice(device_id_);
+
     cudaStream_t s = nullptr;
-    cudaStreamCreate(&s);
+    cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking);
     stream_ = static_cast<void *>(s);
+
+    cublasHandle_t handle = nullptr;
+    cublasCreate(&handle);
+    cublasSetStream(handle, s);
+    cublas_handle_ = static_cast<void *>(handle);
 #endif
 }
 
 CudaContext::~CudaContext() {
 #ifdef AXIOM_CUDA_SUPPORT
+    // Destroy in reverse order of creation.
+    if (cublas_handle_) {
+        cublasDestroy(static_cast<cublasHandle_t>(cublas_handle_));
+    }
     if (stream_) {
         cudaStreamDestroy(static_cast<cudaStream_t>(stream_));
     }
