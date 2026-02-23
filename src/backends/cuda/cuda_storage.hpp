@@ -31,6 +31,7 @@ class CudaStorage : public Storage, public CudaBufferProvider {
     // CudaBufferProvider interface
     void *device_ptr() const override { return device_ptr_; }
     size_t offset() const override { return offset_; }
+    bool is_host_accessible() const override { return false; }
 };
 
 std::unique_ptr<Storage> make_cuda_storage(size_t size_bytes);

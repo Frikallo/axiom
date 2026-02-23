@@ -18,6 +18,9 @@ class CudaBufferProvider {
 
     // Byte offset into the allocation (for views).
     virtual size_t offset() const = 0;
+
+    // True if the backing memory is host-accessible (e.g. cudaMallocManaged).
+    virtual bool is_host_accessible() const = 0;
 };
 
 // Extract CudaBufferProvider from any Storage pointer.
