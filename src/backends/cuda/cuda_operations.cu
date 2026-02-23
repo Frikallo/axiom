@@ -72,6 +72,32 @@ Tensor ensure_gpu_contiguous(const Tensor &t) {
 }
 
 // ============================================================================
+// Supported-dtype check — CUDA kernels dispatch by element_size (1/2/4/8)
+// and assume specific C types at each size.  Dtypes whose bit-pattern
+// doesn't match those C types would silently produce wrong results.
+// ============================================================================
+
+static bool is_cuda_supported_dtype(DType dtype) {
+    switch (dtype) {
+    case DType::Bool:
+    case DType::Int8:
+    case DType::Int16:
+    case DType::Int32:
+    case DType::Int64:
+    case DType::UInt8:
+    case DType::Float32:
+    case DType::Float64:
+        return true;
+    // Float16, BFloat16: 2-byte but not int16_t — kernel reinterprets bits
+    // UInt16: signed/unsigned mismatch for arithmetic ops
+    // UInt32, UInt64: dispatched as float/double — bit-reinterpretation
+    // Complex64, Complex128: no complex kernel instantiations
+    default:
+        return false;
+    }
+}
+
+// ============================================================================
 // OpType → BinaryOpKind mapping
 // ============================================================================
 
@@ -155,6 +181,9 @@ class CudaBinaryOperation : public ops::Operation {
 
     bool supports_binary(const Tensor &lhs,
                          const Tensor &rhs) const override {
+        DType promoted = ops::promote_types(lhs.dtype(), rhs.dtype());
+        if (!is_cuda_supported_dtype(promoted))
+            return false;
         return ops::are_broadcastable(lhs.shape(), rhs.shape());
     }
 
@@ -336,6 +365,10 @@ class CudaUnaryOperation : public ops::Operation {
         return false;
     }
 
+    bool supports_unary(const Tensor &input) const override {
+        return is_cuda_supported_dtype(input.dtype());
+    }
+
     Tensor execute_binary(const Tensor & /*lhs*/,
                           const Tensor & /*rhs*/) const override {
         throw RuntimeError::internal(
@@ -416,6 +449,10 @@ class CudaReductionOperation : public ops::Operation {
     bool supports_binary(const Tensor & /*lhs*/,
                          const Tensor & /*rhs*/) const override {
         return false;
+    }
+
+    bool supports_reduction(const Tensor &input) const override {
+        return is_cuda_supported_dtype(input.dtype());
     }
 
     Tensor execute_binary(const Tensor & /*lhs*/,
@@ -646,6 +683,10 @@ class CudaArgReduceOperation : public ops::Operation {
     bool supports_binary(const Tensor & /*lhs*/,
                          const Tensor & /*rhs*/) const override {
         return false;
+    }
+
+    bool supports_reduction(const Tensor &input) const override {
+        return is_cuda_supported_dtype(input.dtype());
     }
 
     Tensor execute_binary(const Tensor & /*lhs*/,
@@ -1290,6 +1331,10 @@ class CudaSoftmaxOperation : public ops::Operation {
     bool supports_binary(const Tensor & /*lhs*/,
                          const Tensor & /*rhs*/) const override {
         return false;
+    }
+
+    bool supports_reduction(const Tensor &input) const override {
+        return is_cuda_supported_dtype(input.dtype());
     }
 
     Tensor execute_binary(const Tensor & /*lhs*/,

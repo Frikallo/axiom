@@ -663,9 +663,14 @@ static Tensor execute_unary_operation_eager(OpType op_type,
     const Operation *op =
         OperationRegistry::get_operation(op_type, target_device);
 
+    // Fallback to CPU if GPU op is not available or doesn't support the input
+    if (target_device == Device::GPU && (!op || !op->supports_unary(input))) {
+        target_device = Device::CPU;
+        op = OperationRegistry::get_operation(op_type, target_device);
+    }
+
     if (!op) {
-        throw DeviceError("Operation not available for device: " +
-                          axiom::system::device_to_string(target_device));
+        throw DeviceError("Operation not available for any device");
     }
 
     // Move tensor to target device if needed
@@ -863,9 +868,16 @@ static Tensor execute_reduction_operation_eager(OpType op_type,
     Device target_device = input.device();
 
     const auto *op = OperationRegistry::get_operation(op_type, target_device);
+
+    // Fallback to CPU if GPU op is not available or doesn't support the input
+    if (target_device == Device::GPU &&
+        (!op || !op->supports_reduction(input))) {
+        target_device = Device::CPU;
+        op = OperationRegistry::get_operation(op_type, target_device);
+    }
+
     if (!op) {
-        throw DeviceError("Reduction operation not available for device: " +
-                          axiom::system::device_to_string(target_device));
+        throw DeviceError("Reduction operation not available for any device");
     }
 
     // Move tensor to target device if needed
