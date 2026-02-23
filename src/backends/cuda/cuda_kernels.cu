@@ -402,6 +402,188 @@ void launch_binary_elementwise(BinaryOpKind op, const void *src_a,
     }
 }
 
+// ============================================================================
+// Binary Broadcast Kernels
+// ============================================================================
+// Stride-based indexing: a stride of 0 means the dimension is broadcast.
+// The output linear index is decomposed into N-d coords which are then
+// dotted with per-operand strides to find the source element.
+// ============================================================================
+
+template <typename T, typename Op>
+__global__ void binary_broadcast(const T *a, const T *b, T *out,
+                                 size_t n, BroadcastParams p, Op op) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+
+    // Decompose linear index into N-d coords (row-major)
+    size_t tmp = gid;
+    int64_t a_idx = 0;
+    int64_t b_idx = 0;
+    #pragma unroll
+    for (int i = p.ndim - 1; i >= 0; --i) {
+        int64_t coord = static_cast<int64_t>(tmp % static_cast<size_t>(p.out_shape[i]));
+        tmp /= static_cast<size_t>(p.out_shape[i]);
+        a_idx += coord * p.a_strides[i];
+        b_idx += coord * p.b_strides[i];
+    }
+
+    out[gid] = op(a[a_idx], b[b_idx]);
+}
+
+template <typename T, typename Op>
+__global__ void binary_broadcast_cmp(const T *a, const T *b, uint8_t *out,
+                                     size_t n, BroadcastParams p, Op op) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+
+    size_t tmp = gid;
+    int64_t a_idx = 0;
+    int64_t b_idx = 0;
+    #pragma unroll
+    for (int i = p.ndim - 1; i >= 0; --i) {
+        int64_t coord = static_cast<int64_t>(tmp % static_cast<size_t>(p.out_shape[i]));
+        tmp /= static_cast<size_t>(p.out_shape[i]);
+        a_idx += coord * p.a_strides[i];
+        b_idx += coord * p.b_strides[i];
+    }
+
+    out[gid] = op(a[a_idx], b[b_idx]);
+}
+
+// ============================================================================
+// Broadcast typed dispatch helpers
+// ============================================================================
+
+template <typename Op>
+static void launch_bcast_arith(Op op, const void *a, const void *b,
+                               void *dst, size_t n,
+                               const BroadcastParams &p, size_t elem,
+                               cudaStream_t s) {
+    unsigned int grid =
+        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    switch (elem) {
+    case 4:
+        binary_broadcast<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const float *>(a), static_cast<const float *>(b),
+            static_cast<float *>(dst), n, p, op);
+        break;
+    case 8:
+        binary_broadcast<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const double *>(a),
+            static_cast<const double *>(b),
+            static_cast<double *>(dst), n, p, op);
+        break;
+    case 2:
+        binary_broadcast<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int16_t *>(a),
+            static_cast<const int16_t *>(b),
+            static_cast<int16_t *>(dst), n, p, op);
+        break;
+    case 1:
+        binary_broadcast<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int8_t *>(a),
+            static_cast<const int8_t *>(b),
+            static_cast<int8_t *>(dst), n, p, op);
+        break;
+    default:
+        throw std::runtime_error(
+            "binary_broadcast: unsupported element size " +
+            std::to_string(elem));
+    }
+}
+
+template <typename Op>
+static void launch_bcast_cmp(Op op, const void *a, const void *b,
+                             void *dst, size_t n,
+                             const BroadcastParams &p, size_t elem,
+                             cudaStream_t s) {
+    unsigned int grid =
+        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    switch (elem) {
+    case 4:
+        binary_broadcast_cmp<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const float *>(a), static_cast<const float *>(b),
+            static_cast<uint8_t *>(dst), n, p, op);
+        break;
+    case 8:
+        binary_broadcast_cmp<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const double *>(a),
+            static_cast<const double *>(b),
+            static_cast<uint8_t *>(dst), n, p, op);
+        break;
+    case 2:
+        binary_broadcast_cmp<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int16_t *>(a),
+            static_cast<const int16_t *>(b),
+            static_cast<uint8_t *>(dst), n, p, op);
+        break;
+    case 1:
+        binary_broadcast_cmp<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int8_t *>(a),
+            static_cast<const int8_t *>(b),
+            static_cast<uint8_t *>(dst), n, p, op);
+        break;
+    default:
+        throw std::runtime_error(
+            "binary_broadcast_cmp: unsupported element size " +
+            std::to_string(elem));
+    }
+}
+
+// ============================================================================
+// Public broadcast launcher
+// ============================================================================
+
+void launch_binary_broadcast(BinaryOpKind op, const void *src_a,
+                             const void *src_b, void *dst, size_t n,
+                             const BroadcastParams &params,
+                             size_t element_size, cudaStream_t stream) {
+    switch (op) {
+    // Arithmetic
+    case BinaryOpKind::Add:
+        launch_bcast_arith(AddOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Sub:
+        launch_bcast_arith(SubOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Mul:
+        launch_bcast_arith(MulOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Div:
+        launch_bcast_arith(DivOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Pow:
+        launch_bcast_arith(PowOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Mod:
+        launch_bcast_arith(ModOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Max:
+        launch_bcast_arith(MaxOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Min:
+        launch_bcast_arith(MinOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Atan2:
+        launch_bcast_arith(Atan2Op{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Hypot:
+        launch_bcast_arith(HypotOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    // Comparison
+    case BinaryOpKind::Equal:
+        launch_bcast_cmp(EqualOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::NotEqual:
+        launch_bcast_cmp(NotEqualOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Less:
+        launch_bcast_cmp(LessOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::LessEqual:
+        launch_bcast_cmp(LessEqualOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::Greater:
+        launch_bcast_cmp(GreaterOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::GreaterEqual:
+        launch_bcast_cmp(GreaterEqualOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    // Logical
+    case BinaryOpKind::LogicalAnd:
+        launch_bcast_cmp(LogicalAndOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::LogicalOr:
+        launch_bcast_cmp(LogicalOrOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::LogicalXor:
+        launch_bcast_cmp(LogicalXorOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    }
+}
+
 } // namespace cuda
 } // namespace backends
 } // namespace axiom

@@ -55,12 +55,27 @@ void launch_gather_strided(const void *src, void *dst,
                            const GatherStridedParams &params,
                            size_t element_size, cudaStream_t stream);
 
-// Launch a binary element-wise kernel.
+// Launch a binary element-wise kernel (no broadcast, flat arrays).
 // For arithmetic ops (Add..Hypot) src_a, src_b, and dst share the same
 // element_size.  For comparison/logical ops dst is always uint8_t.
 void launch_binary_elementwise(BinaryOpKind op, const void *src_a,
                                const void *src_b, void *dst, size_t n,
                                size_t element_size, cudaStream_t stream);
+
+// Broadcast parameters copied to device memory once per launch.
+struct BroadcastParams {
+    int64_t a_strides[MAX_DIMS];   // 0 where a is broadcast
+    int64_t b_strides[MAX_DIMS];   // 0 where b is broadcast
+    int64_t out_shape[MAX_DIMS];   // output shape
+    int ndim;
+};
+
+// Launch a binary element-wise kernel with NumPy-style broadcasting.
+// Strides of 0 indicate broadcast dimensions.
+void launch_binary_broadcast(BinaryOpKind op, const void *src_a,
+                             const void *src_b, void *dst, size_t n,
+                             const BroadcastParams &params,
+                             size_t element_size, cudaStream_t stream);
 #endif
 
 } // namespace cuda
