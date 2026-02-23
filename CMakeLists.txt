@@ -398,6 +398,18 @@ if(APPLE AND AXIOM_HAS_METAL)
     )
 endif()
 
+# Add CUDA backend if available
+if(AXIOM_HAS_CUDA)
+    list(APPEND AXIOM_SOURCES
+        src/backends/cuda/cuda_context.cu
+        src/backends/cuda/cuda_storage.cu
+        src/backends/cuda/cuda_operations.cu
+        src/backends/cuda/cublas_operations.cu
+        src/backends/cuda/cuda_kernels.cu
+        src/backends/cuda/cuda_fused.cu
+    )
+endif()
+
 # Build as shared library on all platforms
 # On Windows, auto-export all symbols to generate .lib import library
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
@@ -484,6 +496,7 @@ target_include_directories(axiom
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cpu
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cpu/lapack
+        $<$<BOOL:${AXIOM_HAS_CUDA}>:${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cuda>
 )
 
 target_include_directories(axiom SYSTEM
@@ -515,7 +528,7 @@ endif()
 
 # CUDA backend linking
 if(AXIOM_HAS_CUDA)
-    target_link_libraries(axiom PUBLIC CUDA::cudart)
+    target_link_libraries(axiom PUBLIC CUDA::cudart CUDA::cublas)
     target_compile_definitions(axiom PUBLIC AXIOM_CUDA_SUPPORT)
 endif()
 
