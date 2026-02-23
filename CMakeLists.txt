@@ -34,6 +34,7 @@ option(AXIOM_BUILD_EXAMPLES "Build examples" ON)
 option(AXIOM_BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(AXIOM_NATIVE_ARCH "Use -march=native for local builds (not portable)" OFF)
 option(AXIOM_USE_OPENMP "Enable OpenMP parallelization" ON)
+option(AXIOM_CUDA_BACKEND "Enable CUDA GPU backend" OFF)
 option(AXIOM_DIST_BUILD "Bundle dependencies for distribution" OFF)
 
 # BLAS backend selection
@@ -165,6 +166,20 @@ elseif(AXIOM_BLAS_BACKEND STREQUAL "openblas")
     message(STATUS "BLAS backend: OpenBLAS (requested)")
 elseif(AXIOM_BLAS_BACKEND STREQUAL "native")
     message(STATUS "BLAS backend: Native (requested)")
+endif()
+
+# ============================================================================
+# CUDA Backend Detection
+# ============================================================================
+set(AXIOM_HAS_CUDA OFF)
+if(AXIOM_CUDA_BACKEND)
+    find_package(CUDAToolkit REQUIRED)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 20)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set(CMAKE_CUDA_ARCHITECTURES "70;80;86;89;90")
+    set(AXIOM_HAS_CUDA ON)
+    message(STATUS "CUDA backend: enabled (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
 endif()
 
 # ============================================================================
@@ -498,6 +513,12 @@ if(APPLE AND AXIOM_HAS_METAL)
     target_compile_definitions(axiom PUBLIC AXIOM_METAL_SUPPORT)
 endif()
 
+# CUDA backend linking
+if(AXIOM_HAS_CUDA)
+    target_link_libraries(axiom PUBLIC CUDA::cudart)
+    target_compile_definitions(axiom PUBLIC AXIOM_CUDA_SUPPORT)
+endif()
+
 # BLAS backend linking
 # The AXIOM_USE_* defines are always private (only used in src/, not public headers).
 if(AXIOM_HAS_ACCELERATE)
@@ -799,6 +820,11 @@ if(APPLE)
     endif()
 else()
     message(STATUS "  Metal support: NO (not on Apple platform)")
+endif()
+if(AXIOM_HAS_CUDA)
+    message(STATUS "  CUDA support: YES (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
+else()
+    message(STATUS "  CUDA support: NO")
 endif()
 message(STATUS "  Target architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "  SIMD: Google Highway (runtime dispatch)")
