@@ -218,6 +218,31 @@ void launch_index_select(const void *src, const int64_t *indices, void *dst,
                          cudaStream_t stream);
 
 // ============================================================================
+// Cast kernel
+// ============================================================================
+
+// Type identifiers for the cast kernel — maps to concrete C++ types in the
+// kernel implementation.  The CudaCastOperation translates axiom::DType to
+// these before calling launch_cast.
+enum class CastDType : uint8_t {
+    Float16,
+    Float32,
+    Float64,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    UInt8,
+    Bool, // uint8_t with != 0 → 1 semantics on output
+};
+
+// Element-wise type cast.  Handles all pairs of the above types.
+// When dst_dtype is Bool, any non-zero source value maps to 1.
+void launch_cast(CastDType src_dtype, CastDType dst_dtype,
+                 const void *src, void *dst, size_t n,
+                 cudaStream_t stream);
+
+// ============================================================================
 // Softmax / LogSoftmax kernels
 // ============================================================================
 

@@ -1437,6 +1437,118 @@ void launch_index_select(const void *src, const int64_t *indices, void *dst,
 }
 
 // ============================================================================
+// Cast Kernels
+// ============================================================================
+// General element-wise cast: out[i] = static_cast<Dst>(in[i])
+// Bool output: out[i] = (in[i] != 0) ? 1 : 0
+// ============================================================================
+
+template <typename Src, typename Dst>
+__global__ void cast_kernel(const Src *in, Dst *out, size_t n) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+    out[gid] = static_cast<Dst>(in[gid]);
+}
+
+// Bool output needs special handling: any non-zero → 1
+template <typename Src>
+__global__ void cast_to_bool_kernel(const Src *in, uint8_t *out, size_t n) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+    out[gid] = (in[gid] != Src(0)) ? uint8_t(1) : uint8_t(0);
+}
+
+// ---- Dispatch helpers for cast ----
+// For each source type, dispatch on the destination type.
+
+template <typename Src>
+static void launch_cast_from(CastDType dst_dtype, const Src *src, void *dst,
+                             size_t n, cudaStream_t stream) {
+    unsigned int grid =
+        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+
+    switch (dst_dtype) {
+    case CastDType::Float16:
+        cast_kernel<Src, __half><<<grid, BLOCK_SIZE, 0, stream>>>(
+            src, static_cast<__half *>(dst), n);
+        break;
+    case CastDType::Float32:
+        cast_kernel<Src, float><<<grid, BLOCK_SIZE, 0, stream>>>(
+            src, static_cast<float *>(dst), n);
+        break;
+    case CastDType::Float64:
+        cast_kernel<Src, double><<<grid, BLOCK_SIZE, 0, stream>>>(
+            src, static_cast<double *>(dst), n);
+        break;
+    case CastDType::Int8:
+        cast_kernel<Src, int8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            src, static_cast<int8_t *>(dst), n);
+        break;
+    case CastDType::Int16:
+        cast_kernel<Src, int16_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            src, static_cast<int16_t *>(dst), n);
+        break;
+    case CastDType::Int32:
+        cast_kernel<Src, int32_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            src, static_cast<int32_t *>(dst), n);
+        break;
+    case CastDType::Int64:
+        cast_kernel<Src, int64_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            src, static_cast<int64_t *>(dst), n);
+        break;
+    case CastDType::UInt8:
+        cast_kernel<Src, uint8_t><<<grid, BLOCK_SIZE, 0, stream>>>(
+            src, static_cast<uint8_t *>(dst), n);
+        break;
+    case CastDType::Bool:
+        cast_to_bool_kernel<Src><<<grid, BLOCK_SIZE, 0, stream>>>(
+            src, static_cast<uint8_t *>(dst), n);
+        break;
+    }
+}
+
+void launch_cast(CastDType src_dtype, CastDType dst_dtype,
+                 const void *src, void *dst, size_t n,
+                 cudaStream_t stream) {
+    switch (src_dtype) {
+    case CastDType::Float16:
+        launch_cast_from(dst_dtype, static_cast<const __half *>(src),
+                         dst, n, stream);
+        break;
+    case CastDType::Float32:
+        launch_cast_from(dst_dtype, static_cast<const float *>(src),
+                         dst, n, stream);
+        break;
+    case CastDType::Float64:
+        launch_cast_from(dst_dtype, static_cast<const double *>(src),
+                         dst, n, stream);
+        break;
+    case CastDType::Int8:
+        launch_cast_from(dst_dtype, static_cast<const int8_t *>(src),
+                         dst, n, stream);
+        break;
+    case CastDType::Int16:
+        launch_cast_from(dst_dtype, static_cast<const int16_t *>(src),
+                         dst, n, stream);
+        break;
+    case CastDType::Int32:
+        launch_cast_from(dst_dtype, static_cast<const int32_t *>(src),
+                         dst, n, stream);
+        break;
+    case CastDType::Int64:
+        launch_cast_from(dst_dtype, static_cast<const int64_t *>(src),
+                         dst, n, stream);
+        break;
+    case CastDType::UInt8:
+    case CastDType::Bool:
+        // Both Bool and UInt8 are stored as uint8_t
+        launch_cast_from(dst_dtype, static_cast<const uint8_t *>(src),
+                         dst, n, stream);
+        break;
+    }
+}
+
+// ============================================================================
 // Softmax / LogSoftmax Kernel
 // ============================================================================
 // Layout: input is (outer, axis_len, inner) in row-major order.

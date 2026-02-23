@@ -1335,6 +1335,75 @@ class CudaSoftmaxOperation : public ops::Operation {
 };
 
 // ============================================================================
+// CudaCastOperation
+// ============================================================================
+
+static CastDType to_cast_dtype(DType dt) {
+    switch (dt) {
+    case DType::Float16:  return CastDType::Float16;
+    case DType::Float32:  return CastDType::Float32;
+    case DType::Float64:  return CastDType::Float64;
+    case DType::Int8:     return CastDType::Int8;
+    case DType::Int16:    return CastDType::Int16;
+    case DType::Int32:    return CastDType::Int32;
+    case DType::Int64:    return CastDType::Int64;
+    case DType::UInt8:    return CastDType::UInt8;
+    case DType::Bool:     return CastDType::Bool;
+    default:
+        throw DeviceError("CudaCastOperation: unsupported dtype for CUDA cast");
+    }
+}
+
+class CudaCastOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::Cast; }
+    std::string name() const override { return "cast"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on Cast operation");
+    }
+
+    Tensor execute_cast(const Tensor &input,
+                        DType target_dtype) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        if (input.dtype() == target_dtype) return input;
+
+        Tensor in_c = ensure_gpu_contiguous(input);
+
+        Tensor result(in_c.shape(), target_dtype, Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *src_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!src_buf || !dst_buf) {
+            throw DeviceError(
+                "CudaCastOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        CastDType src_cast = to_cast_dtype(input.dtype());
+        CastDType dst_cast = to_cast_dtype(target_dtype);
+
+        launch_cast(src_cast, dst_cast, src_buf->device_ptr(),
+                    dst_buf->device_ptr(), numel, stream);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)target_dtype;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
 // Operation registration
 // ============================================================================
 
@@ -1470,6 +1539,11 @@ void register_cuda_operations() {
     ops::OperationRegistry::register_operation(
         ops::OpType::MaskedSelect, Device::GPU,
         std::make_unique<CudaMaskedSelectOperation>());
+
+    // Cast
+    ops::OperationRegistry::register_operation(
+        ops::OpType::Cast, Device::GPU,
+        std::make_unique<CudaCastOperation>());
 
     register_cublas_operations();
 }
