@@ -16,10 +16,17 @@ namespace system {
 bool is_metal_available();
 
 /**
+ * @brief Checks if any GPU backend is available (Metal or CUDA).
+ *
+ * @return True if a GPU device is found, false otherwise.
+ */
+bool is_gpu_available();
+
+/**
  * @brief Checks if GPU tests should be run.
  *
  * Returns false if:
- * - Metal is not available
+ * - No GPU backend is available (Metal or CUDA)
  * - The AXIOM_SKIP_GPU_TESTS environment variable is set to "1"
  *
  * @return True if GPU tests should be executed, false otherwise.

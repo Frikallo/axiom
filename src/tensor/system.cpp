@@ -2,16 +2,30 @@
 
 #include <cstdlib>
 
-// Forward-declare the internal function from the Metal backend.
-// The actual implementation is in an Objective-C++ file.
+#ifdef __APPLE__
 namespace axiom::backends::metal {
 bool is_metal_available();
 }
+#elif defined(AXIOM_CUDA_SUPPORT)
+namespace axiom::backends::cuda {
+bool is_cuda_available();
+}
+#endif
 
 namespace axiom::system {
 bool is_metal_available() {
 #ifdef __APPLE__
     return backends::metal::is_metal_available();
+#else
+    return false;
+#endif
+}
+
+bool is_gpu_available() {
+#ifdef __APPLE__
+    return backends::metal::is_metal_available();
+#elif defined(AXIOM_CUDA_SUPPORT)
+    return backends::cuda::is_cuda_available();
 #else
     return false;
 #endif
@@ -24,8 +38,7 @@ bool should_run_gpu_tests() {
         return false;
     }
 
-    // Then check if Metal is available
-    return is_metal_available();
+    return is_gpu_available();
 }
 
 std::string device_to_string(Device device) {
