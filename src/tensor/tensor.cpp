@@ -1528,13 +1528,11 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
     // Zero-copy path for CUDA managed memory: just switch the device tag
     if (order == memory_order_) {
         auto *unified =
-            dynamic_cast<backends::cuda::CudaUnifiedStorage *>(
-                storage_.get());
+            dynamic_cast<backends::cuda::CudaUnifiedStorage *>(storage_.get());
         if (unified) {
             // Synchronize GPU before CPU reads
             if (device() == Device::GPU && target_device == Device::CPU)
-                backends::cuda::CudaExecutionStream::instance()
-                    .synchronize();
+                backends::cuda::CudaExecutionStream::instance().synchronize();
 
             auto new_storage = unified->with_device_tag(target_device);
             Tensor result;
@@ -1576,8 +1574,8 @@ Tensor Tensor::cpu() const {
     // For non-unified storage, synchronize before the copy.
     // Unified storage synchronization is handled inside to().
     if (device() == Device::GPU &&
-        dynamic_cast<backends::cuda::CudaUnifiedStorage *>(
-            storage_.get()) == nullptr) {
+        dynamic_cast<backends::cuda::CudaUnifiedStorage *>(storage_.get()) ==
+            nullptr) {
         backends::cuda::CudaExecutionStream::instance().synchronize();
     }
 #endif

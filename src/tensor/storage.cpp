@@ -56,8 +56,8 @@ std::unique_ptr<Storage> make_storage(size_t size_bytes, Device device) {
         if (backends::cuda::is_cuda_available()) {
             if (size_bytes > 0 &&
                 backends::cuda::is_cuda_unified_memory_available()) {
-                return backends::cuda::make_cuda_unified_storage(
-                    size_bytes, Device::GPU);
+                return backends::cuda::make_cuda_unified_storage(size_bytes,
+                                                                 Device::GPU);
             }
             return backends::cuda::make_cuda_storage(size_bytes);
         } else {

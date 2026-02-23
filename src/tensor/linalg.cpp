@@ -4,6 +4,10 @@
 #include "backends/cpu/blas/blas_backend.hpp"
 #include "backends/cpu/lapack/lapack_backend.hpp"
 
+#ifdef AXIOM_CUDA_SUPPORT
+#include "backends/cuda/cusolver_operations.hpp"
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -82,6 +86,25 @@ void check_lapack_info(int info, const std::string &routine) {
     }
 }
 
+// Transpose last two dimensions of a tensor (for batched matrix operations)
+Tensor transpose_last2(const Tensor &t) {
+    if (t.ndim() <= 2) return t.transpose();
+    std::vector<int> axes;
+    for (size_t i = 0; i < t.ndim(); ++i)
+        axes.push_back(static_cast<int>(i));
+    std::swap(axes[axes.size() - 1], axes[axes.size() - 2]);
+    return t.transpose(axes);
+}
+
+#ifdef AXIOM_CUDA_SUPPORT
+LapackBackend &get_cusolver() {
+    auto *backend = backends::cuda::get_cusolver_backend();
+    if (!backend)
+        throw std::runtime_error("CUDA not available for linalg operation");
+    return *backend;
+}
+#endif
+
 } // namespace
 
 // ============================================================================
@@ -98,6 +121,117 @@ const char *lapack_backend_name() { return get_lapack_backend().name(); }
 
 Tensor det(const Tensor &a) {
     validate_square_matrix(a, "det");
+    Device orig_device = a.device();
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (orig_device == Device::GPU) {
+        size_t n = a.shape()[a.ndim() - 1];
+        size_t batch_size = compute_batch_size(a.shape());
+        Shape batch_shape = get_batch_shape(a.shape());
+        Shape result_shape = batch_shape.empty() ? Shape({}) : batch_shape;
+        int ni = static_cast<int>(n);
+
+        if (a.dtype() == DType::Float32 || a.dtype() == DType::Float64) {
+            DType dtype = a.dtype();
+            auto &cusolver = get_cusolver();
+
+            // det(A) = det(A^T), so row-major data can be passed directly
+            auto a_work = a.astype(dtype).ascontiguousarray().clone();
+
+            // Allocate pivot array on GPU
+            Tensor ipiv_tensor({batch_size, n}, DType::Int32, Device::GPU);
+            int *ipiv_gpu = ipiv_tensor.typed_data<int>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                if (dtype == DType::Float32) {
+                    float *a_batch =
+                        a_work.typed_data<float>() + b * n * n;
+                    int *ipiv_batch = ipiv_gpu + b * n;
+                    int info =
+                        cusolver.sgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    // info > 0 means singular -- handle below on CPU
+                    if (info < 0)
+                        check_lapack_info(info, "cusolver sgetrf");
+                } else {
+                    double *a_batch =
+                        a_work.typed_data<double>() + b * n * n;
+                    int *ipiv_batch = ipiv_gpu + b * n;
+                    int info =
+                        cusolver.dgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    if (info < 0)
+                        check_lapack_info(info, "cusolver dgetrf");
+                }
+            }
+
+            // Copy factored matrix and pivots to CPU for post-processing
+            auto a_cpu = a_work.cpu();
+            auto ipiv_cpu = ipiv_tensor.cpu();
+
+            Tensor result(result_shape, dtype);
+
+            if (dtype == DType::Float32) {
+                float *a_data = a_cpu.typed_data<float>();
+                int *ipiv_data = ipiv_cpu.typed_data<int>();
+                float *result_data = result.typed_data<float>();
+
+                for (size_t b = 0; b < batch_size; ++b) {
+                    float *a_batch = a_data + b * n * n;
+                    int *ipiv_batch = ipiv_data + b * n;
+
+                    float det_val = 1.0f;
+                    int sign = 1;
+                    bool singular = false;
+                    for (size_t i = 0; i < n; ++i) {
+                        // Row-major data passed to col-major LAPACK:
+                        // diagonal of factored result at [i*n + i]
+                        float diag = a_batch[i * n + i];
+                        if (diag == 0.0f) {
+                            singular = true;
+                            break;
+                        }
+                        det_val *= diag;
+                        if (ipiv_batch[i] != static_cast<int>(i + 1)) {
+                            sign = -sign;
+                        }
+                    }
+                    result_data[b] =
+                        singular ? 0.0f
+                                 : det_val * static_cast<float>(sign);
+                }
+            } else {
+                double *a_data = a_cpu.typed_data<double>();
+                int *ipiv_data = ipiv_cpu.typed_data<int>();
+                double *result_data = result.typed_data<double>();
+
+                for (size_t b = 0; b < batch_size; ++b) {
+                    double *a_batch = a_data + b * n * n;
+                    int *ipiv_batch = ipiv_data + b * n;
+
+                    double det_val = 1.0;
+                    int sign = 1;
+                    bool singular = false;
+                    for (size_t i = 0; i < n; ++i) {
+                        double diag = a_batch[i * n + i];
+                        if (diag == 0.0) {
+                            singular = true;
+                            break;
+                        }
+                        det_val *= diag;
+                        if (ipiv_batch[i] != static_cast<int>(i + 1)) {
+                            sign = -sign;
+                        }
+                    }
+                    result_data[b] =
+                        singular ? 0.0
+                                 : det_val * static_cast<double>(sign);
+                }
+            }
+            return result.gpu();
+        } else {
+            return det(a.cpu()).gpu();
+        }
+    }
+#endif
 
     auto &backend = get_lapack_backend();
     auto a_work = ensure_cpu_contiguous_colmajor(a).clone();
@@ -269,11 +403,12 @@ Tensor det(const Tensor &a) {
         return det(a.astype(DType::Float64));
     }
 
-    return result;
+    return (orig_device != Device::CPU) ? result.to(orig_device) : result;
 }
 
 Tensor inv(const Tensor &a) {
     validate_square_matrix(a, "inv");
+    Device orig_device = a.device();
 
     auto &backend = get_lapack_backend();
 
@@ -433,15 +568,82 @@ Tensor inv(const Tensor &a) {
         return inv(a.astype(DType::Float64));
     }
 
-    return result;
+    return (orig_device != Device::CPU) ? result.to(orig_device) : result;
 }
 
 Tensor solve(const Tensor &a, const Tensor &b) {
     validate_square_matrix(a, "solve");
+    Device orig_device = a.device();
 
     size_t n = a.shape()[a.ndim() - 1];
     size_t nrhs = (b.ndim() == a.ndim() - 1) ? 1 : b.shape()[b.ndim() - 1];
     size_t batch_size = compute_batch_size(a.shape());
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (orig_device == Device::GPU) {
+        bool b_is_vector = (b.ndim() == a.ndim() - 1);
+        DType dtype = (a.dtype() == DType::Float64 || b.dtype() == DType::Float64)
+                          ? DType::Float64
+                          : DType::Float32;
+
+        if (dtype == DType::Float32 || dtype == DType::Float64) {
+            auto &cusolver = get_cusolver();
+
+            // Transpose A to col-major on GPU for cuSOLVER
+            auto a_col =
+                transpose_last2(a.astype(dtype)).ascontiguousarray().clone();
+
+            // For b: if vector, no transpose needed; if matrix, transpose
+            Tensor b_col;
+            if (b_is_vector) {
+                b_col = b.astype(dtype).ascontiguousarray().clone();
+            } else {
+                b_col =
+                    transpose_last2(b.astype(dtype)).ascontiguousarray().clone();
+            }
+
+            // Allocate pivot array on GPU
+            Tensor ipiv_tensor({batch_size, n}, DType::Int32, Device::GPU);
+            int *ipiv_data = ipiv_tensor.typed_data<int>();
+
+            int ni = static_cast<int>(n);
+            int nrhs_i = static_cast<int>(nrhs);
+
+            for (size_t batch = 0; batch < batch_size; ++batch) {
+                if (dtype == DType::Float32) {
+                    float *a_batch =
+                        a_col.typed_data<float>() + batch * n * n;
+                    float *b_batch =
+                        b_col.typed_data<float>() +
+                        batch * (b_is_vector ? n : n * nrhs);
+                    int *ipiv_batch = ipiv_data + batch * n;
+                    int info = cusolver.sgesv(ni, nrhs_i, a_batch, ni,
+                                              ipiv_batch, b_batch, ni);
+                    check_lapack_info(info, "cusolver sgesv");
+                } else {
+                    double *a_batch =
+                        a_col.typed_data<double>() + batch * n * n;
+                    double *b_batch =
+                        b_col.typed_data<double>() +
+                        batch * (b_is_vector ? n : n * nrhs);
+                    int *ipiv_batch = ipiv_data + batch * n;
+                    int info = cusolver.dgesv(ni, nrhs_i, a_batch, ni,
+                                              ipiv_batch, b_batch, ni);
+                    check_lapack_info(info, "cusolver dgesv");
+                }
+            }
+
+            // Transpose result back (b_col now holds solution)
+            if (b_is_vector) {
+                return b_col;
+            } else {
+                return transpose_last2(b_col).ascontiguousarray();
+            }
+        } else {
+            return solve(a.cpu(), b.cpu()).gpu();
+        }
+    }
+#endif
 
     auto &backend = get_lapack_backend();
 
@@ -566,7 +768,7 @@ Tensor solve(const Tensor &a, const Tensor &b) {
         return solve(a.astype(DType::Float64), b.astype(DType::Float64));
     }
 
-    return result;
+    return (orig_device != Device::CPU) ? result.to(orig_device) : result;
 }
 
 // ============================================================================
@@ -577,6 +779,158 @@ SVDResult svd(const Tensor &a, bool full_matrices) {
     if (a.ndim() < 2) {
         throw ShapeError("svd requires at least 2D tensor");
     }
+    Device orig_device = a.device();
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (orig_device == Device::GPU) {
+        size_t m = a.shape()[a.ndim() - 2];
+        size_t n = a.shape()[a.ndim() - 1];
+        size_t k = std::min(m, n);
+        size_t batch_size = compute_batch_size(a.shape());
+        Shape batch_shape = get_batch_shape(a.shape());
+
+        size_t u_cols = full_matrices ? m : k;
+        size_t vt_rows = full_matrices ? n : k;
+
+        Shape u_shape = batch_shape;
+        u_shape.push_back(m);
+        u_shape.push_back(u_cols);
+        Shape s_shape = batch_shape;
+        s_shape.push_back(k);
+        Shape vt_shape = batch_shape;
+        vt_shape.push_back(vt_rows);
+        vt_shape.push_back(n);
+
+        char jobz = full_matrices ? 'A' : 'S';
+
+        if (a.dtype() == DType::Float32 || a.dtype() == DType::Float64) {
+            DType dtype = a.dtype();
+            auto &cusolver = get_cusolver();
+
+            // Transpose to col-major on GPU for cuSOLVER
+            auto a_col =
+                transpose_last2(a).ascontiguousarray().clone();
+
+            // Allocate GPU buffers for U, S, Vt in col-major layout
+            // cuSOLVER expects col-major: U is m x u_cols, Vt is vt_rows x n
+            Shape u_col_shape = batch_shape;
+            u_col_shape.push_back(u_cols);
+            u_col_shape.push_back(m);
+            Shape vt_col_shape = batch_shape;
+            vt_col_shape.push_back(n);
+            vt_col_shape.push_back(vt_rows);
+
+            Tensor u_gpu(u_col_shape, dtype, Device::GPU);
+            Tensor s_gpu(s_shape, dtype, Device::GPU);
+            Tensor vt_gpu(vt_col_shape, dtype, Device::GPU);
+
+            int mi = static_cast<int>(m);
+            int ni = static_cast<int>(n);
+            int ldu = mi;
+            int ldvt = static_cast<int>(vt_rows);
+
+            // iwork on GPU
+            Tensor iwork_tensor({8 * k}, DType::Int32, Device::GPU);
+            int *iwork = iwork_tensor.typed_data<int>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                if (dtype == DType::Float32) {
+                    float *a_batch =
+                        a_col.typed_data<float>() + b * m * n;
+                    float *s_batch =
+                        s_gpu.typed_data<float>() + b * k;
+                    float *u_batch =
+                        u_gpu.typed_data<float>() + b * m * u_cols;
+                    float *vt_batch =
+                        vt_gpu.typed_data<float>() + b * vt_rows * n;
+                    int info = cusolver.sgesdd(
+                        jobz, mi, ni, a_batch, mi, s_batch, u_batch, ldu,
+                        vt_batch, ldvt, nullptr, 0, iwork);
+                    check_lapack_info(info, "cusolver sgesdd");
+                } else {
+                    double *a_batch =
+                        a_col.typed_data<double>() + b * m * n;
+                    double *s_batch =
+                        s_gpu.typed_data<double>() + b * k;
+                    double *u_batch =
+                        u_gpu.typed_data<double>() + b * m * u_cols;
+                    double *vt_batch =
+                        vt_gpu.typed_data<double>() + b * vt_rows * n;
+                    int info = cusolver.dgesdd(
+                        jobz, mi, ni, a_batch, mi, s_batch, u_batch, ldu,
+                        vt_batch, ldvt, nullptr, 0, iwork);
+                    check_lapack_info(info, "cusolver dgesdd");
+                }
+            }
+
+            // cuSOLVER output is col-major. Copy to CPU, transpose U and Vt
+            // to row-major, then send back to GPU.
+            auto u_cpu = u_gpu.cpu();
+            auto vt_cpu = vt_gpu.cpu();
+
+            Tensor u_result(u_shape, dtype);
+            Tensor vt_result(vt_shape, dtype);
+
+            if (dtype == DType::Float32) {
+                float *u_src = u_cpu.typed_data<float>();
+                float *u_dst = u_result.typed_data<float>();
+                float *vt_src = vt_cpu.typed_data<float>();
+                float *vt_dst = vt_result.typed_data<float>();
+
+                for (size_t b = 0; b < batch_size; ++b) {
+                    // Transpose U: col-major (m x u_cols) -> row-major
+                    for (size_t i = 0; i < m; ++i) {
+                        for (size_t j = 0; j < u_cols; ++j) {
+                            u_dst[b * m * u_cols + i * u_cols + j] =
+                                u_src[b * m * u_cols + j * m + i];
+                        }
+                    }
+                    // Transpose Vt: col-major (vt_rows x n) -> row-major
+                    for (size_t i = 0; i < vt_rows; ++i) {
+                        for (size_t j = 0; j < n; ++j) {
+                            vt_dst[b * vt_rows * n + i * n + j] =
+                                vt_src[b * vt_rows * n + j * vt_rows + i];
+                        }
+                    }
+                }
+            } else {
+                double *u_src = u_cpu.typed_data<double>();
+                double *u_dst = u_result.typed_data<double>();
+                double *vt_src = vt_cpu.typed_data<double>();
+                double *vt_dst = vt_result.typed_data<double>();
+
+                for (size_t b = 0; b < batch_size; ++b) {
+                    for (size_t i = 0; i < m; ++i) {
+                        for (size_t j = 0; j < u_cols; ++j) {
+                            u_dst[b * m * u_cols + i * u_cols + j] =
+                                u_src[b * m * u_cols + j * m + i];
+                        }
+                    }
+                    for (size_t i = 0; i < vt_rows; ++i) {
+                        for (size_t j = 0; j < n; ++j) {
+                            vt_dst[b * vt_rows * n + i * n + j] =
+                                vt_src[b * vt_rows * n + j * vt_rows + i];
+                        }
+                    }
+                }
+            }
+
+            SVDResult result;
+            result.U = u_result.gpu();
+            result.S = s_gpu;
+            result.Vh = vt_result.gpu();
+            return result;
+        } else {
+            // Complex or other: fall through to CPU
+            auto cpu_result = svd(a.cpu(), full_matrices);
+            SVDResult result;
+            result.U = cpu_result.U.gpu();
+            result.S = cpu_result.S.gpu();
+            result.Vh = cpu_result.Vh.gpu();
+            return result;
+        }
+    }
+#endif
 
     auto &backend = get_lapack_backend();
 
@@ -866,6 +1220,11 @@ SVDResult svd(const Tensor &a, bool full_matrices) {
         return svd(a.astype(DType::Float64), full_matrices);
     }
 
+    if (orig_device != Device::CPU) {
+        result.U = result.U.to(orig_device);
+        result.S = result.S.to(orig_device);
+        result.Vh = result.Vh.to(orig_device);
+    }
     return result;
 }
 
@@ -873,6 +1232,158 @@ QRResult qr(const Tensor &a) {
     if (a.ndim() < 2) {
         throw ShapeError("qr requires at least 2D tensor");
     }
+    Device orig_device = a.device();
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (orig_device == Device::GPU) {
+        size_t m = a.shape()[a.ndim() - 2];
+        size_t n = a.shape()[a.ndim() - 1];
+        size_t k = std::min(m, n);
+        size_t batch_size = compute_batch_size(a.shape());
+        Shape batch_shape = get_batch_shape(a.shape());
+
+        Shape q_shape = batch_shape;
+        q_shape.push_back(m);
+        q_shape.push_back(k);
+        Shape r_shape = batch_shape;
+        r_shape.push_back(k);
+        r_shape.push_back(n);
+
+        if (a.dtype() == DType::Float32 || a.dtype() == DType::Float64) {
+            DType dtype = a.dtype();
+            auto &cusolver = get_cusolver();
+
+            // Transpose to col-major on GPU
+            auto a_col =
+                transpose_last2(a).ascontiguousarray().clone();
+
+            // Allocate tau on GPU
+            Shape tau_shape = batch_shape;
+            tau_shape.push_back(k);
+            Tensor tau_tensor(tau_shape, dtype, Device::GPU);
+
+            int mi = static_cast<int>(m);
+            int ni = static_cast<int>(n);
+            int ki = static_cast<int>(k);
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                if (dtype == DType::Float32) {
+                    float *a_batch =
+                        a_col.typed_data<float>() + b * m * n;
+                    float *tau_batch =
+                        tau_tensor.typed_data<float>() + b * k;
+                    // QR factorization on GPU
+                    int info = cusolver.sgeqrf(mi, ni, a_batch, mi,
+                                               tau_batch, nullptr, 0);
+                    check_lapack_info(info, "cusolver sgeqrf");
+                } else {
+                    double *a_batch =
+                        a_col.typed_data<double>() + b * m * n;
+                    double *tau_batch =
+                        tau_tensor.typed_data<double>() + b * k;
+                    int info = cusolver.dgeqrf(mi, ni, a_batch, mi,
+                                               tau_batch, nullptr, 0);
+                    check_lapack_info(info, "cusolver dgeqrf");
+                }
+            }
+
+            // Copy factored matrix to CPU to extract R, then generate Q on GPU
+            auto a_factored_cpu = a_col.cpu();
+
+            // Extract R from CPU data (upper triangle of col-major factored)
+            Tensor r_result(r_shape, dtype);
+            r_result.fill(0.0);
+
+            if (dtype == DType::Float32) {
+                float *a_src = a_factored_cpu.typed_data<float>();
+                float *r_data = r_result.typed_data<float>();
+                for (size_t b = 0; b < batch_size; ++b) {
+                    float *a_batch = a_src + b * m * n;
+                    float *r_batch = r_data + b * k * n;
+                    for (size_t i = 0; i < k; ++i) {
+                        for (size_t j = i; j < n; ++j) {
+                            // col-major: element (i,j) at a[j*m + i]
+                            r_batch[i * n + j] = a_batch[j * m + i];
+                        }
+                    }
+                }
+            } else {
+                double *a_src = a_factored_cpu.typed_data<double>();
+                double *r_data = r_result.typed_data<double>();
+                for (size_t b = 0; b < batch_size; ++b) {
+                    double *a_batch = a_src + b * m * n;
+                    double *r_batch = r_data + b * k * n;
+                    for (size_t i = 0; i < k; ++i) {
+                        for (size_t j = i; j < n; ++j) {
+                            r_batch[i * n + j] = a_batch[j * m + i];
+                        }
+                    }
+                }
+            }
+
+            // Generate Q on GPU from the factored a_col + tau
+            for (size_t b = 0; b < batch_size; ++b) {
+                if (dtype == DType::Float32) {
+                    float *a_batch =
+                        a_col.typed_data<float>() + b * m * n;
+                    float *tau_batch =
+                        tau_tensor.typed_data<float>() + b * k;
+                    int info = cusolver.sorgqr(mi, ki, ki, a_batch, mi,
+                                               tau_batch, nullptr, 0);
+                    check_lapack_info(info, "cusolver sorgqr");
+                } else {
+                    double *a_batch =
+                        a_col.typed_data<double>() + b * m * n;
+                    double *tau_batch =
+                        tau_tensor.typed_data<double>() + b * k;
+                    int info = cusolver.dorgqr(mi, ki, ki, a_batch, mi,
+                                               tau_batch, nullptr, 0);
+                    check_lapack_info(info, "cusolver dorgqr");
+                }
+            }
+
+            // Q is now in a_col in col-major (m x k). Copy to CPU, transpose
+            // to row-major, and send back.
+            auto q_cpu = a_col.cpu();
+            Tensor q_result(q_shape, dtype);
+
+            if (dtype == DType::Float32) {
+                float *q_src = q_cpu.typed_data<float>();
+                float *q_dst = q_result.typed_data<float>();
+                for (size_t b = 0; b < batch_size; ++b) {
+                    for (size_t i = 0; i < m; ++i) {
+                        for (size_t j = 0; j < k; ++j) {
+                            q_dst[b * m * k + i * k + j] =
+                                q_src[b * m * n + j * m + i];
+                        }
+                    }
+                }
+            } else {
+                double *q_src = q_cpu.typed_data<double>();
+                double *q_dst = q_result.typed_data<double>();
+                for (size_t b = 0; b < batch_size; ++b) {
+                    for (size_t i = 0; i < m; ++i) {
+                        for (size_t j = 0; j < k; ++j) {
+                            q_dst[b * m * k + i * k + j] =
+                                q_src[b * m * n + j * m + i];
+                        }
+                    }
+                }
+            }
+
+            QRResult result;
+            result.Q = q_result.gpu();
+            result.R = r_result.gpu();
+            return result;
+        } else {
+            auto cpu_result = qr(a.cpu());
+            QRResult result;
+            result.Q = cpu_result.Q.gpu();
+            result.R = cpu_result.R.gpu();
+            return result;
+        }
+    }
+#endif
 
     auto &backend = get_lapack_backend();
 
@@ -1036,11 +1547,91 @@ QRResult qr(const Tensor &a) {
         return qr(a.astype(DType::Float64));
     }
 
+    if (orig_device != Device::CPU) {
+        result.Q = result.Q.to(orig_device);
+        result.R = result.R.to(orig_device);
+    }
     return result;
 }
 
 Tensor cholesky(const Tensor &a, bool upper) {
     validate_square_matrix(a, "cholesky");
+    Device orig_device = a.device();
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (orig_device == Device::GPU) {
+        size_t n = a.shape()[a.ndim() - 1];
+        size_t batch_size = compute_batch_size(a.shape());
+        int ni = static_cast<int>(n);
+
+        // Symmetric: row-major = col-major, but flip uplo
+        // row-major upper triangle = col-major lower triangle
+        char cusolver_uplo = upper ? 'L' : 'U';
+
+        if (a.dtype() == DType::Float32) {
+            auto &cusolver = get_cusolver();
+            auto a_work = a.ascontiguousarray().clone();
+            float *a_data = a_work.typed_data<float>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                float *a_batch = a_data + b * n * n;
+                int info = cusolver.spotrf(cusolver_uplo, ni, a_batch, ni);
+                check_lapack_info(info, "cusolver spotrf");
+            }
+
+            // Copy to CPU to zero out the other triangle, then back to GPU
+            auto cpu_result = a_work.cpu();
+            float *src = cpu_result.typed_data<float>();
+            Tensor result(a.shape(), DType::Float32);
+            float *dst = result.typed_data<float>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t i = 0; i < n; ++i) {
+                    for (size_t j = 0; j < n; ++j) {
+                        size_t idx = b * n * n + i * n + j;
+                        if (upper) {
+                            dst[idx] = (j >= i) ? src[idx] : 0.0f;
+                        } else {
+                            dst[idx] = (j <= i) ? src[idx] : 0.0f;
+                        }
+                    }
+                }
+            }
+            return result.gpu();
+        } else if (a.dtype() == DType::Float64) {
+            auto &cusolver = get_cusolver();
+            auto a_work = a.ascontiguousarray().clone();
+            double *a_data = a_work.typed_data<double>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                double *a_batch = a_data + b * n * n;
+                int info = cusolver.dpotrf(cusolver_uplo, ni, a_batch, ni);
+                check_lapack_info(info, "cusolver dpotrf");
+            }
+
+            auto cpu_result = a_work.cpu();
+            double *src = cpu_result.typed_data<double>();
+            Tensor result(a.shape(), DType::Float64);
+            double *dst = result.typed_data<double>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t i = 0; i < n; ++i) {
+                    for (size_t j = 0; j < n; ++j) {
+                        size_t idx = b * n * n + i * n + j;
+                        if (upper) {
+                            dst[idx] = (j >= i) ? src[idx] : 0.0;
+                        } else {
+                            dst[idx] = (j <= i) ? src[idx] : 0.0;
+                        }
+                    }
+                }
+            }
+            return result.gpu();
+        } else {
+            return cholesky(a.cpu(), upper).gpu();
+        }
+    }
+#endif
 
     auto &backend = get_lapack_backend();
 
@@ -1124,11 +1715,171 @@ Tensor cholesky(const Tensor &a, bool upper) {
         return cholesky(a.astype(DType::Float64), upper);
     }
 
-    return result;
+    return (orig_device != Device::CPU) ? result.to(orig_device) : result;
 }
 
 LUResult lu(const Tensor &a) {
     validate_square_matrix(a, "lu");
+    Device orig_device = a.device();
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (orig_device == Device::GPU) {
+        size_t n = a.shape()[a.ndim() - 1];
+        size_t batch_size = compute_batch_size(a.shape());
+        Shape batch_shape = get_batch_shape(a.shape());
+        Shape piv_shape = batch_shape;
+        piv_shape.push_back(n);
+        int ni = static_cast<int>(n);
+
+        if (a.dtype() == DType::Float32 || a.dtype() == DType::Float64) {
+            DType dtype = a.dtype();
+            auto &cusolver = get_cusolver();
+
+            // Transpose to col-major on GPU
+            auto a_col =
+                transpose_last2(a.astype(dtype)).ascontiguousarray().clone();
+
+            Tensor ipiv_tensor({batch_size, n}, DType::Int32, Device::GPU);
+            int *ipiv_gpu = ipiv_tensor.typed_data<int>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                if (dtype == DType::Float32) {
+                    float *a_batch =
+                        a_col.typed_data<float>() + b * n * n;
+                    int *ipiv_batch = ipiv_gpu + b * n;
+                    int info =
+                        cusolver.sgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    check_lapack_info(info, "cusolver sgetrf");
+                } else {
+                    double *a_batch =
+                        a_col.typed_data<double>() + b * n * n;
+                    int *ipiv_batch = ipiv_gpu + b * n;
+                    int info =
+                        cusolver.dgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    check_lapack_info(info, "cusolver dgetrf");
+                }
+            }
+
+            // Copy factored matrix and pivots to CPU for L/U/P extraction
+            auto a_factored_cpu = a_col.cpu();
+            auto ipiv_cpu_tensor = ipiv_tensor.cpu();
+
+            LUResult result;
+            result.L = Tensor(a.shape(), dtype);
+            result.U = Tensor(a.shape(), dtype);
+            result.P = Tensor(a.shape(), dtype);
+            result.piv = Tensor(piv_shape, DType::Int32);
+
+            if (dtype == DType::Float32) {
+                float *a_data = a_factored_cpu.typed_data<float>();
+                float *l_data = result.L.typed_data<float>();
+                float *u_data = result.U.typed_data<float>();
+                float *p_data = result.P.typed_data<float>();
+                int32_t *piv_data = result.piv.typed_data<int32_t>();
+                int *ipiv_data = ipiv_cpu_tensor.typed_data<int>();
+
+                for (size_t b = 0; b < batch_size; ++b) {
+                    float *a_batch = a_data + b * n * n;
+                    float *l_batch = l_data + b * n * n;
+                    float *u_batch = u_data + b * n * n;
+                    float *p_batch = p_data + b * n * n;
+                    int32_t *piv_batch = piv_data + b * n;
+                    int *ipiv_batch = ipiv_data + b * n;
+
+                    // Extract L and U from col-major factored result
+                    for (size_t i = 0; i < n; ++i) {
+                        for (size_t j = 0; j < n; ++j) {
+                            float val = a_batch[j * n + i]; // col-major
+                            if (i > j) {
+                                l_batch[i * n + j] = val;
+                                u_batch[i * n + j] = 0.0f;
+                            } else if (i == j) {
+                                l_batch[i * n + j] = 1.0f;
+                                u_batch[i * n + j] = val;
+                            } else {
+                                l_batch[i * n + j] = 0.0f;
+                                u_batch[i * n + j] = val;
+                            }
+                        }
+                        piv_batch[i] = ipiv_batch[i];
+                    }
+
+                    // Build permutation matrix
+                    std::fill(p_batch, p_batch + n * n, 0.0f);
+                    std::vector<size_t> perm(n);
+                    for (size_t i = 0; i < n; ++i) perm[i] = i;
+                    for (size_t i = 0; i < n; ++i) {
+                        size_t swap_idx =
+                            static_cast<size_t>(ipiv_batch[i] - 1);
+                        std::swap(perm[i], perm[swap_idx]);
+                    }
+                    for (size_t i = 0; i < n; ++i) {
+                        p_batch[i * n + perm[i]] = 1.0f;
+                    }
+                }
+            } else {
+                double *a_data = a_factored_cpu.typed_data<double>();
+                double *l_data = result.L.typed_data<double>();
+                double *u_data = result.U.typed_data<double>();
+                double *p_data = result.P.typed_data<double>();
+                int32_t *piv_data = result.piv.typed_data<int32_t>();
+                int *ipiv_data = ipiv_cpu_tensor.typed_data<int>();
+
+                for (size_t b = 0; b < batch_size; ++b) {
+                    double *a_batch = a_data + b * n * n;
+                    double *l_batch = l_data + b * n * n;
+                    double *u_batch = u_data + b * n * n;
+                    double *p_batch = p_data + b * n * n;
+                    int32_t *piv_batch = piv_data + b * n;
+                    int *ipiv_batch = ipiv_data + b * n;
+
+                    for (size_t i = 0; i < n; ++i) {
+                        for (size_t j = 0; j < n; ++j) {
+                            double val = a_batch[j * n + i];
+                            if (i > j) {
+                                l_batch[i * n + j] = val;
+                                u_batch[i * n + j] = 0.0;
+                            } else if (i == j) {
+                                l_batch[i * n + j] = 1.0;
+                                u_batch[i * n + j] = val;
+                            } else {
+                                l_batch[i * n + j] = 0.0;
+                                u_batch[i * n + j] = val;
+                            }
+                        }
+                        piv_batch[i] = ipiv_batch[i];
+                    }
+
+                    std::fill(p_batch, p_batch + n * n, 0.0);
+                    std::vector<size_t> perm(n);
+                    for (size_t i = 0; i < n; ++i) perm[i] = i;
+                    for (size_t i = 0; i < n; ++i) {
+                        size_t swap_idx =
+                            static_cast<size_t>(ipiv_batch[i] - 1);
+                        std::swap(perm[i], perm[swap_idx]);
+                    }
+                    for (size_t i = 0; i < n; ++i) {
+                        p_batch[i * n + perm[i]] = 1.0;
+                    }
+                }
+            }
+
+            result.L = result.L.gpu();
+            result.U = result.U.gpu();
+            result.P = result.P.gpu();
+            result.piv = result.piv.gpu();
+            return result;
+        } else {
+            auto cpu_result = lu(a.cpu());
+            LUResult result;
+            result.L = cpu_result.L.gpu();
+            result.U = cpu_result.U.gpu();
+            result.P = cpu_result.P.gpu();
+            result.piv = cpu_result.piv.gpu();
+            return result;
+        }
+    }
+#endif
 
     auto &backend = get_lapack_backend();
 
@@ -1273,6 +2024,12 @@ LUResult lu(const Tensor &a) {
         return lu(a.astype(DType::Float64));
     }
 
+    if (orig_device != Device::CPU) {
+        result.L = result.L.to(orig_device);
+        result.U = result.U.to(orig_device);
+        result.P = result.P.to(orig_device);
+        result.piv = result.piv.to(orig_device);
+    }
     return result;
 }
 
@@ -1282,6 +2039,7 @@ LUResult lu(const Tensor &a) {
 
 EigResult eig(const Tensor &a) {
     validate_square_matrix(a, "eig");
+    Device orig_device = a.device();
 
     auto &backend = get_lapack_backend();
 
@@ -1437,11 +2195,81 @@ EigResult eig(const Tensor &a) {
         throw TypeError::unsupported_dtype(dtype_name(a.dtype()), "eig");
     }
 
+    if (orig_device != Device::CPU) {
+        result.eigenvalues = result.eigenvalues.to(orig_device);
+        result.eigenvectors = result.eigenvectors.to(orig_device);
+    }
     return result;
 }
 
 EigResult eigh(const Tensor &a) {
     validate_square_matrix(a, "eigh");
+    Device orig_device = a.device();
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (orig_device == Device::GPU) {
+        size_t n = a.shape()[a.ndim() - 1];
+        size_t batch_size = compute_batch_size(a.shape());
+        Shape batch_shape = get_batch_shape(a.shape());
+        Shape eigenval_shape = batch_shape;
+        eigenval_shape.push_back(n);
+        int ni = static_cast<int>(n);
+
+        if (a.dtype() == DType::Float32) {
+            auto &cusolver = get_cusolver();
+            auto a_work = a.ascontiguousarray().clone();
+            float *a_data = a_work.typed_data<float>();
+
+            Tensor eigenvalues(eigenval_shape, DType::Float32, Device::GPU);
+            float *w_data = eigenvalues.typed_data<float>();
+
+            // Symmetric: row-major = col-major, flip uplo
+            // jobz='V' -> eigenvectors stored in a_work (col-major columns)
+            for (size_t b = 0; b < batch_size; ++b) {
+                float *a_batch = a_data + b * n * n;
+                float *w_batch = w_data + b * n;
+                int info = cusolver.ssyevd('V', 'L', ni, a_batch, ni, w_batch,
+                                           nullptr, 0, nullptr, 0);
+                check_lapack_info(info, "cusolver ssyevd");
+            }
+
+            // Eigenvectors in a_work are col-major columns = row-major rows
+            // Need to transpose to get row-major eigenvectors
+            EigResult result;
+            result.eigenvalues = eigenvalues;
+            result.eigenvectors =
+                transpose_last2(a_work).ascontiguousarray();
+            return result;
+        } else if (a.dtype() == DType::Float64) {
+            auto &cusolver = get_cusolver();
+            auto a_work = a.ascontiguousarray().clone();
+            double *a_data = a_work.typed_data<double>();
+
+            Tensor eigenvalues(eigenval_shape, DType::Float64, Device::GPU);
+            double *w_data = eigenvalues.typed_data<double>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                double *a_batch = a_data + b * n * n;
+                double *w_batch = w_data + b * n;
+                int info = cusolver.dsyevd('V', 'L', ni, a_batch, ni, w_batch,
+                                           nullptr, 0, nullptr, 0);
+                check_lapack_info(info, "cusolver dsyevd");
+            }
+
+            EigResult result;
+            result.eigenvalues = eigenvalues;
+            result.eigenvectors =
+                transpose_last2(a_work).ascontiguousarray();
+            return result;
+        } else {
+            auto cpu_result = eigh(a.cpu());
+            EigResult result;
+            result.eigenvalues = cpu_result.eigenvalues.gpu();
+            result.eigenvectors = cpu_result.eigenvectors.gpu();
+            return result;
+        }
+    }
+#endif
 
     auto &backend = get_lapack_backend();
 
@@ -1558,6 +2386,10 @@ EigResult eigh(const Tensor &a) {
         return eigh(a.astype(DType::Float64));
     }
 
+    if (orig_device != Device::CPU) {
+        result.eigenvalues = result.eigenvalues.to(orig_device);
+        result.eigenvectors = result.eigenvectors.to(orig_device);
+    }
     return result;
 }
 
@@ -1565,6 +2397,7 @@ Tensor lstsq(const Tensor &a, const Tensor &b, double rcond) {
     if (a.ndim() < 2) {
         throw ShapeError("lstsq requires at least 2D tensor for a");
     }
+    Device orig_device = a.device();
 
     auto &backend = get_lapack_backend();
 
@@ -1665,7 +2498,7 @@ Tensor lstsq(const Tensor &a, const Tensor &b, double rcond) {
         return lstsq(a.astype(DType::Float64), b.astype(DType::Float64), rcond);
     }
 
-    return result;
+    return (orig_device != Device::CPU) ? result.to(orig_device) : result;
 }
 
 Tensor pinv(const Tensor &a, double rcond) {
@@ -2955,6 +3788,7 @@ Tensor svdvals(const Tensor &x) {
 
 Tensor eigvals(const Tensor &a) {
     validate_square_matrix(a, "eigvals");
+    Device orig_device = a.device();
 
     auto &backend = get_lapack_backend();
 
@@ -3005,7 +3839,8 @@ Tensor eigvals(const Tensor &a) {
                 eigenval_batch[i] = complex64_t(wr[i], wi[i]);
             }
         }
-        return eigenvalues;
+        return (orig_device != Device::CPU) ? eigenvalues.to(orig_device)
+                                            : eigenvalues;
     } else if (a.dtype() == DType::Float64) {
         auto a_work =
             ensure_cpu_contiguous_colmajor(a.astype(DType::Float64)).clone();
@@ -3047,7 +3882,8 @@ Tensor eigvals(const Tensor &a) {
                 eigenval_batch[i] = complex128_t(wr[i], wi[i]);
             }
         }
-        return eigenvalues;
+        return (orig_device != Device::CPU) ? eigenvalues.to(orig_device)
+                                            : eigenvalues;
     } else {
         return eigvals(a.astype(DType::Float64));
     }
@@ -3055,6 +3891,56 @@ Tensor eigvals(const Tensor &a) {
 
 Tensor eigvalsh(const Tensor &a) {
     validate_square_matrix(a, "eigvalsh");
+    Device orig_device = a.device();
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (orig_device == Device::GPU) {
+        size_t n = a.shape()[a.ndim() - 1];
+        size_t batch_size = compute_batch_size(a.shape());
+        Shape batch_shape = get_batch_shape(a.shape());
+        Shape eigenval_shape = batch_shape;
+        eigenval_shape.push_back(n);
+        int ni = static_cast<int>(n);
+
+        if (a.dtype() == DType::Float32) {
+            auto &cusolver = get_cusolver();
+            auto a_work = a.ascontiguousarray().clone();
+            float *a_data = a_work.typed_data<float>();
+
+            Tensor eigenvalues(eigenval_shape, DType::Float32, Device::GPU);
+            float *w_data = eigenvalues.typed_data<float>();
+
+            // Symmetric: row-major data = col-major data (A=A^T)
+            // Flip uplo: row-major 'U' = col-major 'L'
+            for (size_t b = 0; b < batch_size; ++b) {
+                float *a_batch = a_data + b * n * n;
+                float *w_batch = w_data + b * n;
+                int info = cusolver.ssyevd('N', 'L', ni, a_batch, ni, w_batch,
+                                           nullptr, 0, nullptr, 0);
+                check_lapack_info(info, "cusolver ssyevd");
+            }
+            return eigenvalues;
+        } else if (a.dtype() == DType::Float64) {
+            auto &cusolver = get_cusolver();
+            auto a_work = a.ascontiguousarray().clone();
+            double *a_data = a_work.typed_data<double>();
+
+            Tensor eigenvalues(eigenval_shape, DType::Float64, Device::GPU);
+            double *w_data = eigenvalues.typed_data<double>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                double *a_batch = a_data + b * n * n;
+                double *w_batch = w_data + b * n;
+                int info = cusolver.dsyevd('N', 'L', ni, a_batch, ni, w_batch,
+                                           nullptr, 0, nullptr, 0);
+                check_lapack_info(info, "cusolver dsyevd");
+            }
+            return eigenvalues;
+        } else {
+            return eigvalsh(a.cpu()).gpu();
+        }
+    }
+#endif
 
     auto &backend = get_lapack_backend();
 
@@ -3103,7 +3989,8 @@ Tensor eigvalsh(const Tensor &a) {
                                iwork.data(), static_cast<int>(iwork.size()));
             check_lapack_info(info, "ssyevd");
         }
-        return eigenvalues;
+        return (orig_device != Device::CPU) ? eigenvalues.to(orig_device)
+                                            : eigenvalues;
     } else if (a.dtype() == DType::Float64) {
         auto a_work =
             ensure_cpu_contiguous_colmajor(a.astype(DType::Float64)).clone();
@@ -3143,7 +4030,8 @@ Tensor eigvalsh(const Tensor &a) {
                                iwork.data(), static_cast<int>(iwork.size()));
             check_lapack_info(info, "dsyevd");
         }
-        return eigenvalues;
+        return (orig_device != Device::CPU) ? eigenvalues.to(orig_device)
+                                            : eigenvalues;
     } else {
         return eigvalsh(a.astype(DType::Float64));
     }
@@ -3153,6 +4041,130 @@ std::pair<Tensor, Tensor> slogdet(const Tensor &a) {
     // Sign and log determinant using LU decomposition
     // More numerically stable than computing det directly
     validate_square_matrix(a, "slogdet");
+    Device orig_device = a.device();
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (orig_device == Device::GPU) {
+        size_t n = a.shape()[a.ndim() - 1];
+        size_t batch_size = compute_batch_size(a.shape());
+        Shape batch_shape = get_batch_shape(a.shape());
+        Shape result_shape = batch_shape.empty() ? Shape({}) : batch_shape;
+        int ni = static_cast<int>(n);
+
+        if (a.dtype() == DType::Float32 || a.dtype() == DType::Float64) {
+            DType dtype = a.dtype();
+            auto &cusolver = get_cusolver();
+
+            // det(A) = det(A^T), so row-major data works directly
+            auto a_work = a.astype(dtype).ascontiguousarray().clone();
+
+            Tensor ipiv_tensor({batch_size, n}, DType::Int32, Device::GPU);
+            int *ipiv_gpu = ipiv_tensor.typed_data<int>();
+
+            for (size_t b = 0; b < batch_size; ++b) {
+                if (dtype == DType::Float32) {
+                    float *a_batch =
+                        a_work.typed_data<float>() + b * n * n;
+                    int *ipiv_batch = ipiv_gpu + b * n;
+                    int info =
+                        cusolver.sgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    if (info < 0)
+                        check_lapack_info(info, "cusolver sgetrf");
+                } else {
+                    double *a_batch =
+                        a_work.typed_data<double>() + b * n * n;
+                    int *ipiv_batch = ipiv_gpu + b * n;
+                    int info =
+                        cusolver.dgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    if (info < 0)
+                        check_lapack_info(info, "cusolver dgetrf");
+                }
+            }
+
+            // Copy factored data to CPU for post-processing
+            auto a_cpu = a_work.cpu();
+            auto ipiv_cpu = ipiv_tensor.cpu();
+
+            Tensor sign_result(result_shape, dtype);
+            Tensor logabsdet_result(result_shape, dtype);
+
+            if (dtype == DType::Float32) {
+                float *a_data = a_cpu.typed_data<float>();
+                int *ipiv_data = ipiv_cpu.typed_data<int>();
+                float *sign_data = sign_result.typed_data<float>();
+                float *logdet_data = logabsdet_result.typed_data<float>();
+
+                for (size_t b = 0; b < batch_size; ++b) {
+                    float *a_batch = a_data + b * n * n;
+                    int *ipiv_batch = ipiv_data + b * n;
+
+                    float log_abs_det = 0.0f;
+                    int sign = 1;
+
+                    for (size_t i = 0; i < n; ++i) {
+                        float diag = a_batch[i * n + i];
+                        if (diag < 0) {
+                            sign = -sign;
+                            log_abs_det += std::log(-diag);
+                        } else if (diag > 0) {
+                            log_abs_det += std::log(diag);
+                        } else {
+                            sign = 0;
+                            log_abs_det =
+                                -std::numeric_limits<float>::infinity();
+                            break;
+                        }
+                        if (ipiv_batch[i] != static_cast<int>(i + 1)) {
+                            sign = -sign;
+                        }
+                    }
+
+                    sign_data[b] = static_cast<float>(sign);
+                    logdet_data[b] = log_abs_det;
+                }
+            } else {
+                double *a_data = a_cpu.typed_data<double>();
+                int *ipiv_data = ipiv_cpu.typed_data<int>();
+                double *sign_data = sign_result.typed_data<double>();
+                double *logdet_data =
+                    logabsdet_result.typed_data<double>();
+
+                for (size_t b = 0; b < batch_size; ++b) {
+                    double *a_batch = a_data + b * n * n;
+                    int *ipiv_batch = ipiv_data + b * n;
+
+                    double log_abs_det = 0.0;
+                    int sign = 1;
+
+                    for (size_t i = 0; i < n; ++i) {
+                        double diag = a_batch[i * n + i];
+                        if (diag < 0) {
+                            sign = -sign;
+                            log_abs_det += std::log(-diag);
+                        } else if (diag > 0) {
+                            log_abs_det += std::log(diag);
+                        } else {
+                            sign = 0;
+                            log_abs_det =
+                                -std::numeric_limits<double>::infinity();
+                            break;
+                        }
+                        if (ipiv_batch[i] != static_cast<int>(i + 1)) {
+                            sign = -sign;
+                        }
+                    }
+
+                    sign_data[b] = static_cast<double>(sign);
+                    logdet_data[b] = log_abs_det;
+                }
+            }
+            return {sign_result.gpu(), logabsdet_result.gpu()};
+        } else {
+            auto cpu_result = slogdet(a.cpu());
+            return {cpu_result.first.gpu(), cpu_result.second.gpu()};
+        }
+    }
+#endif
 
     auto &backend = get_lapack_backend();
 
@@ -3401,6 +4413,10 @@ std::pair<Tensor, Tensor> slogdet(const Tensor &a) {
         return slogdet(a.astype(DType::Float64));
     }
 
+    if (orig_device != Device::CPU) {
+        sign_result = sign_result.to(orig_device);
+        logabsdet_result = logabsdet_result.to(orig_device);
+    }
     return {sign_result, logabsdet_result};
 }
 
