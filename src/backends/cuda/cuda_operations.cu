@@ -235,6 +235,118 @@ class CudaBinaryOperation : public ops::Operation {
 };
 
 // ============================================================================
+// OpType → UnaryOpKind mapping
+// ============================================================================
+
+static bool is_unary_test_op(ops::OpType op) {
+    switch (op) {
+    case ops::OpType::IsNaN:
+    case ops::OpType::IsInf:
+    case ops::OpType::IsFinite:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static UnaryOpKind to_unary_op_kind(ops::OpType op) {
+    switch (op) {
+    case ops::OpType::Negate:     return UnaryOpKind::Negate;
+    case ops::OpType::Abs:        return UnaryOpKind::Abs;
+    case ops::OpType::Sqrt:       return UnaryOpKind::Sqrt;
+    case ops::OpType::Exp:        return UnaryOpKind::Exp;
+    case ops::OpType::Log:        return UnaryOpKind::Log;
+    case ops::OpType::Sin:        return UnaryOpKind::Sin;
+    case ops::OpType::Cos:        return UnaryOpKind::Cos;
+    case ops::OpType::Tan:        return UnaryOpKind::Tan;
+    case ops::OpType::Tanh:       return UnaryOpKind::Tanh;
+    case ops::OpType::Sign:       return UnaryOpKind::Sign;
+    case ops::OpType::Floor:      return UnaryOpKind::Floor;
+    case ops::OpType::Ceil:       return UnaryOpKind::Ceil;
+    case ops::OpType::Trunc:      return UnaryOpKind::Trunc;
+    case ops::OpType::Round:      return UnaryOpKind::Round;
+    case ops::OpType::Reciprocal: return UnaryOpKind::Reciprocal;
+    case ops::OpType::Square:     return UnaryOpKind::Square;
+    case ops::OpType::Cbrt:       return UnaryOpKind::Cbrt;
+    case ops::OpType::Erf:        return UnaryOpKind::Erf;
+    case ops::OpType::IsNaN:      return UnaryOpKind::IsNaN;
+    case ops::OpType::IsInf:      return UnaryOpKind::IsInf;
+    case ops::OpType::IsFinite:   return UnaryOpKind::IsFinite;
+    case ops::OpType::ReLU:       return UnaryOpKind::ReLU;
+    case ops::OpType::LeakyReLU:  return UnaryOpKind::LeakyReLU;
+    case ops::OpType::Sigmoid:    return UnaryOpKind::Sigmoid;
+    case ops::OpType::SiLU:       return UnaryOpKind::SiLU;
+    case ops::OpType::GELU:       return UnaryOpKind::GELU;
+    default:
+        throw DeviceError("Unsupported unary OpType for CUDA");
+    }
+}
+
+// ============================================================================
+// CudaUnaryOperation
+// ============================================================================
+
+class CudaUnaryOperation : public ops::Operation {
+  private:
+    ops::OpType op_type_;
+    std::string op_name_;
+
+  public:
+    CudaUnaryOperation(ops::OpType op_type, std::string op_name)
+        : op_type_(op_type), op_name_(std::move(op_name)) {}
+
+    ops::OpType type() const override { return op_type_; }
+    std::string name() const override { return op_name_; }
+    Device device() const override { return Device::GPU; }
+
+    bool supports_binary(const Tensor & /*lhs*/,
+                         const Tensor & /*rhs*/) const override {
+        return false;
+    }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on unary operation");
+    }
+
+    Tensor execute_unary(const Tensor &input) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        Tensor in_c = ensure_gpu_contiguous(input);
+
+        // Output dtype: Bool for test ops, same as input otherwise
+        DType out_dtype = is_unary_test_op(op_type_) ? DType::Bool
+                                                     : in_c.dtype();
+
+        Tensor result(in_c.shape(), out_dtype, Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *src_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!src_buf || !dst_buf) {
+            throw DeviceError(
+                "CudaUnaryOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        launch_unary_elementwise(to_unary_op_kind(op_type_),
+                                 src_buf->device_ptr(),
+                                 dst_buf->device_ptr(), numel,
+                                 dtype_size(in_c.dtype()), stream);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
 // Operation registration
 // ============================================================================
 
@@ -243,6 +355,13 @@ static void register_binary_op(ops::OpType op_type,
     ops::OperationRegistry::register_operation(
         op_type, Device::GPU,
         std::make_unique<CudaBinaryOperation>(op_type, name));
+}
+
+static void register_unary_op(ops::OpType op_type,
+                               const std::string &name) {
+    ops::OperationRegistry::register_operation(
+        op_type, Device::GPU,
+        std::make_unique<CudaUnaryOperation>(op_type, name));
 }
 
 void register_cuda_operations() {
@@ -275,9 +394,41 @@ void register_cuda_operations() {
     register_binary_op(ops::OpType::LogicalOr, "logical_or");
     register_binary_op(ops::OpType::LogicalXor, "logical_xor");
 
-    register_cublas_operations();
+    // Unary math
+    register_unary_op(ops::OpType::Negate, "negate");
+    register_unary_op(ops::OpType::Abs, "abs");
+    register_unary_op(ops::OpType::Sqrt, "sqrt");
+    register_unary_op(ops::OpType::Exp, "exp");
+    register_unary_op(ops::OpType::Log, "log");
+    register_unary_op(ops::OpType::Sin, "sin");
+    register_unary_op(ops::OpType::Cos, "cos");
+    register_unary_op(ops::OpType::Tan, "tan");
+    register_unary_op(ops::OpType::Tanh, "tanh");
+    register_unary_op(ops::OpType::Erf, "erf");
 
-    // TODO: register unary and reduction operations
+    // Rounding / algebraic
+    register_unary_op(ops::OpType::Sign, "sign");
+    register_unary_op(ops::OpType::Floor, "floor");
+    register_unary_op(ops::OpType::Ceil, "ceil");
+    register_unary_op(ops::OpType::Trunc, "trunc");
+    register_unary_op(ops::OpType::Round, "round");
+    register_unary_op(ops::OpType::Reciprocal, "reciprocal");
+    register_unary_op(ops::OpType::Square, "square");
+    register_unary_op(ops::OpType::Cbrt, "cbrt");
+
+    // Testing
+    register_unary_op(ops::OpType::IsNaN, "isnan");
+    register_unary_op(ops::OpType::IsInf, "isinf");
+    register_unary_op(ops::OpType::IsFinite, "isfinite");
+
+    // Activations
+    register_unary_op(ops::OpType::ReLU, "relu");
+    register_unary_op(ops::OpType::LeakyReLU, "leaky_relu");
+    register_unary_op(ops::OpType::Sigmoid, "sigmoid");
+    register_unary_op(ops::OpType::SiLU, "silu");
+    register_unary_op(ops::OpType::GELU, "gelu");
+
+    register_cublas_operations();
 }
 
 } // namespace cuda
