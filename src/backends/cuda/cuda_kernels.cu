@@ -1436,6 +1436,151 @@ void launch_index_select(const void *src, const int64_t *indices, void *dst,
     }
 }
 
+// ============================================================================
+// Softmax / LogSoftmax Kernel
+// ============================================================================
+// Layout: input is (outer, axis_len, inner) in row-major order.
+// Each thread block handles one (outer_idx, inner_idx) pair.
+// Threads within the block cooperate via shared memory to:
+//   1. Find the max along axis_len (numerical stability)
+//   2. Compute sum of exp(x - max)
+//   3. Normalize: softmax = exp(x-max)/sum, logsoftmax = x-max-log(sum)
+//
+// For axis_len <= blockDim.x, each thread handles one element.
+// For axis_len > blockDim.x, each thread handles multiple elements
+// in a strided loop before the shared-memory reductions.
+// ============================================================================
+
+static constexpr int SOFTMAX_BLOCK = 256;
+
+template <typename T>
+__global__ void softmax_kernel(const T *src, T *dst,
+                               size_t outer, size_t axis_len, size_t inner,
+                               bool is_log) {
+    extern __shared__ char smem_raw[];
+    T *smem = reinterpret_cast<T *>(smem_raw);
+
+    // Each block handles one (outer_idx, inner_idx) pair
+    size_t pair_idx = blockIdx.x;
+    if (pair_idx >= outer * inner) return;
+
+    size_t outer_idx = pair_idx / inner;
+    size_t inner_idx = pair_idx % inner;
+
+    // Base offset in the flattened (outer, axis_len, inner) layout
+    size_t base = outer_idx * axis_len * inner + inner_idx;
+    unsigned int tid = threadIdx.x;
+
+    // ---- Phase 1: find max ----
+    T thread_max = (sizeof(T) == 4) ? T(-3.4028235e+38f)   // -FLT_MAX
+                                     : T(-1.7976931348623157e+308); // -DBL_MAX
+    for (size_t a = tid; a < axis_len; a += blockDim.x) {
+        T val = src[base + a * inner];
+        thread_max = (val > thread_max) ? val : thread_max;
+    }
+
+    // Store into shared memory for reduction
+    smem[tid] = thread_max;
+    __syncthreads();
+
+    // Parallel reduction for max
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            T other = smem[tid + stride];
+            if (other > smem[tid]) smem[tid] = other;
+        }
+        __syncthreads();
+    }
+    T row_max = smem[0];
+    __syncthreads();
+
+    // ---- Phase 2: compute sum of exp(x - max) ----
+    T thread_sum = T(0);
+    for (size_t a = tid; a < axis_len; a += blockDim.x) {
+        T val = src[base + a * inner];
+        T exp_val;
+        if constexpr (sizeof(T) == 4) {
+            exp_val = __expf(val - row_max);
+        } else {
+            exp_val = exp(val - row_max);
+        }
+        thread_sum += exp_val;
+    }
+
+    smem[tid] = thread_sum;
+    __syncthreads();
+
+    // Parallel reduction for sum
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) {
+            smem[tid] += smem[tid + stride];
+        }
+        __syncthreads();
+    }
+    T row_sum = smem[0];
+    __syncthreads();
+
+    // ---- Phase 3: normalize and write output ----
+    if (is_log) {
+        T log_sum;
+        if constexpr (sizeof(T) == 4) {
+            log_sum = __logf(row_sum);
+        } else {
+            log_sum = log(row_sum);
+        }
+        for (size_t a = tid; a < axis_len; a += blockDim.x) {
+            size_t idx = base + a * inner;
+            dst[idx] = src[idx] - row_max - log_sum;
+        }
+    } else {
+        for (size_t a = tid; a < axis_len; a += blockDim.x) {
+            size_t idx = base + a * inner;
+            T exp_val;
+            if constexpr (sizeof(T) == 4) {
+                exp_val = __expf(src[idx] - row_max);
+            } else {
+                exp_val = exp(src[idx] - row_max);
+            }
+            dst[idx] = exp_val / row_sum;
+        }
+    }
+}
+
+void launch_softmax(const void *src, void *dst,
+                    size_t outer, size_t axis_len, size_t inner,
+                    bool is_log, size_t element_size,
+                    cudaStream_t stream) {
+    size_t num_pairs = outer * inner;
+    unsigned int grid = static_cast<unsigned int>(num_pairs);
+    // Use up to SOFTMAX_BLOCK threads, but no more than axis_len
+    unsigned int block = static_cast<unsigned int>(
+        axis_len < SOFTMAX_BLOCK ? axis_len : SOFTMAX_BLOCK);
+    // Round up to next power of 2 for clean reductions
+    block = block <= 1 ? 1 : (1u << (32 - __builtin_clz(block - 1)));
+    if (block > static_cast<unsigned int>(SOFTMAX_BLOCK))
+        block = SOFTMAX_BLOCK;
+
+    size_t smem_bytes = block * element_size;
+
+    switch (element_size) {
+    case 4:
+        softmax_kernel<float><<<grid, block, smem_bytes, stream>>>(
+            static_cast<const float *>(src), static_cast<float *>(dst),
+            outer, axis_len, inner, is_log);
+        break;
+    case 8:
+        softmax_kernel<double><<<grid, block, smem_bytes, stream>>>(
+            static_cast<const double *>(src), static_cast<double *>(dst),
+            outer, axis_len, inner, is_log);
+        break;
+    default:
+        throw std::runtime_error(
+            "launch_softmax: unsupported element size " +
+            std::to_string(element_size) +
+            " (softmax requires float32 or float64)");
+    }
+}
+
 } // namespace cuda
 } // namespace backends
 } // namespace axiom

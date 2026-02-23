@@ -216,6 +216,18 @@ void launch_index_select(const void *src, const int64_t *indices, void *dst,
                          const int64_t *src_strides,
                          int64_t dim_size, size_t element_size,
                          cudaStream_t stream);
+
+// ============================================================================
+// Softmax / LogSoftmax kernels
+// ============================================================================
+
+// Numerically stable softmax along one axis, decomposed as
+// (outer, axis_len, inner).  Input and output have the same shape.
+// is_log: if true, compute log_softmax instead.
+void launch_softmax(const void *src, void *dst,
+                    size_t outer, size_t axis_len, size_t inner,
+                    bool is_log, size_t element_size,
+                    cudaStream_t stream);
 #endif
 
 } // namespace cuda

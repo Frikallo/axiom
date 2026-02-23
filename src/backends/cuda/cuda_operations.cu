@@ -1237,6 +1237,104 @@ class CudaIndexSelectOperation : public ops::Operation {
 };
 
 // ============================================================================
+// CudaSoftmaxOperation
+// ============================================================================
+
+class CudaSoftmaxOperation : public ops::Operation {
+  private:
+    bool is_log_;
+
+  public:
+    explicit CudaSoftmaxOperation(bool is_log) : is_log_(is_log) {}
+
+    ops::OpType type() const override {
+        return is_log_ ? ops::OpType::LogSoftmax : ops::OpType::Softmax;
+    }
+    std::string name() const override {
+        return is_log_ ? "log_softmax" : "softmax";
+    }
+    Device device() const override { return Device::GPU; }
+
+    bool supports_binary(const Tensor & /*lhs*/,
+                         const Tensor & /*rhs*/) const override {
+        return false;
+    }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on Softmax operation");
+    }
+
+    Tensor execute_unary(const Tensor & /*input*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_reduction for Softmax operations");
+    }
+
+    Tensor execute_reduction(const Tensor &input,
+                             const std::vector<int> &axes,
+                             bool keep_dims) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        (void)keep_dims; // Softmax preserves shape
+
+        int axis = axes.empty() ? -1 : axes[0];
+        int norm_axis = axis;
+        if (norm_axis < 0)
+            norm_axis += static_cast<int>(input.ndim());
+
+        // Softmax only supports float types
+        DType in_dtype = input.dtype();
+        Tensor in_f;
+        if (in_dtype != DType::Float32 && in_dtype != DType::Float64) {
+            in_f = input.astype(DType::Float32);
+        } else {
+            in_f = input;
+        }
+
+        Tensor in_c = ensure_gpu_contiguous(in_f);
+
+        // Decompose into (outer, axis_len, inner)
+        size_t outer = 1;
+        for (int i = 0; i < norm_axis; ++i)
+            outer *= in_c.shape()[i];
+        size_t axis_len = in_c.shape()[norm_axis];
+        size_t inner = 1;
+        for (size_t i = norm_axis + 1; i < in_c.ndim(); ++i)
+            inner *= in_c.shape()[i];
+
+        Tensor result(in_c.shape(), in_c.dtype(), Device::GPU);
+
+        auto *src_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!src_buf || !dst_buf) {
+            throw DeviceError(
+                "CudaSoftmaxOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        launch_softmax(src_buf->device_ptr(), dst_buf->device_ptr(),
+                       outer, axis_len, inner, is_log_,
+                       dtype_size(in_c.dtype()), stream);
+
+        // Convert back if we promoted to float32
+        if (in_dtype != in_c.dtype()) {
+            result = result.astype(in_dtype);
+        }
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)axes;
+        (void)keep_dims;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
 // Operation registration
 // ============================================================================
 
@@ -1342,6 +1440,14 @@ void register_cuda_operations() {
         ops::OpType::ArgMin, Device::GPU,
         std::make_unique<CudaArgReduceOperation>(ops::OpType::ArgMin,
                                                   "argmin", false));
+
+    // Softmax / LogSoftmax
+    ops::OperationRegistry::register_operation(
+        ops::OpType::Softmax, Device::GPU,
+        std::make_unique<CudaSoftmaxOperation>(false));
+    ops::OperationRegistry::register_operation(
+        ops::OpType::LogSoftmax, Device::GPU,
+        std::make_unique<CudaSoftmaxOperation>(true));
 
     // Gather / Scatter / IndexSelect
     ops::OperationRegistry::register_operation(
