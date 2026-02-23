@@ -15,8 +15,9 @@ class CudaContext {
     static CudaContext &instance();
 
     int device_id() const;
-    void *stream() const;         // cudaStream_t
-    void *cublas_handle() const;  // cublasHandle_t
+    void *stream() const;          // cudaStream_t
+    void *cublas_handle() const;   // cublasHandle_t
+    void *cusolver_handle() const; // cusolverDnHandle_t
 
     // Synchronize the default stream.
     void synchronize();
@@ -29,8 +30,9 @@ class CudaContext {
     CudaContext &operator=(const CudaContext &) = delete;
 
     int device_id_;
-    void *stream_;         // cudaStream_t
-    void *cublas_handle_;  // cublasHandle_t
+    void *stream_;          // cudaStream_t
+    void *cublas_handle_;   // cublasHandle_t
+    void *cusolver_handle_; // cusolverDnHandle_t
 };
 
 // ============================================================================

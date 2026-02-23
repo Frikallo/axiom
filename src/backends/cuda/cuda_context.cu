@@ -5,6 +5,7 @@
 #ifdef AXIOM_CUDA_SUPPORT
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
+#include <cusolverDn.h>
 #endif
 
 namespace axiom {
@@ -22,6 +23,8 @@ void *CudaContext::stream() const { return stream_; }
 
 void *CudaContext::cublas_handle() const { return cublas_handle_; }
 
+void *CudaContext::cusolver_handle() const { return cusolver_handle_; }
+
 void CudaContext::synchronize() {
 #ifdef AXIOM_CUDA_SUPPORT
     cudaStreamSynchronize(static_cast<cudaStream_t>(stream_));
@@ -29,7 +32,8 @@ void CudaContext::synchronize() {
 }
 
 CudaContext::CudaContext()
-    : device_id_(0), stream_(nullptr), cublas_handle_(nullptr) {
+    : device_id_(0), stream_(nullptr), cublas_handle_(nullptr),
+      cusolver_handle_(nullptr) {
 #ifdef AXIOM_CUDA_SUPPORT
     cudaSetDevice(device_id_);
 
@@ -37,16 +41,25 @@ CudaContext::CudaContext()
     cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking);
     stream_ = static_cast<void *>(s);
 
-    cublasHandle_t handle = nullptr;
-    cublasCreate(&handle);
-    cublasSetStream(handle, s);
-    cublas_handle_ = static_cast<void *>(handle);
+    cublasHandle_t blas_handle = nullptr;
+    cublasCreate(&blas_handle);
+    cublasSetStream(blas_handle, s);
+    cublas_handle_ = static_cast<void *>(blas_handle);
+
+    cusolverDnHandle_t solver_handle = nullptr;
+    cusolverDnCreate(&solver_handle);
+    cusolverDnSetStream(solver_handle, s);
+    cusolver_handle_ = static_cast<void *>(solver_handle);
 #endif
 }
 
 CudaContext::~CudaContext() {
 #ifdef AXIOM_CUDA_SUPPORT
     // Destroy in reverse order of creation.
+    if (cusolver_handle_) {
+        cusolverDnDestroy(
+            static_cast<cusolverDnHandle_t>(cusolver_handle_));
+    }
     if (cublas_handle_) {
         cublasDestroy(static_cast<cublasHandle_t>(cublas_handle_));
     }
