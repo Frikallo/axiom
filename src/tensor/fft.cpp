@@ -17,6 +17,10 @@
 #include <Accelerate/Accelerate.h>
 #endif
 
+#ifdef AXIOM_CUDA_SUPPORT
+#include "backends/cuda/cufft_operations.hpp"
+#endif
+
 namespace axiom {
 namespace fft {
 
@@ -514,6 +518,13 @@ Tensor fft_1d_impl(const Tensor &input, int64_t n, int axis, bool inverse,
     size_t input_size = input.shape()[axis];
     size_t fft_size = (n > 0) ? static_cast<size_t>(n) : input_size;
 
+#ifdef AXIOM_CUDA_SUPPORT
+    if (input.device() == Device::GPU) {
+        return backends::cuda::cufft_c2c_1d(input, fft_size, axis, inverse,
+                                            norm);
+    }
+#endif
+
     // Move to CPU for computation
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
 
@@ -818,6 +829,14 @@ Tensor rfft(const Tensor &input, int64_t n, int axis, const std::string &norm) {
     if (axis < 0)
         axis += ndim;
 
+#ifdef AXIOM_CUDA_SUPPORT
+    if (input.device() == Device::GPU) {
+        size_t fft_size =
+            (n > 0) ? static_cast<size_t>(n) : input.shape()[axis];
+        return backends::cuda::cufft_r2c_1d(input, fft_size, axis, norm);
+    }
+#endif
+
     // Compute full FFT
     Tensor full_fft = fft(input, n, axis, norm);
 
@@ -848,6 +867,12 @@ Tensor irfft(const Tensor &input, int64_t n, int axis,
     size_t input_size = input.shape()[axis];
     size_t output_size =
         (n > 0) ? static_cast<size_t>(n) : 2 * (input_size - 1);
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (input.device() == Device::GPU) {
+        return backends::cuda::cufft_c2r_1d(input, output_size, axis, norm);
+    }
+#endif
 
     // Reconstruct full spectrum using Hermitian symmetry
     Shape full_shape = input.shape();
@@ -881,6 +906,23 @@ Tensor fft2(const Tensor &input, const std::vector<int64_t> &s,
         actual_s = {-1, -1};
     }
 
+#ifdef AXIOM_CUDA_SUPPORT
+    if (input.device() == Device::GPU) {
+        int ndim_gpu = static_cast<int>(input.ndim());
+        int ax0 =
+            actual_axes[0] < 0 ? actual_axes[0] + ndim_gpu : actual_axes[0];
+        int ax1 =
+            actual_axes[1] < 0 ? actual_axes[1] + ndim_gpu : actual_axes[1];
+        bool no_custom = (actual_s[0] <= 0 && actual_s[1] <= 0);
+        bool last_two = (ax0 == ndim_gpu - 2 && ax1 == ndim_gpu - 1);
+        if (no_custom && last_two) {
+            return backends::cuda::cufft_c2c_2d(
+                input, input.shape()[ax0], input.shape()[ax1], false, norm);
+        }
+        // Fall through to composed 1D (each will use cuFFT).
+    }
+#endif
+
 #ifdef AXIOM_USE_ACCELERATE
     int ndim = static_cast<int>(input.ndim());
     if (can_use_native_2d_fft(input, actual_axes, actual_s, ndim)) {
@@ -906,6 +948,22 @@ Tensor ifft2(const Tensor &input, const std::vector<int64_t> &s,
     if (actual_s.empty()) {
         actual_s = {-1, -1};
     }
+
+#ifdef AXIOM_CUDA_SUPPORT
+    if (input.device() == Device::GPU) {
+        int ndim_gpu = static_cast<int>(input.ndim());
+        int ax0 =
+            actual_axes[0] < 0 ? actual_axes[0] + ndim_gpu : actual_axes[0];
+        int ax1 =
+            actual_axes[1] < 0 ? actual_axes[1] + ndim_gpu : actual_axes[1];
+        bool no_custom = (actual_s[0] <= 0 && actual_s[1] <= 0);
+        bool last_two = (ax0 == ndim_gpu - 2 && ax1 == ndim_gpu - 1);
+        if (no_custom && last_two) {
+            return backends::cuda::cufft_c2c_2d(
+                input, input.shape()[ax0], input.shape()[ax1], true, norm);
+        }
+    }
+#endif
 
 #ifdef AXIOM_USE_ACCELERATE
     int ndim = static_cast<int>(input.ndim());
