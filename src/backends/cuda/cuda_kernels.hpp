@@ -115,6 +115,45 @@ enum class UnaryOpKind : uint8_t {
 void launch_unary_elementwise(UnaryOpKind op, const void *src, void *dst,
                               size_t n, size_t element_size,
                               cudaStream_t stream);
+
+// ============================================================================
+// Reduction kernels
+// ============================================================================
+
+enum class ReduceOpKind : uint8_t {
+    Sum,
+    Prod,
+    Max,
+    Min,
+    Any,
+    All,
+};
+
+// Full reduction — reduce all elements to a single scalar.
+// `temp_bytes` is an in/out: pass 0 to query required temp size, then
+// call again with allocated temp buffer.
+void launch_full_reduce(ReduceOpKind op, const void *src, void *dst,
+                        size_t n, size_t element_size,
+                        void *temp, size_t &temp_bytes,
+                        cudaStream_t stream);
+
+// Axis reduction — reduce along one axis decomposed as
+// (outer, axis_len, inner).  Output has outer*inner elements.
+void launch_axis_reduce(ReduceOpKind op, const void *src, void *dst,
+                        size_t outer, size_t axis_len, size_t inner,
+                        size_t element_size, cudaStream_t stream);
+
+// Full ArgMax / ArgMin — returns the linear index of the extreme
+// element (int64_t output).
+void launch_full_argreduce(bool is_max, const void *src, void *dst,
+                           size_t n, size_t element_size,
+                           void *temp, size_t &temp_bytes,
+                           cudaStream_t stream);
+
+// Axis ArgMax / ArgMin — returns indices along one axis.
+void launch_axis_argreduce(bool is_max, const void *src, void *dst,
+                           size_t outer, size_t axis_len, size_t inner,
+                           size_t element_size, cudaStream_t stream);
 #endif
 
 } // namespace cuda

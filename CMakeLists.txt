@@ -408,6 +408,7 @@ if(AXIOM_HAS_CUDA)
         src/backends/cuda/cuda_operations.cu
         src/backends/cuda/cublas_operations.cu
         src/backends/cuda/cuda_kernels.cu
+        src/backends/cuda/cuda_reduce_kernels.cu
         src/backends/cuda/cuda_fused.cu
     )
 endif()
