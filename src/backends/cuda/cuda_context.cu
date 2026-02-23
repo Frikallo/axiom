@@ -1,5 +1,7 @@
 #include "cuda_context.hpp"
 
+#include <mutex>
+
 #ifdef AXIOM_CUDA_SUPPORT
 #include <cuda_runtime.h>
 #endif
@@ -41,13 +43,26 @@ CudaContext::~CudaContext() {
 }
 
 bool is_cuda_available() {
+    static std::once_flag flag;
+    static bool available = false;
+
+    std::call_once(flag, [] {
 #ifdef AXIOM_CUDA_SUPPORT
-    int count = 0;
-    cudaError_t err = cudaGetDeviceCount(&count);
-    return err == cudaSuccess && count > 0;
-#else
-    return false;
+        int count = 0;
+        cudaError_t err = cudaGetDeviceCount(&count);
+        if (err != cudaSuccess || count == 0) return;
+
+        // Require compute capability >= 7.0 (Volta)
+        cudaDeviceProp props{};
+        err = cudaGetDeviceProperties(&props, 0);
+        if (err != cudaSuccess) return;
+        if (props.major < 7) return;
+
+        available = true;
 #endif
+    });
+
+    return available;
 }
 
 } // namespace cuda
