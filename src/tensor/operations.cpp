@@ -13,6 +13,10 @@
 #include "backends/cpu/cpu_operations.hpp"
 #include "backends/metal/metal_operations.hpp"
 
+#ifdef AXIOM_CUDA_SUPPORT
+#include "backends/cuda/cuda_operations.hpp"
+#endif
+
 namespace axiom {
 namespace ops {
 
@@ -393,6 +397,8 @@ OperationRegistry::get_registry() {
         backends::cpu::register_cpu_operations();
 #ifdef __APPLE__
         backends::metal::register_metal_operations();
+#elif defined(AXIOM_CUDA_SUPPORT)
+        backends::cuda::register_cuda_operations();
 #endif
     }
     return registry;
@@ -435,6 +441,8 @@ void OperationRegistry::initialize_builtin_operations() {
 
 #ifdef __APPLE__
     backends::metal::register_metal_operations();
+#elif defined(AXIOM_CUDA_SUPPORT)
+    backends::cuda::register_cuda_operations();
 #endif
 }
 
