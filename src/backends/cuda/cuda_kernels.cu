@@ -584,6 +584,365 @@ void launch_binary_broadcast(BinaryOpKind op, const void *src_a,
     }
 }
 
+// ============================================================================
+// Unary Element-wise Functors
+// ============================================================================
+
+struct NegateOp {
+    template <typename T>
+    __device__ T operator()(T x) const { return -x; }
+};
+
+struct AbsOp {
+    __device__ float operator()(float x) const { return fabsf(x); }
+    __device__ double operator()(double x) const { return fabs(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return x < T(0) ? -x : x; }
+};
+
+struct SqrtOp {
+    __device__ float operator()(float x) const { return sqrtf(x); }
+    __device__ double operator()(double x) const { return sqrt(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return static_cast<T>(sqrtf(static_cast<float>(x))); }
+};
+
+struct ExpOp {
+    __device__ float operator()(float x) const { return __expf(x); }
+    __device__ double operator()(double x) const { return exp(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return static_cast<T>(__expf(static_cast<float>(x))); }
+};
+
+struct LogOp {
+    __device__ float operator()(float x) const { return __logf(x); }
+    __device__ double operator()(double x) const { return log(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return static_cast<T>(__logf(static_cast<float>(x))); }
+};
+
+struct SinOp {
+    __device__ float operator()(float x) const { return __sinf(x); }
+    __device__ double operator()(double x) const { return sin(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return static_cast<T>(__sinf(static_cast<float>(x))); }
+};
+
+struct CosOp {
+    __device__ float operator()(float x) const { return __cosf(x); }
+    __device__ double operator()(double x) const { return cos(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return static_cast<T>(__cosf(static_cast<float>(x))); }
+};
+
+struct TanOp {
+    __device__ float operator()(float x) const { return tanf(x); }
+    __device__ double operator()(double x) const { return tan(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return static_cast<T>(tanf(static_cast<float>(x))); }
+};
+
+struct TanhOp {
+    __device__ float operator()(float x) const { return tanhf(x); }
+    __device__ double operator()(double x) const { return tanh(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return static_cast<T>(tanhf(static_cast<float>(x))); }
+};
+
+struct SignOp {
+    template <typename T>
+    __device__ T operator()(T x) const {
+        return (x > T(0)) ? T(1) : ((x < T(0)) ? T(-1) : T(0));
+    }
+};
+
+struct FloorOp {
+    __device__ float operator()(float x) const { return floorf(x); }
+    __device__ double operator()(double x) const { return floor(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return x; } // no-op for integers
+};
+
+struct CeilOp {
+    __device__ float operator()(float x) const { return ceilf(x); }
+    __device__ double operator()(double x) const { return ceil(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return x; }
+};
+
+struct TruncOp {
+    __device__ float operator()(float x) const { return truncf(x); }
+    __device__ double operator()(double x) const { return trunc(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return x; }
+};
+
+struct RoundOp {
+    __device__ float operator()(float x) const { return rintf(x); }
+    __device__ double operator()(double x) const { return rint(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return x; }
+};
+
+struct ReciprocalOp {
+    __device__ float operator()(float x) const { return __fdividef(1.0f, x); }
+    __device__ double operator()(double x) const { return 1.0 / x; }
+    template <typename T>
+    __device__ T operator()(T x) const { return T(1) / x; }
+};
+
+struct SquareOp {
+    template <typename T>
+    __device__ T operator()(T x) const { return x * x; }
+};
+
+struct CbrtOp {
+    __device__ float operator()(float x) const { return cbrtf(x); }
+    __device__ double operator()(double x) const { return cbrt(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return static_cast<T>(cbrtf(static_cast<float>(x))); }
+};
+
+struct ErfOp {
+    __device__ float operator()(float x) const { return erff(x); }
+    __device__ double operator()(double x) const { return erf(x); }
+    template <typename T>
+    __device__ T operator()(T x) const { return static_cast<T>(erff(static_cast<float>(x))); }
+};
+
+// Testing ops — output is uint8_t
+struct IsNaNOp {
+    __device__ uint8_t operator()(float x) const { return isnan(x) ? 1 : 0; }
+    __device__ uint8_t operator()(double x) const { return isnan(x) ? 1 : 0; }
+    template <typename T>
+    __device__ uint8_t operator()(T /*x*/) const { return 0; } // integers are never NaN
+};
+
+struct IsInfOp {
+    __device__ uint8_t operator()(float x) const { return isinf(x) ? 1 : 0; }
+    __device__ uint8_t operator()(double x) const { return isinf(x) ? 1 : 0; }
+    template <typename T>
+    __device__ uint8_t operator()(T /*x*/) const { return 0; }
+};
+
+struct IsFiniteOp {
+    __device__ uint8_t operator()(float x) const { return isfinite(x) ? 1 : 0; }
+    __device__ uint8_t operator()(double x) const { return isfinite(x) ? 1 : 0; }
+    template <typename T>
+    __device__ uint8_t operator()(T /*x*/) const { return 1; } // integers are always finite
+};
+
+// Activation functors
+struct ReLUOp {
+    template <typename T>
+    __device__ T operator()(T x) const { return x > T(0) ? x : T(0); }
+};
+
+struct LeakyReLUOp {
+    template <typename T>
+    __device__ T operator()(T x) const {
+        // Default negative slope = 0.01
+        return x > T(0) ? x : static_cast<T>(static_cast<float>(x) * 0.01f);
+    }
+    __device__ float operator()(float x) const { return x > 0.0f ? x : x * 0.01f; }
+    __device__ double operator()(double x) const { return x > 0.0 ? x : x * 0.01; }
+};
+
+struct SigmoidOp {
+    __device__ float operator()(float x) const { return 1.0f / (1.0f + __expf(-x)); }
+    __device__ double operator()(double x) const { return 1.0 / (1.0 + exp(-x)); }
+    template <typename T>
+    __device__ T operator()(T x) const {
+        return static_cast<T>(1.0f / (1.0f + __expf(-static_cast<float>(x))));
+    }
+};
+
+struct SiLUOp {
+    __device__ float operator()(float x) const { return x / (1.0f + __expf(-x)); }
+    __device__ double operator()(double x) const { return x / (1.0 + exp(-x)); }
+    template <typename T>
+    __device__ T operator()(T x) const {
+        float fx = static_cast<float>(x);
+        return static_cast<T>(fx / (1.0f + __expf(-fx)));
+    }
+};
+
+struct GELUOp {
+    // Approximation: x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+    __device__ float operator()(float x) const {
+        constexpr float kAlpha = 0.7978845608f; // sqrt(2/pi)
+        constexpr float kBeta = 0.044715f;
+        float inner = kAlpha * (x + kBeta * x * x * x);
+        return 0.5f * x * (1.0f + tanhf(inner));
+    }
+    __device__ double operator()(double x) const {
+        constexpr double kAlpha = 0.7978845608028654;
+        constexpr double kBeta = 0.044715;
+        double inner = kAlpha * (x + kBeta * x * x * x);
+        return 0.5 * x * (1.0 + tanh(inner));
+    }
+    template <typename T>
+    __device__ T operator()(T x) const {
+        return static_cast<T>(this->operator()(static_cast<float>(x)));
+    }
+};
+
+// ============================================================================
+// Unary Element-wise Kernels
+// ============================================================================
+
+// Same-type input/output
+template <typename T, typename Op>
+__global__ void unary_elementwise(const T *in, T *out, size_t n, Op op) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+    out[gid] = op(in[gid]);
+}
+
+// Input T, output uint8_t (for IsNaN, IsInf, IsFinite)
+template <typename T, typename Op>
+__global__ void unary_elementwise_test(const T *in, uint8_t *out,
+                                       size_t n, Op op) {
+    size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (gid >= n) return;
+    out[gid] = op(in[gid]);
+}
+
+// ============================================================================
+// Unary typed dispatch helpers
+// ============================================================================
+
+template <typename Op>
+static void launch_unary(Op op, const void *src, void *dst, size_t n,
+                         size_t elem, cudaStream_t s) {
+    unsigned int grid =
+        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    switch (elem) {
+    case 4:
+        unary_elementwise<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const float *>(src), static_cast<float *>(dst),
+            n, op);
+        break;
+    case 8:
+        unary_elementwise<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const double *>(src),
+            static_cast<double *>(dst), n, op);
+        break;
+    case 2:
+        unary_elementwise<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int16_t *>(src),
+            static_cast<int16_t *>(dst), n, op);
+        break;
+    case 1:
+        unary_elementwise<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int8_t *>(src),
+            static_cast<int8_t *>(dst), n, op);
+        break;
+    default:
+        throw std::runtime_error(
+            "unary_elementwise: unsupported element size " +
+            std::to_string(elem));
+    }
+}
+
+template <typename Op>
+static void launch_unary_test(Op op, const void *src, void *dst, size_t n,
+                              size_t elem, cudaStream_t s) {
+    unsigned int grid =
+        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    switch (elem) {
+    case 4:
+        unary_elementwise_test<float, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const float *>(src), static_cast<uint8_t *>(dst),
+            n, op);
+        break;
+    case 8:
+        unary_elementwise_test<double, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const double *>(src),
+            static_cast<uint8_t *>(dst), n, op);
+        break;
+    case 2:
+        unary_elementwise_test<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int16_t *>(src),
+            static_cast<uint8_t *>(dst), n, op);
+        break;
+    case 1:
+        unary_elementwise_test<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int8_t *>(src),
+            static_cast<uint8_t *>(dst), n, op);
+        break;
+    default:
+        throw std::runtime_error(
+            "unary_elementwise_test: unsupported element size " +
+            std::to_string(elem));
+    }
+}
+
+// ============================================================================
+// Public unary launcher
+// ============================================================================
+
+void launch_unary_elementwise(UnaryOpKind op, const void *src, void *dst,
+                              size_t n, size_t element_size,
+                              cudaStream_t stream) {
+    switch (op) {
+    case UnaryOpKind::Negate:
+        launch_unary(NegateOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Abs:
+        launch_unary(AbsOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Sqrt:
+        launch_unary(SqrtOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Exp:
+        launch_unary(ExpOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Log:
+        launch_unary(LogOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Sin:
+        launch_unary(SinOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Cos:
+        launch_unary(CosOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Tan:
+        launch_unary(TanOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Tanh:
+        launch_unary(TanhOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Sign:
+        launch_unary(SignOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Floor:
+        launch_unary(FloorOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Ceil:
+        launch_unary(CeilOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Trunc:
+        launch_unary(TruncOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Round:
+        launch_unary(RoundOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Reciprocal:
+        launch_unary(ReciprocalOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Square:
+        launch_unary(SquareOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Cbrt:
+        launch_unary(CbrtOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Erf:
+        launch_unary(ErfOp{}, src, dst, n, element_size, stream); break;
+    // Testing ops — output uint8_t
+    case UnaryOpKind::IsNaN:
+        launch_unary_test(IsNaNOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::IsInf:
+        launch_unary_test(IsInfOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::IsFinite:
+        launch_unary_test(IsFiniteOp{}, src, dst, n, element_size, stream); break;
+    // Activations
+    case UnaryOpKind::ReLU:
+        launch_unary(ReLUOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::LeakyReLU:
+        launch_unary(LeakyReLUOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::Sigmoid:
+        launch_unary(SigmoidOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::SiLU:
+        launch_unary(SiLUOp{}, src, dst, n, element_size, stream); break;
+    case UnaryOpKind::GELU:
+        launch_unary(GELUOp{}, src, dst, n, element_size, stream); break;
+    }
+}
+
 } // namespace cuda
 } // namespace backends
 } // namespace axiom

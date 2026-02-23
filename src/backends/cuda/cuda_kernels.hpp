@@ -76,6 +76,45 @@ void launch_binary_broadcast(BinaryOpKind op, const void *src_a,
                              const void *src_b, void *dst, size_t n,
                              const BroadcastParams &params,
                              size_t element_size, cudaStream_t stream);
+
+// Identifies which unary operation to launch.
+enum class UnaryOpKind : uint8_t {
+    Negate,
+    Abs,
+    Sqrt,
+    Exp,
+    Log,
+    Sin,
+    Cos,
+    Tan,
+    Tanh,
+    Sign,
+    Floor,
+    Ceil,
+    Trunc,
+    Round,
+    Reciprocal,
+    Square,
+    Cbrt,
+    Erf,
+    // Testing ops — output is uint8_t
+    IsNaN,
+    IsInf,
+    IsFinite,
+    // Activations
+    ReLU,
+    LeakyReLU,
+    Sigmoid,
+    SiLU,
+    GELU,
+};
+
+// Launch a unary element-wise kernel.
+// For most ops input and output share element_size.
+// For IsNaN/IsInf/IsFinite the output is uint8_t.
+void launch_unary_elementwise(UnaryOpKind op, const void *src, void *dst,
+                              size_t n, size_t element_size,
+                              cudaStream_t stream);
 #endif
 
 } // namespace cuda
