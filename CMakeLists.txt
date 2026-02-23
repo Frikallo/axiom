@@ -404,6 +404,7 @@ if(AXIOM_HAS_CUDA)
         src/backends/cuda/cuda_context.cu
         src/backends/cuda/cuda_allocator.cu
         src/backends/cuda/cuda_storage.cu
+        src/backends/cuda/cuda_unified_storage.cu
         src/backends/cuda/cuda_operations.cu
         src/backends/cuda/cublas_operations.cu
         src/backends/cuda/cuda_kernels.cu
