@@ -593,9 +593,10 @@ class CudaReductionOperation : public ops::Operation {
                     for (int ax : norm_axes)
                         count *= in_c.shape()[ax];
                     // Use binary division: current / count
-                    Tensor divisor = Tensor::full(current.shape(),
-                                                  static_cast<double>(count),
-                                                  current.dtype(), Device::GPU);
+                    Tensor divisor =
+                        Tensor::full(current.shape(),
+                                     static_cast<float>(count), Device::GPU)
+                            .astype(out_dtype);
                     Tensor cur_contig = ensure_gpu_contiguous(current);
                     Tensor div_contig = ensure_gpu_contiguous(divisor);
 
@@ -627,9 +628,10 @@ class CudaReductionOperation : public ops::Operation {
             size_t count = 1;
             for (int ax : norm_axes)
                 count *= in_c.shape()[ax];
-            Tensor divisor = Tensor::full(result.shape(),
-                                          static_cast<double>(count),
-                                          result.dtype(), Device::GPU);
+            Tensor divisor =
+                Tensor::full(result.shape(), static_cast<float>(count),
+                             Device::GPU)
+                    .astype(out_dtype);
             Tensor res_contig = ensure_gpu_contiguous(result);
             Tensor div_contig = ensure_gpu_contiguous(divisor);
 
@@ -1000,7 +1002,7 @@ class CudaMaskedSelectOperation : public ops::Operation {
 
         // Slice result to actual count
         if (static_cast<size_t>(h_count) < numel) {
-            result = result.slice(0, 0, h_count);
+            result = result.slice({Slice(0, h_count)});
             result = ensure_gpu_contiguous(result);
         }
 

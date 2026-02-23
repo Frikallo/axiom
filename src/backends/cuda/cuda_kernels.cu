@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <type_traits>
 
 namespace axiom {
 namespace backends {
@@ -1672,7 +1673,12 @@ template <typename Src, typename Dst>
 __global__ void cast_kernel(const Src *in, Dst *out, size_t n) {
     size_t gid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (gid >= n) return;
-    out[gid] = static_cast<Dst>(in[gid]);
+    if constexpr (std::is_same_v<Src, __half> || std::is_same_v<Dst, __half>) {
+        // Route through float to avoid ambiguous __half <-> integer conversions
+        out[gid] = static_cast<Dst>(static_cast<float>(in[gid]));
+    } else {
+        out[gid] = static_cast<Dst>(in[gid]);
+    }
 }
 
 // Bool output needs special handling: any non-zero → 1

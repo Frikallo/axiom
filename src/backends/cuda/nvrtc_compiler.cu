@@ -36,8 +36,26 @@ std::string current_compute_capability() {
     std::call_once(flag, [] {
         cudaDeviceProp props{};
         cudaGetDeviceProperties(&props, 0);
-        cached =
-            "sm_" + std::to_string(props.major) + std::to_string(props.minor);
+        int arch = props.major * 10 + props.minor;
+
+        // NVRTC may not support the device's architecture (e.g. Blackwell
+        // on CUDA 12.0).  Query the NVRTC version and cap accordingly.
+        int nvrtc_major = 0, nvrtc_minor = 0;
+        nvrtcVersion(&nvrtc_major, &nvrtc_minor);
+        int nvrtc_ver = nvrtc_major * 10 + nvrtc_minor;
+
+        // Conservative max-arch lookup: NVRTC 12.x supports up to sm_90,
+        // NVRTC 12.8+ adds sm_100/120.  Fall back to 90 when unsure.
+        int max_arch = 90;
+        if (nvrtc_ver >= 128)
+            max_arch = 120;
+
+        if (arch > max_arch)
+            arch = max_arch;
+
+        // Use compute_ prefix (PTX) for forward compatibility — the driver
+        // will JIT-compile to the actual GPU architecture.
+        cached = "compute_" + std::to_string(arch);
     });
     return cached;
 }

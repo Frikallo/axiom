@@ -318,8 +318,7 @@ GeneratedKernel generate_fused_kernel(const FusedKernelSpec &spec) {
 
     std::ostringstream src;
 
-    // Math includes for isnan/isinf/isfinite
-    src << "#include <math.h>\n\n";
+    // CUDA device code has math builtins (sqrtf, isnan, etc.) — no include needed.
 
     src << "extern \"C\" __global__ void " << entry << "(\n";
 

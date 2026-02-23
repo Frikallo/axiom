@@ -94,9 +94,11 @@ static void cublas_gemm_f32(cublasHandle_t handle,
                             const float *b_ptr, int ldb,
                             float *c_ptr, int ldc) {
     // Row-major → column-major: C = A*B  becomes  C^T = B^T * A^T
-    // So swap A↔B and swap their trans flags
-    cublasOperation_t op_b = trans_b ? CUBLAS_OP_N : CUBLAS_OP_T;
-    cublasOperation_t op_a = trans_a ? CUBLAS_OP_N : CUBLAS_OP_T;
+    // Row-major storage already appears transposed in column-major, so:
+    // - no axiom transpose → CUBLAS_OP_N (implicit transpose is enough)
+    // - axiom transpose    → CUBLAS_OP_T (undo the implicit transpose)
+    cublasOperation_t op_b = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t op_a = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
 
     float alpha = 1.0f;
     float beta = 0.0f;
@@ -122,8 +124,8 @@ static void cublas_gemm_f64(cublasHandle_t handle,
                             const double *a_ptr, int lda,
                             const double *b_ptr, int ldb,
                             double *c_ptr, int ldc) {
-    cublasOperation_t op_b = trans_b ? CUBLAS_OP_N : CUBLAS_OP_T;
-    cublasOperation_t op_a = trans_a ? CUBLAS_OP_N : CUBLAS_OP_T;
+    cublasOperation_t op_b = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t op_a = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
 
     double alpha = 1.0;
     double beta = 0.0;
@@ -149,8 +151,8 @@ static void cublas_gemm_f16(cublasHandle_t handle,
                             const void *a_ptr, int lda,
                             const void *b_ptr, int ldb,
                             void *c_ptr, int ldc) {
-    cublasOperation_t op_b = trans_b ? CUBLAS_OP_N : CUBLAS_OP_T;
-    cublasOperation_t op_a = trans_a ? CUBLAS_OP_N : CUBLAS_OP_T;
+    cublasOperation_t op_b = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t op_a = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
 
     // Use float32 compute for fp16 inputs for better precision
     float alpha = 1.0f;
@@ -188,8 +190,8 @@ static void cublas_gemm_strided_batched(
     int batch_count) {
 
     // Row-major → column-major swap: C = A*B  →  C^T = B^T * A^T
-    cublasOperation_t op_b = trans_b ? CUBLAS_OP_N : CUBLAS_OP_T;
-    cublasOperation_t op_a = trans_a ? CUBLAS_OP_N : CUBLAS_OP_T;
+    cublasOperation_t op_b = trans_b ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t op_a = trans_a ? CUBLAS_OP_T : CUBLAS_OP_N;
 
     float alpha_f = 1.0f;
     float beta_f = 0.0f;

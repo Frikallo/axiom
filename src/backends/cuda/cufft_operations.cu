@@ -129,7 +129,7 @@ Tensor pad_or_truncate_last(const Tensor &input, size_t target) {
 
     Shape out_shape = input.shape();
     out_shape.back() = target;
-    size_t batch = input.numel() / current;
+    size_t batch = input.size() / current;
     size_t copy_count = std::min(current, target);
     size_t elem = dtype_size(input.dtype());
 
@@ -212,7 +212,7 @@ Tensor cufft_c2c_1d(const Tensor &input, size_t fft_size, int axis,
     Tensor work = ensure_complex_contiguous(transposed, result_dtype);
     work = pad_or_truncate_last(work, fft_size);
 
-    size_t batch = work.numel() / fft_size;
+    size_t batch = work.size() / fft_size;
     Tensor result(work.shape(), result_dtype, Device::GPU);
     auto *stream =
         static_cast<cudaStream_t>(CudaContext::instance().stream());
@@ -232,7 +232,7 @@ Tensor cufft_c2c_1d(const Tensor &input, size_t fft_size, int axis,
             reinterpret_cast<cufftComplex *>(result.typed_data<complex64_t>());
 
         check_cufft(cufftExecC2C(plan, in_ptr, out_ptr, dir), "cufftExecC2C");
-        apply_scale_cf32(out_ptr, result.numel(), scale, stream);
+        apply_scale_cf32(out_ptr, result.size(), scale, stream);
         cufftDestroy(plan);
     } else {
         cufftHandle plan;
@@ -247,7 +247,7 @@ Tensor cufft_c2c_1d(const Tensor &input, size_t fft_size, int axis,
             result.typed_data<complex128_t>());
 
         check_cufft(cufftExecZ2Z(plan, in_ptr, out_ptr, dir), "cufftExecZ2Z");
-        apply_scale_cf64(out_ptr, result.numel(), scale, stream);
+        apply_scale_cf64(out_ptr, result.size(), scale, stream);
         cufftDestroy(plan);
     }
 
@@ -278,7 +278,7 @@ Tensor cufft_r2c_1d(const Tensor &input, size_t fft_size, int axis,
         work = work.ascontiguousarray();
     work = pad_or_truncate_last(work, fft_size);
 
-    size_t batch = work.numel() / fft_size;
+    size_t batch = work.size() / fft_size;
     size_t out_axis_size = fft_size / 2 + 1;
 
     Shape out_shape = work.shape();
@@ -305,7 +305,7 @@ Tensor cufft_r2c_1d(const Tensor &input, size_t fft_size, int axis,
             reinterpret_cast<cufftComplex *>(result.typed_data<complex64_t>());
 
         check_cufft(cufftExecR2C(plan, in_ptr, out_ptr), "cufftExecR2C");
-        apply_scale_cf32(out_ptr, result.numel(), scale, stream);
+        apply_scale_cf32(out_ptr, result.size(), scale, stream);
         cufftDestroy(plan);
     } else {
         cufftHandle plan;
@@ -323,7 +323,7 @@ Tensor cufft_r2c_1d(const Tensor &input, size_t fft_size, int axis,
             result.typed_data<complex128_t>());
 
         check_cufft(cufftExecD2Z(plan, in_ptr, out_ptr), "cufftExecD2Z");
-        apply_scale_cf64(out_ptr, result.numel(), scale, stream);
+        apply_scale_cf64(out_ptr, result.size(), scale, stream);
         cufftDestroy(plan);
     }
 
@@ -353,7 +353,7 @@ Tensor cufft_c2r_1d(const Tensor &input, size_t output_size, int axis,
     size_t expected_input = output_size / 2 + 1;
     work = pad_or_truncate_last(work, expected_input);
 
-    size_t batch = work.numel() / expected_input;
+    size_t batch = work.size() / expected_input;
 
     Shape out_shape = work.shape();
     out_shape.back() = output_size;
@@ -379,7 +379,7 @@ Tensor cufft_c2r_1d(const Tensor &input, size_t output_size, int axis,
         auto *out_ptr = result.typed_data<float>();
 
         check_cufft(cufftExecC2R(plan, in_ptr, out_ptr), "cufftExecC2R");
-        apply_scale_rf32(out_ptr, result.numel(), scale, stream);
+        apply_scale_rf32(out_ptr, result.size(), scale, stream);
         cufftDestroy(plan);
     } else {
         cufftHandle plan;
@@ -397,7 +397,7 @@ Tensor cufft_c2r_1d(const Tensor &input, size_t output_size, int axis,
         auto *out_ptr = result.typed_data<double>();
 
         check_cufft(cufftExecZ2D(plan, in_ptr, out_ptr), "cufftExecZ2D");
-        apply_scale_rf64(out_ptr, result.numel(), scale, stream);
+        apply_scale_rf64(out_ptr, result.size(), scale, stream);
         cufftDestroy(plan);
     }
 
@@ -458,7 +458,7 @@ Tensor cufft_c2c_2d(const Tensor &input, size_t rows, size_t cols,
 
         check_cufft(cufftExecC2C(plan, in_ptr, out_ptr, dir),
                     "cufftExecC2C 2D");
-        apply_scale_cf32(out_ptr, result.numel(), total_scale, stream);
+        apply_scale_cf32(out_ptr, result.size(), total_scale, stream);
         cufftDestroy(plan);
     } else {
         cufftHandle plan;
@@ -483,7 +483,7 @@ Tensor cufft_c2c_2d(const Tensor &input, size_t rows, size_t cols,
 
         check_cufft(cufftExecZ2Z(plan, in_ptr, out_ptr, dir),
                     "cufftExecZ2Z 2D");
-        apply_scale_cf64(out_ptr, result.numel(), total_scale, stream);
+        apply_scale_cf64(out_ptr, result.size(), total_scale, stream);
         cufftDestroy(plan);
     }
 

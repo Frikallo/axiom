@@ -34,7 +34,7 @@ option(AXIOM_BUILD_EXAMPLES "Build examples" ON)
 option(AXIOM_BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(AXIOM_NATIVE_ARCH "Use -march=native for local builds (not portable)" OFF)
 option(AXIOM_USE_OPENMP "Enable OpenMP parallelization" ON)
-option(AXIOM_CUDA_BACKEND "Enable CUDA GPU backend" OFF)
+option(AXIOM_CUDA_BACKEND "Enable CUDA GPU backend (auto-detected)" ON)
 option(AXIOM_DIST_BUILD "Bundle dependencies for distribution" OFF)
 
 # BLAS backend selection
@@ -173,13 +173,46 @@ endif()
 # ============================================================================
 set(AXIOM_HAS_CUDA OFF)
 if(AXIOM_CUDA_BACKEND)
-    find_package(CUDAToolkit REQUIRED)
-    enable_language(CUDA)
-    set(CMAKE_CUDA_STANDARD 20)
-    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-    set(CMAKE_CUDA_ARCHITECTURES "70;80;86;89;90")
-    set(AXIOM_HAS_CUDA ON)
-    message(STATUS "CUDA backend: enabled (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
+    find_package(CUDAToolkit QUIET)
+    if(CUDAToolkit_FOUND)
+        enable_language(CUDA)
+        set(CMAKE_CUDA_STANDARD 20)
+        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+        if(AXIOM_DIST_BUILD)
+            set(CMAKE_CUDA_ARCHITECTURES "70;80;86;89;90")
+        else()
+            # Detect native GPU arch via nvidia-smi and cap to nvcc's max.
+            set(_nvcc_max_arch 90)
+            if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")
+                set(_nvcc_max_arch 120)
+            endif()
+            set(_gpu_arch ${_nvcc_max_arch})
+            find_program(_NVIDIA_SMI nvidia-smi)
+            if(_NVIDIA_SMI)
+                execute_process(
+                    COMMAND ${_NVIDIA_SMI}
+                        --query-gpu=compute_cap --format=csv,noheader,nounits
+                    OUTPUT_VARIABLE _smi_out
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET
+                    RESULT_VARIABLE _smi_rc)
+                if(_smi_rc EQUAL 0 AND _smi_out)
+                    # Take first GPU, convert "8.6" → 86
+                    string(REGEX MATCH "[0-9]+\\.[0-9]+" _cap "${_smi_out}")
+                    string(REPLACE "." "" _gpu_arch "${_cap}")
+                    if(_gpu_arch GREATER _nvcc_max_arch)
+                        message(STATUS "CUDA: GPU arch ${_gpu_arch} capped to ${_nvcc_max_arch} (nvcc limit)")
+                        set(_gpu_arch ${_nvcc_max_arch})
+                    endif()
+                endif()
+            endif()
+            set(CMAKE_CUDA_ARCHITECTURES "${_gpu_arch}")
+        endif()
+        set(AXIOM_HAS_CUDA ON)
+        message(STATUS "CUDA backend: enabled (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
+    else()
+        message(STATUS "CUDA backend: disabled (CUDA toolkit not found)")
+    endif()
 endif()
 
 # ============================================================================

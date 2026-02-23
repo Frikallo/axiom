@@ -43,6 +43,17 @@ else
     CMAKE_GENERATOR := $(shell command -v ninja >/dev/null 2>&1 && echo "-G Ninja" || echo "")
 endif
 
+# Build acceleration: ccache + lld (auto-detected)
+CCACHE_FLAGS := $(shell command -v ccache >/dev/null 2>&1 && \
+    echo "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache" || echo "")
+ifeq ($(UNAME_S),Darwin)
+    LLD_FLAGS :=
+else
+    LLD_FLAGS := $(shell command -v ld.lld >/dev/null 2>&1 && \
+        echo "-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld" || echo "")
+endif
+CMAKE_ACCEL_FLAGS := $(CCACHE_FLAGS) $(LLD_FLAGS)
+
 # Source files for formatting
 SOURCES := $(shell find include src -name '*.hpp' -o -name '*.cpp' -o -name '*.mm' -o -name '*.h' 2>/dev/null)
 TEST_SOURCES := $(shell find tests -name '*.cpp' 2>/dev/null)
@@ -88,22 +99,22 @@ lib: $(BUILD_DIR)/CMakeCache.txt  ## Build only the library (no tests/examples)
 # Build configuration marker file (works with both Make and Ninja generators)
 $(BUILD_DIR)/CMakeCache.txt:
 	@echo "$(CYAN)Configuring release build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Release
 
 $(BUILD_DIR_DEBUG)/CMakeCache.txt:
 	@echo "$(CYAN)Configuring debug build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Debug
+	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Debug
 
 .PHONY: configure
 configure:  ## Reconfigure CMake (release)
 	@echo "$(CYAN)Reconfiguring release build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Release
 	@echo "$(GREEN)✓ Configuration complete$(RESET)"
 
 .PHONY: configure-debug
 configure-debug:  ## Reconfigure CMake (debug)
 	@echo "$(CYAN)Reconfiguring debug build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Debug
+	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Debug
 	@echo "$(GREEN)✓ Configuration complete$(RESET)"
 
 .PHONY: rebuild
@@ -323,7 +334,7 @@ loc:  ## Count lines of code
 .PHONY: benchmarks
 benchmarks:  ## Build all benchmarks
 	@echo "$(CYAN)Configuring with benchmarks enabled...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release -DAXIOM_BUILD_BENCHMARKS=ON
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Release -DAXIOM_BUILD_BENCHMARKS=ON
 	@echo "$(CYAN)Building benchmarks...$(RESET)"
 	@$(CMAKE) --build $(BUILD_DIR) -j$(NPROC)
 	@echo "$(GREEN)✓ Benchmarks built$(RESET)"
@@ -458,7 +469,7 @@ BUILD_DIR_DIST := build-dist
 .PHONY: dist
 dist:  ## Build distribution package with bundled dependencies
 	@echo "$(CYAN)Configuring distribution build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR_DIST) $(CMAKE_GENERATOR) \
+	@$(CMAKE) -B $(BUILD_DIR_DIST) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX=$(BUILD_DIR_DIST)/install \
 		-DAXIOM_DIST_BUILD=ON \
