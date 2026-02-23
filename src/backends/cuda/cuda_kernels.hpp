@@ -46,6 +46,12 @@ enum class BinaryOpKind : uint8_t {
     LogicalAnd,
     LogicalOr,
     LogicalXor,
+    // Bitwise ops — integer types only, output same type
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    LeftShift,
+    RightShift,
 };
 
 #ifdef AXIOM_CUDA_SUPPORT
@@ -107,6 +113,8 @@ enum class UnaryOpKind : uint8_t {
     Sigmoid,
     SiLU,
     GELU,
+    // Logical
+    LogicalNot,
 };
 
 // Launch a unary element-wise kernel.

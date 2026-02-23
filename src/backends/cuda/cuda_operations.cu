@@ -75,6 +75,19 @@ Tensor ensure_gpu_contiguous(const Tensor &t) {
 // OpType → BinaryOpKind mapping
 // ============================================================================
 
+static bool is_bitwise_op(ops::OpType op) {
+    switch (op) {
+    case ops::OpType::BitwiseAnd:
+    case ops::OpType::BitwiseOr:
+    case ops::OpType::BitwiseXor:
+    case ops::OpType::LeftShift:
+    case ops::OpType::RightShift:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool is_comparison_or_logical(ops::OpType op) {
     switch (op) {
     case ops::OpType::Equal:
@@ -113,6 +126,11 @@ static BinaryOpKind to_binary_op_kind(ops::OpType op) {
     case ops::OpType::LogicalAnd:   return BinaryOpKind::LogicalAnd;
     case ops::OpType::LogicalOr:    return BinaryOpKind::LogicalOr;
     case ops::OpType::LogicalXor:   return BinaryOpKind::LogicalXor;
+    case ops::OpType::BitwiseAnd:   return BinaryOpKind::BitwiseAnd;
+    case ops::OpType::BitwiseOr:    return BinaryOpKind::BitwiseOr;
+    case ops::OpType::BitwiseXor:   return BinaryOpKind::BitwiseXor;
+    case ops::OpType::LeftShift:    return BinaryOpKind::LeftShift;
+    case ops::OpType::RightShift:   return BinaryOpKind::RightShift;
     default:
         throw DeviceError("Unsupported binary OpType for CUDA");
     }
@@ -149,10 +167,22 @@ class CudaBinaryOperation : public ops::Operation {
             result_dtype = DType::Bool;
         }
 
+        // Bitwise ops: force integer result type
+        if (is_bitwise_op(op_type_)) {
+            if (result_dtype == DType::Float16 ||
+                result_dtype == DType::BFloat16 ||
+                result_dtype == DType::Float32 ||
+                result_dtype == DType::Float64) {
+                result_dtype = DType::Int64;
+            }
+        }
+
         // Promote inputs if needed
-        Tensor lhs_p = (lhs.dtype() == result_dtype || is_comparison_or_logical(op_type_))
+        Tensor lhs_p = (lhs.dtype() == result_dtype ||
+                         is_comparison_or_logical(op_type_))
                             ? lhs : lhs.astype(result_dtype);
-        Tensor rhs_p = (rhs.dtype() == result_dtype || is_comparison_or_logical(op_type_))
+        Tensor rhs_p = (rhs.dtype() == result_dtype ||
+                         is_comparison_or_logical(op_type_))
                             ? rhs : rhs.astype(result_dtype);
 
         // For comparison/logical, promote both inputs to the same type
@@ -243,6 +273,7 @@ static bool is_unary_test_op(ops::OpType op) {
     case ops::OpType::IsNaN:
     case ops::OpType::IsInf:
     case ops::OpType::IsFinite:
+    case ops::OpType::LogicalNot:
         return true;
     default:
         return false;
@@ -277,6 +308,7 @@ static UnaryOpKind to_unary_op_kind(ops::OpType op) {
     case ops::OpType::Sigmoid:    return UnaryOpKind::Sigmoid;
     case ops::OpType::SiLU:       return UnaryOpKind::SiLU;
     case ops::OpType::GELU:       return UnaryOpKind::GELU;
+    case ops::OpType::LogicalNot: return UnaryOpKind::LogicalNot;
     default:
         throw DeviceError("Unsupported unary OpType for CUDA");
     }
@@ -1451,6 +1483,13 @@ void register_cuda_operations() {
     register_binary_op(ops::OpType::LogicalOr, "logical_or");
     register_binary_op(ops::OpType::LogicalXor, "logical_xor");
 
+    // Bitwise
+    register_binary_op(ops::OpType::BitwiseAnd, "bitwise_and");
+    register_binary_op(ops::OpType::BitwiseOr, "bitwise_or");
+    register_binary_op(ops::OpType::BitwiseXor, "bitwise_xor");
+    register_binary_op(ops::OpType::LeftShift, "left_shift");
+    register_binary_op(ops::OpType::RightShift, "right_shift");
+
     // Unary math
     register_unary_op(ops::OpType::Negate, "negate");
     register_unary_op(ops::OpType::Abs, "abs");
@@ -1477,6 +1516,9 @@ void register_cuda_operations() {
     register_unary_op(ops::OpType::IsNaN, "isnan");
     register_unary_op(ops::OpType::IsInf, "isinf");
     register_unary_op(ops::OpType::IsFinite, "isfinite");
+
+    // Logical (unary)
+    register_unary_op(ops::OpType::LogicalNot, "logical_not");
 
     // Activations
     register_unary_op(ops::OpType::ReLU, "relu");

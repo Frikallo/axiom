@@ -236,6 +236,35 @@ struct LogicalXorOp {
 };
 
 // ============================================================================
+// Bitwise Functors — integer types only, same-type output
+// ============================================================================
+
+struct BitwiseAndOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a & b; }
+};
+
+struct BitwiseOrOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a | b; }
+};
+
+struct BitwiseXorOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a ^ b; }
+};
+
+struct LeftShiftOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a << b; }
+};
+
+struct RightShiftOp {
+    template <typename T>
+    __device__ T operator()(T a, T b) const { return a >> b; }
+};
+
+// ============================================================================
 // Binary Element-wise Kernels
 // ============================================================================
 
@@ -332,6 +361,42 @@ static void launch_cmp(Op op, const void *a, const void *b, void *dst,
     }
 }
 
+// Integer-only dispatch — for bitwise operations (dispatches element_size
+// to int8/int16/int32/int64 instead of float/double).
+template <typename Op>
+static void launch_int_arith(Op op, const void *a, const void *b, void *dst,
+                             size_t n, size_t elem, cudaStream_t s) {
+    unsigned int grid = static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    switch (elem) {
+    case 4:
+        binary_elementwise<int32_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int32_t *>(a), static_cast<const int32_t *>(b),
+            static_cast<int32_t *>(dst), n, op);
+        break;
+    case 8:
+        binary_elementwise<int64_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int64_t *>(a), static_cast<const int64_t *>(b),
+            static_cast<int64_t *>(dst), n, op);
+        break;
+    case 2:
+        binary_elementwise<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int16_t *>(a),
+            static_cast<const int16_t *>(b),
+            static_cast<int16_t *>(dst), n, op);
+        break;
+    case 1:
+        binary_elementwise<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int8_t *>(a),
+            static_cast<const int8_t *>(b),
+            static_cast<int8_t *>(dst), n, op);
+        break;
+    default:
+        throw std::runtime_error(
+            "binary_elementwise (int): unsupported element size " +
+            std::to_string(elem));
+    }
+}
+
 // ============================================================================
 // Public launcher
 // ============================================================================
@@ -399,6 +464,22 @@ void launch_binary_elementwise(BinaryOpKind op, const void *src_a,
         break;
     case BinaryOpKind::LogicalXor:
         launch_cmp(LogicalXorOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    // Bitwise
+    case BinaryOpKind::BitwiseAnd:
+        launch_int_arith(BitwiseAndOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::BitwiseOr:
+        launch_int_arith(BitwiseOrOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::BitwiseXor:
+        launch_int_arith(BitwiseXorOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::LeftShift:
+        launch_int_arith(LeftShiftOp{}, src_a, src_b, dst, n, element_size, stream);
+        break;
+    case BinaryOpKind::RightShift:
+        launch_int_arith(RightShiftOp{}, src_a, src_b, dst, n, element_size, stream);
         break;
     }
 }
@@ -532,6 +613,45 @@ static void launch_bcast_cmp(Op op, const void *a, const void *b,
     }
 }
 
+// Integer-only broadcast dispatch — for bitwise operations.
+template <typename Op>
+static void launch_bcast_int_arith(Op op, const void *a, const void *b,
+                                   void *dst, size_t n,
+                                   const BroadcastParams &p, size_t elem,
+                                   cudaStream_t s) {
+    unsigned int grid =
+        static_cast<unsigned int>((n + BLOCK_SIZE - 1) / BLOCK_SIZE);
+    switch (elem) {
+    case 4:
+        binary_broadcast<int32_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int32_t *>(a), static_cast<const int32_t *>(b),
+            static_cast<int32_t *>(dst), n, p, op);
+        break;
+    case 8:
+        binary_broadcast<int64_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int64_t *>(a),
+            static_cast<const int64_t *>(b),
+            static_cast<int64_t *>(dst), n, p, op);
+        break;
+    case 2:
+        binary_broadcast<int16_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int16_t *>(a),
+            static_cast<const int16_t *>(b),
+            static_cast<int16_t *>(dst), n, p, op);
+        break;
+    case 1:
+        binary_broadcast<int8_t, Op><<<grid, BLOCK_SIZE, 0, s>>>(
+            static_cast<const int8_t *>(a),
+            static_cast<const int8_t *>(b),
+            static_cast<int8_t *>(dst), n, p, op);
+        break;
+    default:
+        throw std::runtime_error(
+            "binary_broadcast (int): unsupported element size " +
+            std::to_string(elem));
+    }
+}
+
 // ============================================================================
 // Public broadcast launcher
 // ============================================================================
@@ -582,6 +702,17 @@ void launch_binary_broadcast(BinaryOpKind op, const void *src_a,
         launch_bcast_cmp(LogicalOrOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
     case BinaryOpKind::LogicalXor:
         launch_bcast_cmp(LogicalXorOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    // Bitwise
+    case BinaryOpKind::BitwiseAnd:
+        launch_bcast_int_arith(BitwiseAndOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::BitwiseOr:
+        launch_bcast_int_arith(BitwiseOrOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::BitwiseXor:
+        launch_bcast_int_arith(BitwiseXorOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::LeftShift:
+        launch_bcast_int_arith(LeftShiftOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
+    case BinaryOpKind::RightShift:
+        launch_bcast_int_arith(RightShiftOp{}, src_a, src_b, dst, n, params, element_size, stream); break;
     }
 }
 
@@ -788,6 +919,14 @@ struct GELUOp {
     }
 };
 
+// Logical — output is uint8_t
+struct LogicalNotOp {
+    template <typename T>
+    __device__ uint8_t operator()(T x) const {
+        return (x == T(0)) ? uint8_t(1) : uint8_t(0);
+    }
+};
+
 // ============================================================================
 // Unary Element-wise Kernels
 // ============================================================================
@@ -941,6 +1080,9 @@ void launch_unary_elementwise(UnaryOpKind op, const void *src, void *dst,
         launch_unary(SiLUOp{}, src, dst, n, element_size, stream); break;
     case UnaryOpKind::GELU:
         launch_unary(GELUOp{}, src, dst, n, element_size, stream); break;
+    // Logical
+    case UnaryOpKind::LogicalNot:
+        launch_unary_test(LogicalNotOp{}, src, dst, n, element_size, stream); break;
     }
 }
 
