@@ -959,8 +959,8 @@ Tensor ifft2(const Tensor &input, const std::vector<int64_t> &s,
         bool no_custom = (actual_s[0] <= 0 && actual_s[1] <= 0);
         bool last_two = (ax0 == ndim_gpu - 2 && ax1 == ndim_gpu - 1);
         if (no_custom && last_two) {
-            return backends::cuda::cufft_c2c_2d(
-                input, input.shape()[ax0], input.shape()[ax1], true, norm);
+            return backends::cuda::cufft_c2c_2d(input, input.shape()[ax0],
+                                                input.shape()[ax1], true, norm);
         }
     }
 #endif

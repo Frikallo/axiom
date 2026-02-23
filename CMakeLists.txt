@@ -410,6 +410,8 @@ if(AXIOM_HAS_CUDA)
         src/backends/cuda/cuda_kernels.cu
         src/backends/cuda/cuda_reduce_kernels.cu
         src/backends/cuda/cuda_fused.cu
+        src/backends/cuda/nvrtc_compiler.cu
+        src/backends/cuda/nvrtc_codegen.cu
         src/backends/cuda/cusolver_operations.cu
         src/backends/cuda/cufft_operations.cu
     )
@@ -533,7 +535,7 @@ endif()
 
 # CUDA backend linking
 if(AXIOM_HAS_CUDA)
-    target_link_libraries(axiom PUBLIC CUDA::cudart CUDA::cublas CUDA::cusolver CUDA::cufft)
+    target_link_libraries(axiom PUBLIC CUDA::cudart CUDA::cublas CUDA::cusolver CUDA::cufft CUDA::nvrtc CUDA::cuda_driver)
     target_compile_definitions(axiom PUBLIC AXIOM_CUDA_SUPPORT)
 endif()
 

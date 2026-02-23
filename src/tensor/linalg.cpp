@@ -88,7 +88,8 @@ void check_lapack_info(int info, const std::string &routine) {
 
 // Transpose last two dimensions of a tensor (for batched matrix operations)
 Tensor transpose_last2(const Tensor &t) {
-    if (t.ndim() <= 2) return t.transpose();
+    if (t.ndim() <= 2)
+        return t.transpose();
     std::vector<int> axes;
     for (size_t i = 0; i < t.ndim(); ++i)
         axes.push_back(static_cast<int>(i));
@@ -144,20 +145,16 @@ Tensor det(const Tensor &a) {
 
             for (size_t b = 0; b < batch_size; ++b) {
                 if (dtype == DType::Float32) {
-                    float *a_batch =
-                        a_work.typed_data<float>() + b * n * n;
+                    float *a_batch = a_work.typed_data<float>() + b * n * n;
                     int *ipiv_batch = ipiv_gpu + b * n;
-                    int info =
-                        cusolver.sgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    int info = cusolver.sgetrf(ni, ni, a_batch, ni, ipiv_batch);
                     // info > 0 means singular -- handle below on CPU
                     if (info < 0)
                         check_lapack_info(info, "cusolver sgetrf");
                 } else {
-                    double *a_batch =
-                        a_work.typed_data<double>() + b * n * n;
+                    double *a_batch = a_work.typed_data<double>() + b * n * n;
                     int *ipiv_batch = ipiv_gpu + b * n;
-                    int info =
-                        cusolver.dgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    int info = cusolver.dgetrf(ni, ni, a_batch, ni, ipiv_batch);
                     if (info < 0)
                         check_lapack_info(info, "cusolver dgetrf");
                 }
@@ -195,8 +192,7 @@ Tensor det(const Tensor &a) {
                         }
                     }
                     result_data[b] =
-                        singular ? 0.0f
-                                 : det_val * static_cast<float>(sign);
+                        singular ? 0.0f : det_val * static_cast<float>(sign);
                 }
             } else {
                 double *a_data = a_cpu.typed_data<double>();
@@ -222,8 +218,7 @@ Tensor det(const Tensor &a) {
                         }
                     }
                     result_data[b] =
-                        singular ? 0.0
-                                 : det_val * static_cast<double>(sign);
+                        singular ? 0.0 : det_val * static_cast<double>(sign);
                 }
             }
             return result.gpu();
@@ -582,9 +577,10 @@ Tensor solve(const Tensor &a, const Tensor &b) {
 #ifdef AXIOM_CUDA_SUPPORT
     if (orig_device == Device::GPU) {
         bool b_is_vector = (b.ndim() == a.ndim() - 1);
-        DType dtype = (a.dtype() == DType::Float64 || b.dtype() == DType::Float64)
-                          ? DType::Float64
-                          : DType::Float32;
+        DType dtype =
+            (a.dtype() == DType::Float64 || b.dtype() == DType::Float64)
+                ? DType::Float64
+                : DType::Float32;
 
         if (dtype == DType::Float32 || dtype == DType::Float64) {
             auto &cusolver = get_cusolver();
@@ -598,8 +594,9 @@ Tensor solve(const Tensor &a, const Tensor &b) {
             if (b_is_vector) {
                 b_col = b.astype(dtype).ascontiguousarray().clone();
             } else {
-                b_col =
-                    transpose_last2(b.astype(dtype)).ascontiguousarray().clone();
+                b_col = transpose_last2(b.astype(dtype))
+                            .ascontiguousarray()
+                            .clone();
             }
 
             // Allocate pivot array on GPU
@@ -611,11 +608,9 @@ Tensor solve(const Tensor &a, const Tensor &b) {
 
             for (size_t batch = 0; batch < batch_size; ++batch) {
                 if (dtype == DType::Float32) {
-                    float *a_batch =
-                        a_col.typed_data<float>() + batch * n * n;
-                    float *b_batch =
-                        b_col.typed_data<float>() +
-                        batch * (b_is_vector ? n : n * nrhs);
+                    float *a_batch = a_col.typed_data<float>() + batch * n * n;
+                    float *b_batch = b_col.typed_data<float>() +
+                                     batch * (b_is_vector ? n : n * nrhs);
                     int *ipiv_batch = ipiv_data + batch * n;
                     int info = cusolver.sgesv(ni, nrhs_i, a_batch, ni,
                                               ipiv_batch, b_batch, ni);
@@ -623,9 +618,8 @@ Tensor solve(const Tensor &a, const Tensor &b) {
                 } else {
                     double *a_batch =
                         a_col.typed_data<double>() + batch * n * n;
-                    double *b_batch =
-                        b_col.typed_data<double>() +
-                        batch * (b_is_vector ? n : n * nrhs);
+                    double *b_batch = b_col.typed_data<double>() +
+                                      batch * (b_is_vector ? n : n * nrhs);
                     int *ipiv_batch = ipiv_data + batch * n;
                     int info = cusolver.dgesv(ni, nrhs_i, a_batch, ni,
                                               ipiv_batch, b_batch, ni);
@@ -808,8 +802,7 @@ SVDResult svd(const Tensor &a, bool full_matrices) {
             auto &cusolver = get_cusolver();
 
             // Transpose to col-major on GPU for cuSOLVER
-            auto a_col =
-                transpose_last2(a).ascontiguousarray().clone();
+            auto a_col = transpose_last2(a).ascontiguousarray().clone();
 
             // Allocate GPU buffers for U, S, Vt in col-major layout
             // cuSOLVER expects col-major: U is m x u_cols, Vt is vt_rows x n
@@ -835,30 +828,25 @@ SVDResult svd(const Tensor &a, bool full_matrices) {
 
             for (size_t b = 0; b < batch_size; ++b) {
                 if (dtype == DType::Float32) {
-                    float *a_batch =
-                        a_col.typed_data<float>() + b * m * n;
-                    float *s_batch =
-                        s_gpu.typed_data<float>() + b * k;
-                    float *u_batch =
-                        u_gpu.typed_data<float>() + b * m * u_cols;
+                    float *a_batch = a_col.typed_data<float>() + b * m * n;
+                    float *s_batch = s_gpu.typed_data<float>() + b * k;
+                    float *u_batch = u_gpu.typed_data<float>() + b * m * u_cols;
                     float *vt_batch =
                         vt_gpu.typed_data<float>() + b * vt_rows * n;
-                    int info = cusolver.sgesdd(
-                        jobz, mi, ni, a_batch, mi, s_batch, u_batch, ldu,
-                        vt_batch, ldvt, nullptr, 0, iwork);
+                    int info = cusolver.sgesdd(jobz, mi, ni, a_batch, mi,
+                                               s_batch, u_batch, ldu, vt_batch,
+                                               ldvt, nullptr, 0, iwork);
                     check_lapack_info(info, "cusolver sgesdd");
                 } else {
-                    double *a_batch =
-                        a_col.typed_data<double>() + b * m * n;
-                    double *s_batch =
-                        s_gpu.typed_data<double>() + b * k;
+                    double *a_batch = a_col.typed_data<double>() + b * m * n;
+                    double *s_batch = s_gpu.typed_data<double>() + b * k;
                     double *u_batch =
                         u_gpu.typed_data<double>() + b * m * u_cols;
                     double *vt_batch =
                         vt_gpu.typed_data<double>() + b * vt_rows * n;
-                    int info = cusolver.dgesdd(
-                        jobz, mi, ni, a_batch, mi, s_batch, u_batch, ldu,
-                        vt_batch, ldvt, nullptr, 0, iwork);
+                    int info = cusolver.dgesdd(jobz, mi, ni, a_batch, mi,
+                                               s_batch, u_batch, ldu, vt_batch,
+                                               ldvt, nullptr, 0, iwork);
                     check_lapack_info(info, "cusolver dgesdd");
                 }
             }
@@ -1254,8 +1242,7 @@ QRResult qr(const Tensor &a) {
             auto &cusolver = get_cusolver();
 
             // Transpose to col-major on GPU
-            auto a_col =
-                transpose_last2(a).ascontiguousarray().clone();
+            auto a_col = transpose_last2(a).ascontiguousarray().clone();
 
             // Allocate tau on GPU
             Shape tau_shape = batch_shape;
@@ -1268,21 +1255,17 @@ QRResult qr(const Tensor &a) {
 
             for (size_t b = 0; b < batch_size; ++b) {
                 if (dtype == DType::Float32) {
-                    float *a_batch =
-                        a_col.typed_data<float>() + b * m * n;
-                    float *tau_batch =
-                        tau_tensor.typed_data<float>() + b * k;
+                    float *a_batch = a_col.typed_data<float>() + b * m * n;
+                    float *tau_batch = tau_tensor.typed_data<float>() + b * k;
                     // QR factorization on GPU
-                    int info = cusolver.sgeqrf(mi, ni, a_batch, mi,
-                                               tau_batch, nullptr, 0);
+                    int info = cusolver.sgeqrf(mi, ni, a_batch, mi, tau_batch,
+                                               nullptr, 0);
                     check_lapack_info(info, "cusolver sgeqrf");
                 } else {
-                    double *a_batch =
-                        a_col.typed_data<double>() + b * m * n;
-                    double *tau_batch =
-                        tau_tensor.typed_data<double>() + b * k;
-                    int info = cusolver.dgeqrf(mi, ni, a_batch, mi,
-                                               tau_batch, nullptr, 0);
+                    double *a_batch = a_col.typed_data<double>() + b * m * n;
+                    double *tau_batch = tau_tensor.typed_data<double>() + b * k;
+                    int info = cusolver.dgeqrf(mi, ni, a_batch, mi, tau_batch,
+                                               nullptr, 0);
                     check_lapack_info(info, "cusolver dgeqrf");
                 }
             }
@@ -1324,18 +1307,14 @@ QRResult qr(const Tensor &a) {
             // Generate Q on GPU from the factored a_col + tau
             for (size_t b = 0; b < batch_size; ++b) {
                 if (dtype == DType::Float32) {
-                    float *a_batch =
-                        a_col.typed_data<float>() + b * m * n;
-                    float *tau_batch =
-                        tau_tensor.typed_data<float>() + b * k;
+                    float *a_batch = a_col.typed_data<float>() + b * m * n;
+                    float *tau_batch = tau_tensor.typed_data<float>() + b * k;
                     int info = cusolver.sorgqr(mi, ki, ki, a_batch, mi,
                                                tau_batch, nullptr, 0);
                     check_lapack_info(info, "cusolver sorgqr");
                 } else {
-                    double *a_batch =
-                        a_col.typed_data<double>() + b * m * n;
-                    double *tau_batch =
-                        tau_tensor.typed_data<double>() + b * k;
+                    double *a_batch = a_col.typed_data<double>() + b * m * n;
+                    double *tau_batch = tau_tensor.typed_data<double>() + b * k;
                     int info = cusolver.dorgqr(mi, ki, ki, a_batch, mi,
                                                tau_batch, nullptr, 0);
                     check_lapack_info(info, "cusolver dorgqr");
@@ -1744,18 +1723,14 @@ LUResult lu(const Tensor &a) {
 
             for (size_t b = 0; b < batch_size; ++b) {
                 if (dtype == DType::Float32) {
-                    float *a_batch =
-                        a_col.typed_data<float>() + b * n * n;
+                    float *a_batch = a_col.typed_data<float>() + b * n * n;
                     int *ipiv_batch = ipiv_gpu + b * n;
-                    int info =
-                        cusolver.sgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    int info = cusolver.sgetrf(ni, ni, a_batch, ni, ipiv_batch);
                     check_lapack_info(info, "cusolver sgetrf");
                 } else {
-                    double *a_batch =
-                        a_col.typed_data<double>() + b * n * n;
+                    double *a_batch = a_col.typed_data<double>() + b * n * n;
                     int *ipiv_batch = ipiv_gpu + b * n;
-                    int info =
-                        cusolver.dgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    int info = cusolver.dgetrf(ni, ni, a_batch, ni, ipiv_batch);
                     check_lapack_info(info, "cusolver dgetrf");
                 }
             }
@@ -1807,7 +1782,8 @@ LUResult lu(const Tensor &a) {
                     // Build permutation matrix
                     std::fill(p_batch, p_batch + n * n, 0.0f);
                     std::vector<size_t> perm(n);
-                    for (size_t i = 0; i < n; ++i) perm[i] = i;
+                    for (size_t i = 0; i < n; ++i)
+                        perm[i] = i;
                     for (size_t i = 0; i < n; ++i) {
                         size_t swap_idx =
                             static_cast<size_t>(ipiv_batch[i] - 1);
@@ -1852,7 +1828,8 @@ LUResult lu(const Tensor &a) {
 
                     std::fill(p_batch, p_batch + n * n, 0.0);
                     std::vector<size_t> perm(n);
-                    for (size_t i = 0; i < n; ++i) perm[i] = i;
+                    for (size_t i = 0; i < n; ++i)
+                        perm[i] = i;
                     for (size_t i = 0; i < n; ++i) {
                         size_t swap_idx =
                             static_cast<size_t>(ipiv_batch[i] - 1);
@@ -2237,8 +2214,7 @@ EigResult eigh(const Tensor &a) {
             // Need to transpose to get row-major eigenvectors
             EigResult result;
             result.eigenvalues = eigenvalues;
-            result.eigenvectors =
-                transpose_last2(a_work).ascontiguousarray();
+            result.eigenvectors = transpose_last2(a_work).ascontiguousarray();
             return result;
         } else if (a.dtype() == DType::Float64) {
             auto &cusolver = get_cusolver();
@@ -2258,8 +2234,7 @@ EigResult eigh(const Tensor &a) {
 
             EigResult result;
             result.eigenvalues = eigenvalues;
-            result.eigenvectors =
-                transpose_last2(a_work).ascontiguousarray();
+            result.eigenvectors = transpose_last2(a_work).ascontiguousarray();
             return result;
         } else {
             auto cpu_result = eigh(a.cpu());
@@ -4063,19 +4038,15 @@ std::pair<Tensor, Tensor> slogdet(const Tensor &a) {
 
             for (size_t b = 0; b < batch_size; ++b) {
                 if (dtype == DType::Float32) {
-                    float *a_batch =
-                        a_work.typed_data<float>() + b * n * n;
+                    float *a_batch = a_work.typed_data<float>() + b * n * n;
                     int *ipiv_batch = ipiv_gpu + b * n;
-                    int info =
-                        cusolver.sgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    int info = cusolver.sgetrf(ni, ni, a_batch, ni, ipiv_batch);
                     if (info < 0)
                         check_lapack_info(info, "cusolver sgetrf");
                 } else {
-                    double *a_batch =
-                        a_work.typed_data<double>() + b * n * n;
+                    double *a_batch = a_work.typed_data<double>() + b * n * n;
                     int *ipiv_batch = ipiv_gpu + b * n;
-                    int info =
-                        cusolver.dgetrf(ni, ni, a_batch, ni, ipiv_batch);
+                    int info = cusolver.dgetrf(ni, ni, a_batch, ni, ipiv_batch);
                     if (info < 0)
                         check_lapack_info(info, "cusolver dgetrf");
                 }
@@ -4126,8 +4097,7 @@ std::pair<Tensor, Tensor> slogdet(const Tensor &a) {
                 double *a_data = a_cpu.typed_data<double>();
                 int *ipiv_data = ipiv_cpu.typed_data<int>();
                 double *sign_data = sign_result.typed_data<double>();
-                double *logdet_data =
-                    logabsdet_result.typed_data<double>();
+                double *logdet_data = logabsdet_result.typed_data<double>();
 
                 for (size_t b = 0; b < batch_size; ++b) {
                     double *a_batch = a_data + b * n * n;
