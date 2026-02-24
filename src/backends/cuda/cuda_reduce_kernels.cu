@@ -39,24 +39,44 @@ template <> struct MinIdentity<int64_t> { static __host__ __device__ int64_t val
 template <> struct MinIdentity<int16_t> { static __host__ __device__ int16_t value() { return SHRT_MAX; } };
 template <> struct MinIdentity<int8_t>  { static __host__ __device__ int8_t  value() { return SCHAR_MAX; } };
 
-// CUB custom operator for Prod
-struct CubProdOp {
+// Lightweight reduction functors (avoid CUB-internal types that were removed
+// in CUDA 13.x CCCL — cub::Sum, cub::Max, cub::Min no longer exist).
+struct ReduceSumOp {
+    template <typename T>
+    __device__ __forceinline__ T operator()(const T &a, const T &b) const {
+        return a + b;
+    }
+};
+
+struct ReduceMaxOp {
+    template <typename T>
+    __device__ __forceinline__ T operator()(const T &a, const T &b) const {
+        return a > b ? a : b;
+    }
+};
+
+struct ReduceMinOp {
+    template <typename T>
+    __device__ __forceinline__ T operator()(const T &a, const T &b) const {
+        return a < b ? a : b;
+    }
+};
+
+struct ReduceProdOp {
     template <typename T>
     __device__ __forceinline__ T operator()(const T &a, const T &b) const {
         return a * b;
     }
 };
 
-// CUB custom operator for Any (logical OR)
-struct CubAnyOp {
+struct ReduceAnyOp {
     template <typename T>
     __device__ __forceinline__ T operator()(const T &a, const T &b) const {
         return (a != T(0) || b != T(0)) ? T(1) : T(0);
     }
 };
 
-// CUB custom operator for All (logical AND)
-struct CubAllOp {
+struct ReduceAllOp {
     template <typename T>
     __device__ __forceinline__ T operator()(const T &a, const T &b) const {
         return (a != T(0) && b != T(0)) ? T(1) : T(0);
@@ -73,30 +93,33 @@ static void full_reduce_typed(ReduceOpKind op, const T *src, T *dst,
                               cudaStream_t stream) {
     switch (op) {
     case ReduceOpKind::Sum:
-        cub::DeviceReduce::Sum(temp, temp_bytes, src, dst,
-                               static_cast<int>(n), stream);
+        cub::DeviceReduce::Reduce(temp, temp_bytes, src, dst,
+                                  static_cast<int>(n), ReduceSumOp{},
+                                  SumIdentity<T>::value(), stream);
         break;
     case ReduceOpKind::Max:
-        cub::DeviceReduce::Max(temp, temp_bytes, src, dst,
-                               static_cast<int>(n), stream);
+        cub::DeviceReduce::Reduce(temp, temp_bytes, src, dst,
+                                  static_cast<int>(n), ReduceMaxOp{},
+                                  MaxIdentity<T>::value(), stream);
         break;
     case ReduceOpKind::Min:
-        cub::DeviceReduce::Min(temp, temp_bytes, src, dst,
-                               static_cast<int>(n), stream);
+        cub::DeviceReduce::Reduce(temp, temp_bytes, src, dst,
+                                  static_cast<int>(n), ReduceMinOp{},
+                                  MinIdentity<T>::value(), stream);
         break;
     case ReduceOpKind::Prod:
         cub::DeviceReduce::Reduce(temp, temp_bytes, src, dst,
-                                  static_cast<int>(n), CubProdOp{},
+                                  static_cast<int>(n), ReduceProdOp{},
                                   ProdIdentity<T>::value(), stream);
         break;
     case ReduceOpKind::Any:
         cub::DeviceReduce::Reduce(temp, temp_bytes, src, dst,
-                                  static_cast<int>(n), CubAnyOp{},
+                                  static_cast<int>(n), ReduceAnyOp{},
                                   T(0), stream);
         break;
     case ReduceOpKind::All:
         cub::DeviceReduce::Reduce(temp, temp_bytes, src, dst,
-                                  static_cast<int>(n), CubAllOp{},
+                                  static_cast<int>(n), ReduceAllOp{},
                                   T(1), stream);
         break;
     }
@@ -177,50 +200,50 @@ static void axis_reduce_typed(ReduceOpKind op, const T *src, T *dst,
     switch (op) {
     case ReduceOpKind::Sum: {
         auto lp = lc.params_for(
-            axis_reduce_kernel<T, cub::Sum, SumIdentity<T>>, total);
-        axis_reduce_kernel<T, cub::Sum, SumIdentity<T>>
+            axis_reduce_kernel<T, ReduceSumOp, SumIdentity<T>>, total);
+        axis_reduce_kernel<T, ReduceSumOp, SumIdentity<T>>
             <<<lp.grid, lp.block, 0, stream>>>(
-                src, dst, outer, axis_len, inner, cub::Sum{});
+                src, dst, outer, axis_len, inner, ReduceSumOp{});
         break;
     }
     case ReduceOpKind::Max: {
         auto lp = lc.params_for(
-            axis_reduce_kernel<T, cub::Max, MaxIdentity<T>>, total);
-        axis_reduce_kernel<T, cub::Max, MaxIdentity<T>>
+            axis_reduce_kernel<T, ReduceMaxOp, MaxIdentity<T>>, total);
+        axis_reduce_kernel<T, ReduceMaxOp, MaxIdentity<T>>
             <<<lp.grid, lp.block, 0, stream>>>(
-                src, dst, outer, axis_len, inner, cub::Max{});
+                src, dst, outer, axis_len, inner, ReduceMaxOp{});
         break;
     }
     case ReduceOpKind::Min: {
         auto lp = lc.params_for(
-            axis_reduce_kernel<T, cub::Min, MinIdentity<T>>, total);
-        axis_reduce_kernel<T, cub::Min, MinIdentity<T>>
+            axis_reduce_kernel<T, ReduceMinOp, MinIdentity<T>>, total);
+        axis_reduce_kernel<T, ReduceMinOp, MinIdentity<T>>
             <<<lp.grid, lp.block, 0, stream>>>(
-                src, dst, outer, axis_len, inner, cub::Min{});
+                src, dst, outer, axis_len, inner, ReduceMinOp{});
         break;
     }
     case ReduceOpKind::Prod: {
         auto lp = lc.params_for(
-            axis_reduce_kernel<T, CubProdOp, ProdIdentity<T>>, total);
-        axis_reduce_kernel<T, CubProdOp, ProdIdentity<T>>
+            axis_reduce_kernel<T, ReduceProdOp, ProdIdentity<T>>, total);
+        axis_reduce_kernel<T, ReduceProdOp, ProdIdentity<T>>
             <<<lp.grid, lp.block, 0, stream>>>(
-                src, dst, outer, axis_len, inner, CubProdOp{});
+                src, dst, outer, axis_len, inner, ReduceProdOp{});
         break;
     }
     case ReduceOpKind::Any: {
         auto lp = lc.params_for(
-            axis_reduce_kernel<T, CubAnyOp, SumIdentity<T>>, total);
-        axis_reduce_kernel<T, CubAnyOp, SumIdentity<T>>
+            axis_reduce_kernel<T, ReduceAnyOp, SumIdentity<T>>, total);
+        axis_reduce_kernel<T, ReduceAnyOp, SumIdentity<T>>
             <<<lp.grid, lp.block, 0, stream>>>(
-                src, dst, outer, axis_len, inner, CubAnyOp{});
+                src, dst, outer, axis_len, inner, ReduceAnyOp{});
         break;
     }
     case ReduceOpKind::All: {
         auto lp = lc.params_for(
-            axis_reduce_kernel<T, CubAllOp, ProdIdentity<T>>, total);
-        axis_reduce_kernel<T, CubAllOp, ProdIdentity<T>>
+            axis_reduce_kernel<T, ReduceAllOp, ProdIdentity<T>>, total);
+        axis_reduce_kernel<T, ReduceAllOp, ProdIdentity<T>>
             <<<lp.grid, lp.block, 0, stream>>>(
-                src, dst, outer, axis_len, inner, CubAllOp{});
+                src, dst, outer, axis_len, inner, ReduceAllOp{});
         break;
     }
     }
