@@ -1998,6 +1998,360 @@ public:
 };
 
 // ============================================================================
+// Fused LayerNorm Operation
+// ============================================================================
+
+Tensor MPSGraphLayerNormOperation::execute_layer_norm(
+    const Tensor &input_raw, const Tensor &weight_raw, const Tensor &bias_raw,
+    int axis, float eps) const {
+    @autoreleasepool {
+        Tensor input = ensureContiguous(input_raw);
+        Tensor weight = ensureContiguous(weight_raw);
+        Tensor bias = ensureContiguous(bias_raw);
+
+        int norm_axis = axis;
+        if (norm_axis < 0) {
+            norm_axis += static_cast<int>(input.ndim());
+        }
+
+        MPSGraph *graph = [[MPSGraph alloc] init];
+
+        MPSGraphTensor *x = createPlaceholder(graph, input);
+        MPSGraphTensor *w = createPlaceholder(graph, weight);
+        MPSGraphTensor *b = createPlaceholder(graph, bias);
+
+        // mean = mean(x, axis, keepdims=true)
+        MPSGraphTensor *x_mean = [graph meanOfTensor:x
+                                                axes:@[ @(norm_axis) ]
+                                                name:nil];
+
+        // centered = x - mean
+        MPSGraphTensor *centered = [graph subtractionWithPrimaryTensor:x
+                                                       secondaryTensor:x_mean
+                                                                  name:nil];
+
+        // var = mean(centered^2, axis, keepdims=true)
+        MPSGraphTensor *centered_sq =
+            [graph multiplicationWithPrimaryTensor:centered
+                                  secondaryTensor:centered
+                                             name:nil];
+        MPSGraphTensor *variance = [graph meanOfTensor:centered_sq
+                                                  axes:@[ @(norm_axis) ]
+                                                  name:nil];
+
+        // std = sqrt(var + eps)
+        MPSGraphTensor *eps_tensor =
+            [graph constantWithScalar:eps
+                                shape:@[ @1 ]
+                             dataType:getMPSDataType(input.dtype())];
+        MPSGraphTensor *var_eps =
+            [graph additionWithPrimaryTensor:variance
+                            secondaryTensor:eps_tensor
+                                       name:nil];
+        MPSGraphTensor *std_dev =
+            [graph squareRootWithTensor:var_eps name:nil];
+
+        // normalized = centered / std
+        MPSGraphTensor *normalized =
+            [graph divisionWithPrimaryTensor:centered
+                            secondaryTensor:std_dev
+                                       name:nil];
+
+        // result = normalized * weight + bias
+        MPSGraphTensor *scaled =
+            [graph multiplicationWithPrimaryTensor:normalized
+                                  secondaryTensor:w
+                                             name:nil];
+        MPSGraphTensor *result_tensor =
+            [graph additionWithPrimaryTensor:scaled
+                            secondaryTensor:b
+                                       name:nil];
+
+        Tensor result(input.shape(), input.dtype(), Device::GPU);
+
+        MPSGraphTensorData *input_data = createTensorData(input);
+        MPSGraphTensorData *weight_data = createTensorData(weight);
+        MPSGraphTensorData *bias_data = createTensorData(bias);
+        MPSGraphTensorData *result_data = createTensorData(result);
+
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds = @{
+            x : input_data,
+            w : weight_data,
+            b : bias_data
+        };
+
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
+            @{result_tensor : result_data};
+
+        encodeMPSGraphAsync(graph, feeds, targets);
+
+        return result;
+    }
+}
+
+// ============================================================================
+// Fused RMSNorm Operation
+// ============================================================================
+
+Tensor MPSGraphRMSNormOperation::execute_rms_norm(const Tensor &input_raw,
+                                                   const Tensor &weight_raw,
+                                                   int axis, float eps) const {
+    @autoreleasepool {
+        Tensor input = ensureContiguous(input_raw);
+        Tensor weight = ensureContiguous(weight_raw);
+
+        int norm_axis = axis;
+        if (norm_axis < 0) {
+            norm_axis += static_cast<int>(input.ndim());
+        }
+
+        MPSGraph *graph = [[MPSGraph alloc] init];
+
+        MPSGraphTensor *x = createPlaceholder(graph, input);
+        MPSGraphTensor *w = createPlaceholder(graph, weight);
+
+        // x_sq = x * x
+        MPSGraphTensor *x_sq =
+            [graph multiplicationWithPrimaryTensor:x
+                                  secondaryTensor:x
+                                             name:nil];
+
+        // mean_sq = mean(x_sq, axis, keepdims=true)
+        MPSGraphTensor *mean_sq = [graph meanOfTensor:x_sq
+                                                 axes:@[ @(norm_axis) ]
+                                                 name:nil];
+
+        // rms = sqrt(mean_sq + eps)
+        MPSGraphTensor *eps_tensor =
+            [graph constantWithScalar:eps
+                                shape:@[ @1 ]
+                             dataType:getMPSDataType(input.dtype())];
+        MPSGraphTensor *mean_eps =
+            [graph additionWithPrimaryTensor:mean_sq
+                            secondaryTensor:eps_tensor
+                                       name:nil];
+        MPSGraphTensor *rms =
+            [graph squareRootWithTensor:mean_eps name:nil];
+
+        // normalized = x / rms
+        MPSGraphTensor *normalized =
+            [graph divisionWithPrimaryTensor:x
+                            secondaryTensor:rms
+                                       name:nil];
+
+        // result = normalized * weight
+        MPSGraphTensor *result_tensor =
+            [graph multiplicationWithPrimaryTensor:normalized
+                                  secondaryTensor:w
+                                             name:nil];
+
+        Tensor result(input.shape(), input.dtype(), Device::GPU);
+
+        MPSGraphTensorData *input_data = createTensorData(input);
+        MPSGraphTensorData *weight_data = createTensorData(weight);
+        MPSGraphTensorData *result_data = createTensorData(result);
+
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds = @{
+            x : input_data,
+            w : weight_data
+        };
+
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
+            @{result_tensor : result_data};
+
+        encodeMPSGraphAsync(graph, feeds, targets);
+
+        return result;
+    }
+}
+
+// ============================================================================
+// Fused Conv2D Operation (MPSGraph)
+// ============================================================================
+
+Tensor MPSGraphConv2DOperation::execute_conv2d(
+    const Tensor &input_raw, const Tensor &weight_raw, const Tensor &bias_raw,
+    std::array<int, 2> stride, std::array<int, 2> padding,
+    std::array<int, 2> dilation, int groups) const {
+    @autoreleasepool {
+        Tensor input = ensureContiguous(input_raw);
+        Tensor weight = ensureContiguous(weight_raw);
+
+        // Ensure 4D: (N, C, H, W)
+        bool was_3d = (input.ndim() == 3);
+        if (was_3d) {
+            input = input.unsqueeze(0);
+        }
+
+        MPSGraph *graph = [[MPSGraph alloc] init];
+
+        MPSGraphTensor *x = createPlaceholder(graph, input);
+        MPSGraphTensor *w = createPlaceholder(graph, weight);
+
+        // Create convolution descriptor
+        MPSGraphConvolution2DOpDescriptor *desc =
+            [MPSGraphConvolution2DOpDescriptor
+                descriptorWithStrideInX:stride[1]
+                              strideInY:stride[0]
+                        dilationRateInX:dilation[1]
+                        dilationRateInY:dilation[0]
+                                 groups:groups
+                          paddingLeft:padding[1]
+                         paddingRight:padding[1]
+                            paddingTop:padding[0]
+                         paddingBottom:padding[0]
+                           paddingStyle:MPSGraphPaddingStyleExplicit
+                             dataLayout:MPSGraphTensorNamedDataLayoutNCHW
+                          weightsLayout:MPSGraphTensorNamedDataLayoutOIHW];
+
+        MPSGraphTensor *conv_result =
+            [graph convolution2DWithSourceTensor:x
+                                  weightsTensor:w
+                                     descriptor:desc
+                                           name:nil];
+
+        // Add bias if present
+        bool has_bias = bias_raw.ndim() > 0;
+        MPSGraphTensor *result_tensor = conv_result;
+        Tensor bias_gpu;
+        if (has_bias) {
+            bias_gpu = ensureContiguous(bias_raw);
+            // Reshape bias from (C_out,) to (1, C_out, 1, 1) for broadcast
+            NSArray<NSNumber *> *bias_shape = @[ @1, @((NSInteger)bias_gpu.shape()[0]), @1, @1 ];
+            MPSGraphTensor *b = createPlaceholder(graph, bias_gpu);
+            MPSGraphTensor *b_reshaped = [graph reshapeTensor:b
+                                                    withShape:bias_shape
+                                                         name:nil];
+            result_tensor = [graph additionWithPrimaryTensor:conv_result
+                                            secondaryTensor:b_reshaped
+                                                       name:nil];
+        }
+
+        // Determine output shape
+        size_t n = input.shape()[0];
+        size_t c_out = weight.shape()[0];
+        size_t h_in = input.shape()[2];
+        size_t w_in = input.shape()[3];
+        size_t kh = weight.shape()[2];
+        size_t kw = weight.shape()[3];
+        size_t dilated_kh = dilation[0] * (kh - 1) + 1;
+        size_t dilated_kw = dilation[1] * (kw - 1) + 1;
+        size_t h_out =
+            (h_in + 2 * (size_t)padding[0] - dilated_kh) / (size_t)stride[0] + 1;
+        size_t w_out =
+            (w_in + 2 * (size_t)padding[1] - dilated_kw) / (size_t)stride[1] + 1;
+
+        Shape out_shape = was_3d ? Shape{c_out, h_out, w_out}
+                                 : Shape{n, c_out, h_out, w_out};
+        Shape gpu_out_shape{n, c_out, h_out, w_out};
+        Tensor result(gpu_out_shape, input.dtype(), Device::GPU);
+
+        MPSGraphTensorData *input_data = createTensorData(input);
+        MPSGraphTensorData *weight_data = createTensorData(weight);
+        MPSGraphTensorData *result_data = createTensorData(result);
+
+        NSMutableDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds =
+            [NSMutableDictionary dictionaryWithDictionary:@{
+                x : input_data,
+                w : weight_data
+            }];
+
+        if (has_bias) {
+            MPSGraphTensor *b_placeholder = [graph.placeholderTensors objectAtIndex:2];
+            feeds[b_placeholder] = createTensorData(bias_gpu);
+        }
+
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
+            @{result_tensor : result_data};
+
+        encodeMPSGraphAsync(graph, feeds, targets);
+
+        if (was_3d) {
+            return result.squeeze(0);
+        }
+        return result;
+    }
+}
+
+// ============================================================================
+// Fused Conv1D Operation (via Conv2D reshape)
+// ============================================================================
+
+Tensor MPSGraphConv1DOperation::execute_conv1d(
+    const Tensor &input_raw, const Tensor &weight_raw, const Tensor &bias_raw,
+    int stride, int padding, int dilation, int groups) const {
+    @autoreleasepool {
+        Tensor input = ensureContiguous(input_raw);
+        Tensor weight = ensureContiguous(weight_raw);
+
+        // Ensure 3D: (N, C, L)
+        bool was_2d = (input.ndim() == 2);
+        if (was_2d) {
+            input = input.unsqueeze(0);
+        }
+
+        // Reshape to 4D for Conv2D: (N, C, 1, L) and (C_out, C_in/g, 1, K)
+        size_t n = input.shape()[0];
+        size_t c_in = input.shape()[1];
+        size_t length = input.shape()[2];
+        input = input.reshape({n, c_in, 1, length});
+
+        size_t c_out = weight.shape()[0];
+        size_t c_in_g = weight.shape()[1];
+        size_t kernel_size = weight.shape()[2];
+        weight = weight.reshape({c_out, c_in_g, 1, kernel_size});
+
+        // Run Conv2D with height params = 1
+        MPSGraphConv2DOperation conv2d_op;
+        Tensor result = conv2d_op.execute_conv2d(
+            input, weight, bias_raw, {1, stride}, {0, padding}, {1, dilation},
+            groups);
+
+        // Reshape output from (N, C_out, 1, L_out) back to (N, C_out, L_out)
+        if (result.ndim() == 4) {
+            result = result.squeeze(2);
+        }
+        if (was_2d) {
+            result = result.squeeze(0);
+        }
+        return result;
+    }
+}
+
+// ============================================================================
+// Free functions for fused GPU operations (called from operations.cpp)
+// ============================================================================
+
+Tensor gpu_layer_norm(const Tensor &input, const Tensor &weight,
+                      const Tensor &bias, int axis, float eps) {
+    MPSGraphLayerNormOperation op;
+    return op.execute_layer_norm(input, weight, bias, axis, eps);
+}
+
+Tensor gpu_rms_norm(const Tensor &input, const Tensor &weight, int axis,
+                    float eps) {
+    MPSGraphRMSNormOperation op;
+    return op.execute_rms_norm(input, weight, axis, eps);
+}
+
+Tensor gpu_conv1d(const Tensor &input, const Tensor &weight,
+                  const Tensor &bias, int stride, int padding, int dilation,
+                  int groups) {
+    MPSGraphConv1DOperation op;
+    return op.execute_conv1d(input, weight, bias, stride, padding, dilation,
+                             groups);
+}
+
+Tensor gpu_conv2d(const Tensor &input, const Tensor &weight,
+                  const Tensor &bias, std::array<int, 2> stride,
+                  std::array<int, 2> padding, std::array<int, 2> dilation,
+                  int groups) {
+    MPSGraphConv2DOperation op;
+    return op.execute_conv2d(input, weight, bias, stride, padding, dilation,
+                             groups);
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 
@@ -2221,6 +2575,12 @@ void register_mpsgraph_operations() {
     // Cast (type conversion) operation
     OperationRegistry::register_operation(OpType::Cast, Device::GPU,
         std::make_unique<MPSGraphCastOperation>());
+
+    // Fused normalization operations
+    OperationRegistry::register_operation(OpType::LayerNorm, Device::GPU,
+        std::make_unique<MPSGraphLayerNormOperation>());
+    OperationRegistry::register_operation(OpType::RMSNorm, Device::GPU,
+        std::make_unique<MPSGraphRMSNormOperation>());
 }
 
 } // namespace metal

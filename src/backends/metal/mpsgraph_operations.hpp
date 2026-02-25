@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "axiom/operations.hpp"
 #include "axiom/tensor.hpp"
 
@@ -223,6 +225,79 @@ class MPSGraphIndexSelectOperation : public MPSGraphOperation {
 
     Tensor execute_index_select(const Tensor &input, int dim,
                                 const Tensor &indices) const override;
+};
+
+// ============================================================================
+// MPSGraph Fused Normalization Operations
+// ============================================================================
+
+class MPSGraphLayerNormOperation : public MPSGraphOperation {
+  public:
+    MPSGraphLayerNormOperation()
+        : MPSGraphOperation(ops::OpType::LayerNorm, "layer_norm") {}
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on layer_norm operation");
+    }
+
+    // Fused GPU execution: input, weight, bias, axis, eps
+    Tensor execute_layer_norm(const Tensor &input, const Tensor &weight,
+                              const Tensor &bias, int axis, float eps) const;
+};
+
+class MPSGraphRMSNormOperation : public MPSGraphOperation {
+  public:
+    MPSGraphRMSNormOperation()
+        : MPSGraphOperation(ops::OpType::RMSNorm, "rms_norm") {}
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on rms_norm operation");
+    }
+
+    // Fused GPU execution: input, weight, axis, eps
+    Tensor execute_rms_norm(const Tensor &input, const Tensor &weight, int axis,
+                            float eps) const;
+};
+
+// ============================================================================
+// MPSGraph Convolution Operations
+// ============================================================================
+
+class MPSGraphConv2DOperation : public MPSGraphOperation {
+  public:
+    MPSGraphConv2DOperation()
+        : MPSGraphOperation(ops::OpType::Conv2D, "conv2d") {}
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on conv2d operation");
+    }
+
+    Tensor execute_conv2d(const Tensor &input, const Tensor &weight,
+                          const Tensor &bias, std::array<int, 2> stride,
+                          std::array<int, 2> padding,
+                          std::array<int, 2> dilation, int groups) const;
+};
+
+class MPSGraphConv1DOperation : public MPSGraphOperation {
+  public:
+    MPSGraphConv1DOperation()
+        : MPSGraphOperation(ops::OpType::Conv1D, "conv1d") {}
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on conv1d operation");
+    }
+
+    Tensor execute_conv1d(const Tensor &input, const Tensor &weight,
+                          const Tensor &bias, int stride, int padding,
+                          int dilation, int groups) const;
 };
 
 // ============================================================================

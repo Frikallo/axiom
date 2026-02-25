@@ -3,6 +3,7 @@
 // This is the single entry-point for the Axiom library.
 // Include this file to get access to all the core functionality.
 
+#include "axiom/audio.hpp"
 #include "axiom/debug.hpp"
 #include "axiom/dispatch.hpp"
 #include "axiom/dtype.hpp"
@@ -15,6 +16,7 @@
 #include "axiom/numeric.hpp"
 #include "axiom/operations.hpp"
 #include "axiom/random.hpp"
+#include "axiom/sampling.hpp"
 #include "axiom/shape.hpp"
 #include "axiom/storage.hpp"
 #include "axiom/system.hpp"

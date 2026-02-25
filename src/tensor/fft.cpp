@@ -1287,5 +1287,138 @@ Tensor kaiser_window(int64_t M, double beta, bool periodic, DType dtype,
     return result;
 }
 
+// ============================================================================
+// Short-Time Fourier Transform
+// ============================================================================
+
+Tensor stft(const Tensor &input, int64_t n_fft, int64_t hop_length,
+            int64_t win_length, const Tensor &window, bool center,
+            const std::string &pad_mode, bool normalized) {
+    if (input.ndim() < 1 || input.ndim() > 2) {
+        throw ShapeError("stft: expected 1D or 2D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+    if (n_fft <= 0) {
+        throw ValueError("stft: n_fft must be > 0");
+    }
+    if (hop_length <= 0) {
+        hop_length = n_fft / 4;
+    }
+    if (win_length <= 0) {
+        win_length = n_fft;
+    }
+    if (win_length > n_fft) {
+        throw ValueError("stft: win_length (" + std::to_string(win_length) +
+                         ") must be <= n_fft (" + std::to_string(n_fft) + ")");
+    }
+
+    // Handle batched input
+    bool has_batch = (input.ndim() == 2);
+    Tensor signal = has_batch ? input : input.unsqueeze(0);
+    size_t batch_size = signal.shape()[0];
+
+    // Center padding (reflect mode)
+    if (center) {
+        int64_t pad_amount = n_fft / 2;
+        signal = ops::pad(signal,
+                          {{0, 0},
+                           {static_cast<size_t>(pad_amount),
+                            static_cast<size_t>(pad_amount)}},
+                          pad_mode);
+    }
+
+    size_t signal_length = signal.shape()[1];
+    if (static_cast<int64_t>(signal_length) < n_fft) {
+        throw ShapeError(
+            "stft: signal length (" + std::to_string(signal_length) +
+            ") is less than n_fft (" + std::to_string(n_fft) + ")");
+    }
+
+    int64_t n_frames =
+        (static_cast<int64_t>(signal_length) - n_fft) / hop_length + 1;
+    int64_t freq_bins = n_fft / 2 + 1;
+
+    // Prepare window
+    Tensor win;
+    if (window.ndim() > 0) {
+        win = window.cpu();
+        if (static_cast<int64_t>(win.size()) != win_length) {
+            throw ShapeError(
+                "stft: window size (" + std::to_string(win.size()) +
+                ") must equal win_length (" + std::to_string(win_length) + ")");
+        }
+    } else {
+        win = hann_window(win_length, true, DType::Float32, Device::CPU);
+    }
+
+    // Pad window to n_fft if needed
+    if (win_length < n_fft) {
+        int64_t left_pad = (n_fft - win_length) / 2;
+        int64_t right_pad = n_fft - win_length - left_pad;
+        win = ops::pad(
+            win,
+            {{static_cast<size_t>(left_pad), static_cast<size_t>(right_pad)}},
+            "constant");
+    }
+
+    // Work on CPU
+    Tensor cpu_signal = signal.device() == Device::CPU ? signal : signal.cpu();
+    if (!cpu_signal.is_contiguous()) {
+        cpu_signal = cpu_signal.ascontiguousarray();
+    }
+
+    // Output shape: (batch, freq_bins, n_frames)
+    Shape out_shape = {batch_size, static_cast<size_t>(freq_bins),
+                       static_cast<size_t>(n_frames)};
+    Tensor result(out_shape, DType::Complex64, Device::CPU);
+
+    // Extract frames, apply window, compute rfft for each frame
+    for (size_t b = 0; b < batch_size; ++b) {
+        for (int64_t f = 0; f < n_frames; ++f) {
+            int64_t start_pos = f * hop_length;
+
+            // Extract frame: signal[b, start:start+n_fft]
+            auto frame = cpu_signal.slice(
+                {Slice(static_cast<int64_t>(b), static_cast<int64_t>(b + 1)),
+                 Slice(start_pos, start_pos + n_fft)});
+            frame = frame.squeeze(0); // Remove batch dim
+
+            // Apply window
+            frame = ops::multiply(frame.astype(DType::Float32), win);
+
+            // rfft
+            auto spectrum = rfft(frame, n_fft);
+
+            // Normalize if requested
+            if (normalized) {
+                auto norm_factor = Tensor::full(
+                    {1}, 1.0f / std::sqrt(static_cast<float>(n_fft)));
+                spectrum = ops::multiply(spectrum, norm_factor);
+            }
+
+            // Copy into result[:, :, f]
+            if (!spectrum.is_contiguous()) {
+                spectrum = spectrum.ascontiguousarray();
+            }
+            auto spec_data = spectrum.typed_data<complex64_t>();
+            for (int64_t i = 0; i < freq_bins; ++i) {
+                result.set_item<complex64_t>(
+                    {b, static_cast<size_t>(i), static_cast<size_t>(f)},
+                    spec_data[i]);
+            }
+        }
+    }
+
+    // Remove batch dim if input was 1D
+    if (!has_batch) {
+        result = result.squeeze(0);
+    }
+
+    if (input.device() == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
 } // namespace fft
 } // namespace axiom

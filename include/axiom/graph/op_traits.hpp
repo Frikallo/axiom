@@ -124,6 +124,9 @@ inline constexpr OpTraits OP_TRAITS[] = {
     /*AvgPool3D*/       {0,0,0,0,0,0},
     /*AdaptiveMaxPool2D*/ {0,0,0,0,0,0},
     /*AdaptiveAvgPool2D*/ {0,0,0,0,0,0},
+    // Convolution
+    /*Conv1D*/            {0,0,0,0,0,0},
+    /*Conv2D*/            {0,0,0,0,0,0},
 };
 // clang-format on
 

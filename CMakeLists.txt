@@ -278,10 +278,13 @@ set(AXIOM_SOURCES
     src/io/io.cpp
     src/io/io_flatbuffers.cpp
     src/io/io_numpy.cpp
+    src/io/io_safetensors.cpp
     src/tensor/einops.cpp
     src/tensor/operations.cpp
     src/tensor/random.cpp
     src/tensor/fft.cpp
+    src/tensor/sampling.cpp
+    src/tensor/audio.cpp
     src/tensor/system.cpp
     src/tensor/indexing.cpp
 
@@ -457,6 +460,8 @@ target_include_directories(axiom SYSTEM
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/FP16/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/flatbuffers/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/pocketfft>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann_json/include>
 )
 
 # ============================================================================

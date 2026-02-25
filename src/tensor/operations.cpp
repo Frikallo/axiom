@@ -182,6 +182,10 @@ static std::string op_type_name(OpType op) {
         return "adaptive_max_pool2d";
     case OpType::AdaptiveAvgPool2D:
         return "adaptive_avg_pool2d";
+    case OpType::Conv1D:
+        return "conv1d";
+    case OpType::Conv2D:
+        return "conv2d";
     default:
         return "unknown";
     }
@@ -1679,6 +1683,30 @@ Tensor index_select(const Tensor &input, int dim, const Tensor &indices) {
     return op->execute_index_select(input_on_device, dim, indices_on_device);
 }
 
+// Embedding lookup
+Tensor embedding(const Tensor &weight, const Tensor &indices) {
+    if (weight.ndim() != 2) {
+        throw ShapeError(
+            "embedding: weight must be 2D (vocab_size, embed_dim), "
+            "got " +
+            std::to_string(weight.ndim()) + "D");
+    }
+
+    // Flatten indices, do index_select along dim 0, reshape to (*indices_shape,
+    // embed_dim)
+    auto indices_shape = indices.shape();
+    auto flat_indices = indices.reshape({indices.size()});
+    auto selected = index_select(weight, 0, flat_indices);
+
+    // Reshape to (*indices_shape, embed_dim)
+    Shape result_shape;
+    for (size_t i = 0; i < indices_shape.size(); ++i) {
+        result_shape.push_back(indices_shape[i]);
+    }
+    result_shape.push_back(weight.shape()[1]);
+    return selected.reshape(result_shape);
+}
+
 // Normalization operations
 Tensor layer_norm(const Tensor &input, const Tensor &weight, const Tensor &bias,
                   int axis, float eps) {
@@ -1695,6 +1723,14 @@ Tensor layer_norm(const Tensor &input, const Tensor &weight, const Tensor &bias,
     Tensor weight_on_device =
         (weight.device() == device) ? weight : weight.to(device);
     Tensor bias_on_device = (bias.device() == device) ? bias : bias.to(device);
+
+#ifdef AXIOM_METAL_SUPPORT
+    // GPU fast-path: fused single-graph execution
+    if (device == Device::GPU) {
+        return backends::metal::gpu_layer_norm(
+            input_on_device, weight_on_device, bias_on_device, axis, eps);
+    }
+#endif
 
     // Normalize axis
     int norm_axis = axis;
@@ -1732,6 +1768,14 @@ Tensor rms_norm(const Tensor &input, const Tensor &weight, int axis,
         (input.device() == device) ? input : input.to(device);
     Tensor weight_on_device =
         (weight.device() == device) ? weight : weight.to(device);
+
+#ifdef AXIOM_METAL_SUPPORT
+    // GPU fast-path: fused single-graph execution
+    if (device == Device::GPU) {
+        return backends::metal::gpu_rms_norm(input_on_device, weight_on_device,
+                                             axis, eps);
+    }
+#endif
 
     // Normalize axis
     int norm_axis = axis;
@@ -2849,6 +2893,370 @@ Tensor adaptive_avg_pool2d(const Tensor &input,
 
     return avg_pool2d(input, {kernel_h, kernel_w}, {stride_h, stride_w}, {0, 0},
                       false);
+}
+
+// ============================================================================
+// Convolution operations
+// ============================================================================
+
+Tensor conv1d(const Tensor &input, const Tensor &weight, const Tensor &bias,
+              int stride, int padding, int dilation, int groups) {
+    if (stride <= 0) {
+        throw ValueError("conv1d: stride must be > 0, got " +
+                         std::to_string(stride));
+    }
+    if (padding < 0) {
+        throw ValueError("conv1d: padding must be >= 0, got " +
+                         std::to_string(padding));
+    }
+    if (dilation <= 0) {
+        throw ValueError("conv1d: dilation must be > 0, got " +
+                         std::to_string(dilation));
+    }
+    if (groups <= 0) {
+        throw ValueError("conv1d: groups must be > 0, got " +
+                         std::to_string(groups));
+    }
+    if (input.ndim() < 2 || input.ndim() > 3) {
+        throw ShapeError(
+            "conv1d: expected 2D or 3D input (C_in, L) or (N, C_in, L), got " +
+            std::to_string(input.ndim()) + "D");
+    }
+    if (weight.ndim() != 3) {
+        throw ShapeError(
+            "conv1d: weight must be 3D (C_out, C_in/groups, kernel_size), "
+            "got " +
+            std::to_string(weight.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 3);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t c_in = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t length = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t c_out = weight.shape()[0];
+    size_t c_in_per_group = weight.shape()[1];
+    size_t kernel_size = weight.shape()[2];
+
+    if (c_in != c_in_per_group * static_cast<size_t>(groups)) {
+        throw ShapeError("conv1d: input channels (" + std::to_string(c_in) +
+                         ") must equal weight.shape[1] * groups (" +
+                         std::to_string(c_in_per_group) + " * " +
+                         std::to_string(groups) + ")");
+    }
+    if (c_out % static_cast<size_t>(groups) != 0) {
+        throw ShapeError("conv1d: C_out (" + std::to_string(c_out) +
+                         ") must be divisible by groups (" +
+                         std::to_string(groups) + ")");
+    }
+
+    size_t dilated_kernel = dilation * (kernel_size - 1) + 1;
+    if (length + 2 * static_cast<size_t>(padding) < dilated_kernel) {
+        throw ShapeError("conv1d: input length too small for given kernel/"
+                         "padding/dilation");
+    }
+    size_t out_length =
+        (length + 2 * static_cast<size_t>(padding) - dilated_kernel) /
+            static_cast<size_t>(stride) +
+        1;
+
+    size_t c_out_per_group = c_out / static_cast<size_t>(groups);
+
+    Shape out_shape = has_batch ? Shape{batch_size, c_out, out_length}
+                                : Shape{c_out, out_length};
+
+#ifdef AXIOM_METAL_SUPPORT
+    if (input.device() == Device::GPU) {
+        return backends::metal::gpu_conv1d(input, weight, bias, stride, padding,
+                                           dilation, groups);
+    }
+#endif
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor weight_cpu = weight.device() == Device::CPU ? weight : weight.cpu();
+    Tensor result(out_shape, input.dtype(), Device::CPU);
+
+    bool has_bias = bias.ndim() > 0;
+    Tensor bias_cpu;
+    if (has_bias) {
+        bias_cpu = bias.device() == Device::CPU ? bias : bias.cpu();
+    }
+
+    dispatch_float(input.dtype(), "conv1d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+
+        // Ensure contiguous for pointer access
+        Tensor in_c = input_cpu.is_contiguous() ? input_cpu
+                                                : input_cpu.ascontiguousarray();
+        Tensor w_c = weight_cpu.is_contiguous()
+                         ? weight_cpu
+                         : weight_cpu.ascontiguousarray();
+        const T *in_data = in_c.typed_data<T>();
+        const T *w_data = w_c.typed_data<T>();
+        T *out_data = result.typed_data<T>();
+
+        const T *bias_data = nullptr;
+        Tensor b_c;
+        if (has_bias) {
+            b_c = bias_cpu.is_contiguous() ? bias_cpu
+                                           : bias_cpu.ascontiguousarray();
+            bias_data = b_c.typed_data<T>();
+        }
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (int g = 0; g < groups; ++g) {
+                for (size_t oc = 0; oc < c_out_per_group; ++oc) {
+                    size_t oc_global =
+                        static_cast<size_t>(g) * c_out_per_group + oc;
+
+                    for (size_t o = 0; o < out_length; ++o) {
+                        double accum = 0.0;
+
+                        for (size_t ic = 0; ic < c_in_per_group; ++ic) {
+                            size_t ic_global =
+                                static_cast<size_t>(g) * c_in_per_group + ic;
+
+                            for (size_t k = 0; k < kernel_size; ++k) {
+                                int in_pos = static_cast<int>(o) * stride -
+                                             padding +
+                                             static_cast<int>(k) * dilation;
+                                if (in_pos >= 0 &&
+                                    in_pos < static_cast<int>(length)) {
+                                    // input: (b, c_in, L) or (c_in, L)
+                                    size_t in_idx =
+                                        has_batch
+                                            ? b * c_in * length +
+                                                  ic_global * length +
+                                                  static_cast<size_t>(in_pos)
+                                            : ic_global * length +
+                                                  static_cast<size_t>(in_pos);
+                                    // weight: (c_out, c_in_per_group,
+                                    // kernel_size)
+                                    size_t w_idx = oc_global * c_in_per_group *
+                                                       kernel_size +
+                                                   ic * kernel_size + k;
+                                    accum +=
+                                        static_cast<double>(in_data[in_idx]) *
+                                        static_cast<double>(w_data[w_idx]);
+                                }
+                            }
+                        }
+
+                        if (has_bias) {
+                            accum += static_cast<double>(bias_data[oc_global]);
+                        }
+
+                        // output: (b, c_out, L_out) or (c_out, L_out)
+                        size_t out_idx = has_batch
+                                             ? b * c_out * out_length +
+                                                   oc_global * out_length + o
+                                             : oc_global * out_length + o;
+                        out_data[out_idx] = static_cast<T>(accum);
+                    }
+                }
+            }
+        }
+    });
+
+    // Transfer back to GPU if input was on GPU
+    if (input.device() == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+// ============================================================================
+// 2D Convolution
+// ============================================================================
+
+Tensor conv2d(const Tensor &input, const Tensor &weight, const Tensor &bias,
+              std::array<int, 2> stride, std::array<int, 2> padding,
+              std::array<int, 2> dilation, int groups) {
+    if (stride[0] <= 0 || stride[1] <= 0) {
+        throw ValueError("conv2d: stride must be > 0");
+    }
+    if (padding[0] < 0 || padding[1] < 0) {
+        throw ValueError("conv2d: padding must be >= 0");
+    }
+    if (dilation[0] <= 0 || dilation[1] <= 0) {
+        throw ValueError("conv2d: dilation must be > 0");
+    }
+    if (groups <= 0) {
+        throw ValueError("conv2d: groups must be > 0, got " +
+                         std::to_string(groups));
+    }
+    if (input.ndim() < 3 || input.ndim() > 4) {
+        throw ShapeError(
+            "conv2d: expected 3D or 4D input (C_in, H, W) or (N, C_in, H, "
+            "W), got " +
+            std::to_string(input.ndim()) + "D");
+    }
+    if (weight.ndim() != 4) {
+        throw ShapeError(
+            "conv2d: weight must be 4D (C_out, C_in/groups, kH, kW), got " +
+            std::to_string(weight.ndim()) + "D");
+    }
+
+    bool has_batch = (input.ndim() == 4);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t c_in = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t h_in = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t w_in = has_batch ? input.shape()[3] : input.shape()[2];
+    size_t c_out = weight.shape()[0];
+    size_t c_in_per_group = weight.shape()[1];
+    size_t kh = weight.shape()[2];
+    size_t kw = weight.shape()[3];
+
+    if (c_in != c_in_per_group * static_cast<size_t>(groups)) {
+        throw ShapeError("conv2d: input channels (" + std::to_string(c_in) +
+                         ") must equal weight.shape[1] * groups (" +
+                         std::to_string(c_in_per_group) + " * " +
+                         std::to_string(groups) + ")");
+    }
+    if (c_out % static_cast<size_t>(groups) != 0) {
+        throw ShapeError("conv2d: C_out (" + std::to_string(c_out) +
+                         ") must be divisible by groups (" +
+                         std::to_string(groups) + ")");
+    }
+
+    size_t dilated_kh = dilation[0] * (kh - 1) + 1;
+    size_t dilated_kw = dilation[1] * (kw - 1) + 1;
+    if (h_in + 2 * static_cast<size_t>(padding[0]) < dilated_kh ||
+        w_in + 2 * static_cast<size_t>(padding[1]) < dilated_kw) {
+        throw ShapeError(
+            "conv2d: input spatial dims too small for given kernel/"
+            "padding/dilation");
+    }
+    size_t h_out = (h_in + 2 * static_cast<size_t>(padding[0]) - dilated_kh) /
+                       static_cast<size_t>(stride[0]) +
+                   1;
+    size_t w_out = (w_in + 2 * static_cast<size_t>(padding[1]) - dilated_kw) /
+                       static_cast<size_t>(stride[1]) +
+                   1;
+
+    size_t c_out_per_group = c_out / static_cast<size_t>(groups);
+
+    Shape out_shape = has_batch ? Shape{batch_size, c_out, h_out, w_out}
+                                : Shape{c_out, h_out, w_out};
+
+#ifdef AXIOM_METAL_SUPPORT
+    if (input.device() == Device::GPU) {
+        return backends::metal::gpu_conv2d(input, weight, bias, stride, padding,
+                                           dilation, groups);
+    }
+#endif
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor weight_cpu = weight.device() == Device::CPU ? weight : weight.cpu();
+    Tensor result(out_shape, input.dtype(), Device::CPU);
+
+    bool has_bias = bias.ndim() > 0;
+    Tensor bias_cpu;
+    if (has_bias) {
+        bias_cpu = bias.device() == Device::CPU ? bias : bias.cpu();
+    }
+
+    dispatch_float(input.dtype(), "conv2d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+
+        Tensor in_c = input_cpu.is_contiguous() ? input_cpu
+                                                : input_cpu.ascontiguousarray();
+        Tensor w_c = weight_cpu.is_contiguous()
+                         ? weight_cpu
+                         : weight_cpu.ascontiguousarray();
+        const T *in_data = in_c.typed_data<T>();
+        const T *w_data = w_c.typed_data<T>();
+        T *out_data = result.typed_data<T>();
+
+        const T *bias_data = nullptr;
+        Tensor b_c;
+        if (has_bias) {
+            b_c = bias_cpu.is_contiguous() ? bias_cpu
+                                           : bias_cpu.ascontiguousarray();
+            bias_data = b_c.typed_data<T>();
+        }
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (int g = 0; g < groups; ++g) {
+                for (size_t oc = 0; oc < c_out_per_group; ++oc) {
+                    size_t oc_global =
+                        static_cast<size_t>(g) * c_out_per_group + oc;
+
+                    for (size_t oh = 0; oh < h_out; ++oh) {
+                        for (size_t ow = 0; ow < w_out; ++ow) {
+                            double accum = 0.0;
+
+                            for (size_t ic = 0; ic < c_in_per_group; ++ic) {
+                                size_t ic_global =
+                                    static_cast<size_t>(g) * c_in_per_group +
+                                    ic;
+
+                                for (size_t fh = 0; fh < kh; ++fh) {
+                                    for (size_t fw = 0; fw < kw; ++fw) {
+                                        int ih =
+                                            static_cast<int>(oh) * stride[0] -
+                                            padding[0] +
+                                            static_cast<int>(fh) * dilation[0];
+                                        int iw =
+                                            static_cast<int>(ow) * stride[1] -
+                                            padding[1] +
+                                            static_cast<int>(fw) * dilation[1];
+
+                                        if (ih >= 0 &&
+                                            ih < static_cast<int>(h_in) &&
+                                            iw >= 0 &&
+                                            iw < static_cast<int>(w_in)) {
+                                            size_t in_idx =
+                                                has_batch
+                                                    ? b * c_in * h_in * w_in +
+                                                          ic_global * h_in *
+                                                              w_in +
+                                                          static_cast<size_t>(
+                                                              ih) *
+                                                              w_in +
+                                                          static_cast<size_t>(
+                                                              iw)
+                                                    : ic_global * h_in * w_in +
+                                                          static_cast<size_t>(
+                                                              ih) *
+                                                              w_in +
+                                                          static_cast<size_t>(
+                                                              iw);
+                                            size_t w_idx =
+                                                oc_global * c_in_per_group *
+                                                    kh * kw +
+                                                ic * kh * kw + fh * kw + fw;
+                                            accum += static_cast<double>(
+                                                         in_data[in_idx]) *
+                                                     static_cast<double>(
+                                                         w_data[w_idx]);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (has_bias) {
+                                accum +=
+                                    static_cast<double>(bias_data[oc_global]);
+                            }
+
+                            size_t out_idx =
+                                has_batch ? b * c_out * h_out * w_out +
+                                                oc_global * h_out * w_out +
+                                                oh * w_out + ow
+                                          : oc_global * h_out * w_out +
+                                                oh * w_out + ow;
+                            out_data[out_idx] = static_cast<T>(accum);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    if (input.device() == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
 }
 
 } // namespace ops

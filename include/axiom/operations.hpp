@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <functional>
 #include <map>
 #include <memory>
@@ -176,6 +177,10 @@ enum class OpType {
     AvgPool3D,
     AdaptiveMaxPool2D,
     AdaptiveAvgPool2D,
+
+    // Convolution operations
+    Conv1D,
+    Conv2D,
 
     _Count // Must be last — used for traits table sizing
 };
@@ -452,6 +457,11 @@ Tensor take_along_axis(const Tensor &input, const Tensor &indices, int axis);
 Tensor put_along_axis(const Tensor &input, const Tensor &indices,
                       const Tensor &values, int axis);
 
+// Embedding lookup — selects rows from weight matrix by index
+// weight: (vocab_size, embed_dim), indices: any shape of integer indices
+// Returns: (*indices_shape, embed_dim)
+Tensor embedding(const Tensor &weight, const Tensor &indices);
+
 // Normalization operations
 // layer_norm: (x - mean) / sqrt(var + eps) * weight + bias
 Tensor layer_norm(const Tensor &input, const Tensor &weight, const Tensor &bias,
@@ -553,6 +563,29 @@ Tensor adaptive_avg_pool2d(const Tensor &input,
 Tensor adaptive_max_pool1d(const Tensor &input, int output_size);
 
 Tensor adaptive_avg_pool1d(const Tensor &input, int output_size);
+
+// ============================================================================
+// Convolution operations
+// ============================================================================
+
+// 1D Convolution (PyTorch-compatible)
+// Input: (N, C_in, L) or (C_in, L)
+// Weight: (C_out, C_in/groups, kernel_size)
+// Output: (N, C_out, L_out) where L_out = (L + 2*padding -
+// dilation*(kernel_size-1) - 1) / stride + 1
+Tensor conv1d(const Tensor &input, const Tensor &weight,
+              const Tensor &bias = Tensor(), int stride = 1, int padding = 0,
+              int dilation = 1, int groups = 1);
+
+// 2D Convolution (PyTorch-compatible)
+// Input: (N, C_in, H, W) or (C_in, H, W)
+// Weight: (C_out, C_in/groups, kH, kW)
+// Output: (N, C_out, H_out, W_out) where H_out = (H + 2*padding[0] -
+// dilation[0]*(kH-1) - 1) / stride[0] + 1
+Tensor conv2d(const Tensor &input, const Tensor &weight,
+              const Tensor &bias = Tensor(), std::array<int, 2> stride = {1, 1},
+              std::array<int, 2> padding = {0, 0},
+              std::array<int, 2> dilation = {1, 1}, int groups = 1);
 
 } // namespace ops
 } // namespace axiom
