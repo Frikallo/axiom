@@ -1529,13 +1529,17 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
     }
 #endif
 
-    auto new_tensor = Tensor(shape_, dtype_, target_device, order);
+    // If non-contiguous (e.g., a view from slice/chunk), make a contiguous
+    // copy first so that the raw copy_from transfers only the relevant data.
+    const Tensor &src = is_contiguous() ? *this : ascontiguousarray();
 
-    if (order != memory_order_ && device() == Device::CPU &&
+    auto new_tensor = Tensor(src.shape_, src.dtype_, target_device, order);
+
+    if (order != src.memory_order_ && src.device() == Device::CPU &&
         target_device == Device::CPU) {
-        copy_with_layout_conversion(new_tensor);
+        src.copy_with_layout_conversion(new_tensor);
     } else {
-        new_tensor.storage_->copy_from(*storage_);
+        new_tensor.storage_->copy_from(*src.storage_);
     }
 
     return new_tensor;
