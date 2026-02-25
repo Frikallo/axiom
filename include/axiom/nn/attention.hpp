@@ -7,6 +7,8 @@ namespace axiom::nn {
 
 class MultiHeadAttention : public Module {
   public:
+    using Module::forward; // multi-arg forward hides base; re-expose
+
     explicit MultiHeadAttention(int num_heads);
 
     // query, key, value: (batch, seq, d_model)

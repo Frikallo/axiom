@@ -8,7 +8,7 @@ class Linear : public Module {
   public:
     explicit Linear(bool bias = true);
 
-    Tensor forward(const Tensor &input) const;
+    Tensor forward(const Tensor &input) const override;
     Tensor operator()(const Tensor &input) const { return forward(input); }
 
   private:

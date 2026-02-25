@@ -4,6 +4,11 @@
 
 namespace axiom::nn {
 
+Tensor Module::forward(const Tensor & /*input*/) const {
+    throw RuntimeError(
+        "forward(const Tensor&) not implemented for this module");
+}
+
 Module &Module::to(Device device) {
     for (auto &[name, param] : params_) {
         if (param->storage()) {
@@ -30,6 +35,19 @@ void Module::load_state_dict(const std::map<std::string, Tensor> &state_dict,
     for (auto &[name, submodule] : submodules_) {
         submodule->load_state_dict(state_dict, prefix + name + ".", strict);
     }
+}
+
+std::map<std::string, Tensor>
+Module::state_dict(const std::string &prefix) const {
+    std::map<std::string, Tensor> result;
+    for (auto &[name, param] : params_) {
+        result[prefix + name] = *param;
+    }
+    for (auto &[name, submodule] : submodules_) {
+        auto sub_dict = submodule->state_dict(prefix + name + ".");
+        result.insert(sub_dict.begin(), sub_dict.end());
+    }
+    return result;
 }
 
 std::vector<std::pair<std::string, Tensor *>>

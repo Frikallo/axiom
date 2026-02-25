@@ -145,6 +145,8 @@ struct WhisperEncoder : Module {
 // ============================================================================
 
 struct WhisperDecoderLayer : Module {
+    using Module::forward;
+
     MultiHeadAttention self_attn_;
     LayerNorm self_attn_layer_norm_;
     MultiHeadAttention encoder_attn_;
@@ -192,6 +194,8 @@ struct WhisperDecoderLayer : Module {
 // ============================================================================
 
 struct WhisperDecoder : Module {
+    using Module::forward; // multi-arg forward hides base; re-expose
+
     Embedding embed_tokens_;
     Embedding embed_positions_;
     ModuleList layers_;

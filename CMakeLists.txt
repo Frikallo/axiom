@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Axiom
-    VERSION 0.2.1
+    VERSION 0.3.0
     DESCRIPTION "High-Performance Cross-Platform Tensor Library"
     LANGUAGES CXX
 )
@@ -66,7 +66,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         endif()
     endif()
 elseif(MSVC)
-    add_compile_options(/W4 /EHsc /utf-8)
+    add_compile_options(/W4 /EHsc /utf-8 /Zc:preprocessor)
     # Disable some noisy warnings
     add_compile_options(/wd4244 /wd4267 /wd4996)
     if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -328,6 +328,8 @@ set(AXIOM_SOURCES
     src/nn/conv.cpp
     src/nn/container.cpp
     src/nn/attention.cpp
+    src/nn/activation.cpp
+    src/nn/pooling.cpp
 )
 
 # Add platform-specific BLAS backends

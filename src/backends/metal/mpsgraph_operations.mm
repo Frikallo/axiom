@@ -2352,6 +2352,258 @@ Tensor gpu_conv2d(const Tensor &input, const Tensor &weight,
 }
 
 // ============================================================================
+// GPU Transposed Convolution (MPSGraph native)
+// ============================================================================
+
+Tensor gpu_conv_transpose2d(const Tensor &input, const Tensor &weight,
+                            const Tensor &bias, std::array<int, 2> stride,
+                            std::array<int, 2> padding,
+                            std::array<int, 2> output_padding,
+                            std::array<int, 2> dilation, int groups) {
+    @autoreleasepool {
+        Tensor inp = ensureContiguous(input);
+        Tensor wt = ensureContiguous(weight);
+
+        // Ensure 4D: (N, C_in, H, W)
+        bool was_3d = (inp.ndim() == 3);
+        if (was_3d) {
+            inp = inp.unsqueeze(0);
+        }
+
+        MPSGraph *graph = [[MPSGraph alloc] init];
+
+        MPSGraphTensor *x = createPlaceholder(graph, inp);
+        MPSGraphTensor *w = createPlaceholder(graph, wt);
+
+        // Transposed conv descriptor — same params as forward conv but applied
+        // in reverse by the convolutionTranspose2D API.
+        MPSGraphConvolution2DOpDescriptor *desc =
+            [MPSGraphConvolution2DOpDescriptor
+                descriptorWithStrideInX:stride[1]
+                              strideInY:stride[0]
+                        dilationRateInX:dilation[1]
+                        dilationRateInY:dilation[0]
+                                 groups:groups
+                          paddingLeft:padding[1]
+                         paddingRight:padding[1]
+                            paddingTop:padding[0]
+                         paddingBottom:padding[0]
+                           paddingStyle:MPSGraphPaddingStyleExplicit
+                             dataLayout:MPSGraphTensorNamedDataLayoutNCHW
+                          weightsLayout:MPSGraphTensorNamedDataLayoutOIHW];
+
+        // Compute output spatial size:
+        // out = (in - 1) * stride - 2 * padding + dilation * (K - 1) + output_padding + 1
+        size_t n = inp.shape()[0];
+        size_t c_in = inp.shape()[1];
+        size_t h_in = inp.shape()[2];
+        size_t w_in = inp.shape()[3];
+        size_t kh = wt.shape()[2];
+        size_t kw = wt.shape()[3];
+        size_t c_out = wt.shape()[1] * (size_t)groups;
+
+        size_t h_out = (h_in - 1) * (size_t)stride[0] - 2 * (size_t)padding[0] +
+                       (size_t)dilation[0] * (kh - 1) + (size_t)output_padding[0] + 1;
+        size_t w_out = (w_in - 1) * (size_t)stride[1] - 2 * (size_t)padding[1] +
+                       (size_t)dilation[1] * (kw - 1) + (size_t)output_padding[1] + 1;
+
+        NSArray<NSNumber *> *outputShape = @[
+            @((NSInteger)n), @((NSInteger)c_out),
+            @((NSInteger)h_out), @((NSInteger)w_out)
+        ];
+
+        MPSGraphTensor *conv_result =
+            [graph convolutionTranspose2DWithSourceTensor:x
+                                           weightsTensor:w
+                                             outputShape:outputShape
+                                              descriptor:desc
+                                                    name:nil];
+
+        // Add bias if present
+        bool has_bias = bias.ndim() > 0;
+        MPSGraphTensor *result_tensor = conv_result;
+        Tensor bias_gpu;
+        if (has_bias) {
+            bias_gpu = ensureContiguous(bias);
+            NSArray<NSNumber *> *bias_shape =
+                @[ @1, @((NSInteger)bias_gpu.shape()[0]), @1, @1 ];
+            MPSGraphTensor *b = createPlaceholder(graph, bias_gpu);
+            MPSGraphTensor *b_reshaped =
+                [graph reshapeTensor:b withShape:bias_shape name:nil];
+            result_tensor = [graph additionWithPrimaryTensor:conv_result
+                                            secondaryTensor:b_reshaped
+                                                       name:nil];
+        }
+
+        Shape gpu_out_shape{n, c_out, h_out, w_out};
+        Tensor result(gpu_out_shape, inp.dtype(), Device::GPU);
+
+        MPSGraphTensorData *input_data = createTensorData(inp);
+        MPSGraphTensorData *weight_data = createTensorData(wt);
+        MPSGraphTensorData *result_data = createTensorData(result);
+
+        NSMutableDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds =
+            [NSMutableDictionary dictionaryWithDictionary:@{
+                x : input_data,
+                w : weight_data
+            }];
+
+        if (has_bias) {
+            MPSGraphTensor *b_placeholder =
+                [graph.placeholderTensors objectAtIndex:2];
+            feeds[b_placeholder] = createTensorData(bias_gpu);
+        }
+
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
+            @{result_tensor : result_data};
+
+        encodeMPSGraphAsync(graph, feeds, targets);
+
+        if (was_3d) {
+            return result.squeeze(0);
+        }
+        return result;
+    }
+}
+
+Tensor gpu_conv_transpose1d(const Tensor &input, const Tensor &weight,
+                            const Tensor &bias, int stride, int padding,
+                            int output_padding, int dilation, int groups) {
+    @autoreleasepool {
+        Tensor inp = ensureContiguous(input);
+        Tensor wt = ensureContiguous(weight);
+
+        // Ensure 3D: (N, C, L)
+        bool was_2d = (inp.ndim() == 2);
+        if (was_2d) {
+            inp = inp.unsqueeze(0);
+        }
+
+        // Reshape to 4D: (N, C, 1, L) and (C_in, C_out/g, 1, K)
+        size_t n = inp.shape()[0];
+        size_t c_in = inp.shape()[1];
+        size_t length = inp.shape()[2];
+        inp = inp.reshape({n, c_in, 1, length});
+
+        size_t c_in_w = wt.shape()[0];
+        size_t c_out_g = wt.shape()[1];
+        size_t kernel_size = wt.shape()[2];
+        wt = wt.reshape({c_in_w, c_out_g, 1, kernel_size});
+
+        // Delegate to 2D transposed conv with height params = identity
+        Tensor result = gpu_conv_transpose2d(
+            inp, wt, bias, {1, stride}, {0, padding}, {0, output_padding},
+            {1, dilation}, groups);
+
+        // Reshape back: (N, C_out, 1, L_out) → (N, C_out, L_out)
+        if (result.ndim() == 4) {
+            result = result.squeeze(2);
+        }
+        if (was_2d) {
+            result = result.squeeze(0);
+        }
+        return result;
+    }
+}
+
+// ============================================================================
+// GPU Interpolation — nearest/bilinear via MPSGraph, bicubic via CPU fallback
+// ============================================================================
+
+Tensor gpu_interpolate(const Tensor &input,
+                       const std::vector<size_t> &target_size,
+                       ops::InterpolateMode mode, bool align_corners) {
+    // Bicubic: fall back to CPU (MPSGraph doesn't support bicubic resize)
+    if (mode == ops::InterpolateMode::Bicubic) {
+        auto cpu_input = input.cpu();
+        auto cpu_result =
+            ops::interpolate(cpu_input, target_size, {}, mode, align_corners);
+        return cpu_result.gpu();
+    }
+
+    @autoreleasepool {
+        Tensor inp = ensureContiguous(input);
+
+        // Input: (N, C, ...spatial...) — 3D (1 spatial) or 4D (2 spatial)
+        bool is_1d = (inp.ndim() == 3);
+        if (is_1d) {
+            // Reshape (N, C, L) → (N, C, 1, L) for 2D resize
+            size_t n = inp.shape()[0];
+            size_t c = inp.shape()[1];
+            size_t l = inp.shape()[2];
+            inp = inp.reshape({n, c, 1, l});
+        }
+
+        MPSGraph *graph = [[MPSGraph alloc] init];
+        MPSGraphTensor *x = createPlaceholder(graph, inp);
+
+        // Build target shape for resize: height and width
+        size_t target_h, target_w;
+        if (is_1d) {
+            target_h = 1;
+            target_w = target_size[0];
+        } else {
+            target_h = target_size[0];
+            target_w = target_size[1];
+        }
+
+        NSArray<NSNumber *> *sizeArray =
+            @[ @((NSInteger)target_h), @((NSInteger)target_w) ];
+
+        MPSGraphResizeMode resize_mode;
+        if (mode == ops::InterpolateMode::Nearest) {
+            resize_mode = MPSGraphResizeNearest;
+        } else {
+            resize_mode = MPSGraphResizeBilinear;
+        }
+
+        // centerResult=true corresponds to half-pixel coordinate convention
+        // (used when align_corners=false). When align_corners=true, we pass
+        // centerResult=false and alignCorners=true.
+        BOOL centerResult = align_corners ? NO : YES;
+        BOOL alignCorners = align_corners ? YES : NO;
+
+        MPSGraphTensor *result_tensor =
+            [graph resizeTensor:x
+                           size:sizeArray
+                           mode:resize_mode
+                   centerResult:centerResult
+                   alignCorners:alignCorners
+                         layout:MPSGraphTensorNamedDataLayoutNCHW
+                           name:nil];
+
+        // Compute output shape
+        size_t n = inp.shape()[0];
+        size_t c = inp.shape()[1];
+
+        Shape gpu_out_shape;
+        if (is_1d) {
+            gpu_out_shape = Shape{n, c, 1, target_w};
+        } else {
+            gpu_out_shape = Shape{n, c, target_h, target_w};
+        }
+
+        Tensor result(gpu_out_shape, inp.dtype(), Device::GPU);
+
+        MPSGraphTensorData *input_data = createTensorData(inp);
+        MPSGraphTensorData *result_data = createTensorData(result);
+
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds =
+            @{x : input_data};
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
+            @{result_tensor : result_data};
+
+        encodeMPSGraphAsync(graph, feeds, targets);
+
+        if (is_1d) {
+            // Squeeze back: (N, C, 1, L_out) → (N, C, L_out)
+            return result.squeeze(2);
+        }
+        return result;
+    }
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 

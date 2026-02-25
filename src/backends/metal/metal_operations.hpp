@@ -29,6 +29,21 @@ Tensor gpu_conv2d(const Tensor &input, const Tensor &weight, const Tensor &bias,
                   std::array<int, 2> stride, std::array<int, 2> padding,
                   std::array<int, 2> dilation, int groups);
 
+// Fused GPU transposed convolution
+Tensor gpu_conv_transpose1d(const Tensor &input, const Tensor &weight,
+                            const Tensor &bias, int stride, int padding,
+                            int output_padding, int dilation, int groups);
+Tensor gpu_conv_transpose2d(const Tensor &input, const Tensor &weight,
+                            const Tensor &bias, std::array<int, 2> stride,
+                            std::array<int, 2> padding,
+                            std::array<int, 2> output_padding,
+                            std::array<int, 2> dilation, int groups);
+
+// Fused GPU interpolation
+Tensor gpu_interpolate(const Tensor &input,
+                       const std::vector<size_t> &target_size,
+                       ops::InterpolateMode mode, bool align_corners);
+
 // Fused GPU scaled dot-product attention (Flash Attention v2)
 Tensor gpu_scaled_dot_product_attention(const Tensor &query, const Tensor &key,
                                         const Tensor &value, const Tensor &mask,

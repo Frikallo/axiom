@@ -181,6 +181,8 @@ enum class OpType {
     // Convolution operations
     Conv1D,
     Conv2D,
+    ConvTranspose1D,
+    ConvTranspose2D,
 
     // Fused attention
     ScaledDotProductAttention,
@@ -364,6 +366,7 @@ Tensor tanh(const Tensor &input);
 Tensor gelu(const Tensor &input);
 Tensor softmax(const Tensor &input, int axis = -1);
 Tensor log_softmax(const Tensor &input, int axis = -1);
+Tensor glu(const Tensor &input, int dim = -1);
 
 // Reduction operations
 Tensor sum(const Tensor &input, const std::vector<int> &axis = {},
@@ -589,6 +592,37 @@ Tensor conv2d(const Tensor &input, const Tensor &weight,
               const Tensor &bias = Tensor(), std::array<int, 2> stride = {1, 1},
               std::array<int, 2> padding = {0, 0},
               std::array<int, 2> dilation = {1, 1}, int groups = 1);
+
+// Transposed 1D Convolution (PyTorch-compatible)
+// Input: (N, C_in, L) or (C_in, L)
+// Weight: (C_in, C_out/groups, kernel_size)
+// Output: (N, C_out, L_out) where L_out = (L-1)*stride - 2*padding +
+// dilation*(kernel_size-1) + output_padding + 1
+Tensor conv_transpose1d(const Tensor &input, const Tensor &weight,
+                        const Tensor &bias = Tensor(), int stride = 1,
+                        int padding = 0, int output_padding = 0,
+                        int dilation = 1, int groups = 1);
+
+// Transposed 2D Convolution (PyTorch-compatible)
+// Input: (N, C_in, H, W) or (C_in, H, W)
+// Weight: (C_in, C_out/groups, kH, kW)
+Tensor conv_transpose2d(const Tensor &input, const Tensor &weight,
+                        const Tensor &bias = Tensor(),
+                        std::array<int, 2> stride = {1, 1},
+                        std::array<int, 2> padding = {0, 0},
+                        std::array<int, 2> output_padding = {0, 0},
+                        std::array<int, 2> dilation = {1, 1}, int groups = 1);
+
+// ============================================================================
+// Interpolation / upsampling
+// ============================================================================
+
+enum class InterpolateMode { Nearest, Bilinear, Bicubic };
+
+Tensor interpolate(const Tensor &input, const std::vector<size_t> &size = {},
+                   const std::vector<float> &scale_factor = {},
+                   InterpolateMode mode = InterpolateMode::Nearest,
+                   bool align_corners = false);
 
 // ============================================================================
 // Fused attention

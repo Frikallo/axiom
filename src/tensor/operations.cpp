@@ -186,6 +186,10 @@ static std::string op_type_name(OpType op) {
         return "conv1d";
     case OpType::Conv2D:
         return "conv2d";
+    case OpType::ConvTranspose1D:
+        return "conv_transpose1d";
+    case OpType::ConvTranspose2D:
+        return "conv_transpose2d";
     case OpType::ScaledDotProductAttention:
         return "scaled_dot_product_attention";
     default:
@@ -1423,6 +1427,25 @@ Tensor log_softmax(const Tensor &input, int axis) {
     }
 
     return op->execute_reduction(input, {axis}, false);
+}
+
+Tensor glu(const Tensor &input, int dim) {
+    int ndim = static_cast<int>(input.ndim());
+    if (dim < 0) {
+        dim += ndim;
+    }
+    if (dim < 0 || dim >= ndim) {
+        throw ValueError("glu: dim " + std::to_string(dim) +
+                         " out of range for tensor with " +
+                         std::to_string(ndim) + " dimensions");
+    }
+    if (input.shape()[dim] % 2 != 0) {
+        throw ValueError("glu: dimension " + std::to_string(dim) + " size (" +
+                         std::to_string(input.shape()[dim]) +
+                         ") must be divisible by 2");
+    }
+    auto chunks = input.chunk(2, dim);
+    return multiply(chunks[0], sigmoid(chunks[1]));
 }
 
 // Reduction operations
@@ -3252,6 +3275,645 @@ Tensor conv2d(const Tensor &input, const Tensor &weight, const Tensor &bias,
                     }
                 }
             }
+        }
+    });
+
+    if (input.device() == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+// ============================================================================
+// Transposed 1D Convolution
+// ============================================================================
+
+Tensor conv_transpose1d(const Tensor &input, const Tensor &weight,
+                        const Tensor &bias, int stride, int padding,
+                        int output_padding, int dilation, int groups) {
+    if (stride <= 0) {
+        throw ValueError("conv_transpose1d: stride must be > 0");
+    }
+    if (padding < 0) {
+        throw ValueError("conv_transpose1d: padding must be >= 0");
+    }
+    if (output_padding < 0 || output_padding >= stride) {
+        throw ValueError("conv_transpose1d: output_padding must be in "
+                         "[0, stride)");
+    }
+    if (dilation <= 0) {
+        throw ValueError("conv_transpose1d: dilation must be > 0");
+    }
+    if (groups <= 0) {
+        throw ValueError("conv_transpose1d: groups must be > 0");
+    }
+    if (input.ndim() < 2 || input.ndim() > 3) {
+        throw ShapeError("conv_transpose1d: expected 2D or 3D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+    if (weight.ndim() != 3) {
+        throw ShapeError(
+            "conv_transpose1d: weight must be 3D (C_in, C_out/groups, K)");
+    }
+
+    bool has_batch = (input.ndim() == 3);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t c_in = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t length = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t c_out_per_group = weight.shape()[1];
+    size_t kernel_size = weight.shape()[2];
+    size_t c_out = c_out_per_group * static_cast<size_t>(groups);
+
+    if (c_in != weight.shape()[0]) {
+        throw ShapeError("conv_transpose1d: input channels (" +
+                         std::to_string(c_in) +
+                         ") must equal weight.shape[0] (" +
+                         std::to_string(weight.shape()[0]) + ")");
+    }
+    if (c_in % static_cast<size_t>(groups) != 0) {
+        throw ShapeError("conv_transpose1d: C_in must be divisible by groups");
+    }
+
+    size_t c_in_per_group = c_in / static_cast<size_t>(groups);
+    size_t out_length = (length - 1) * static_cast<size_t>(stride) -
+                        2 * static_cast<size_t>(padding) +
+                        static_cast<size_t>(dilation) * (kernel_size - 1) +
+                        static_cast<size_t>(output_padding) + 1;
+
+    Shape out_shape = has_batch ? Shape{batch_size, c_out, out_length}
+                                : Shape{c_out, out_length};
+
+#ifdef AXIOM_METAL_SUPPORT
+    if (input.device() == Device::GPU) {
+        return backends::metal::gpu_conv_transpose1d(
+            input, weight, bias, stride, padding, output_padding, dilation,
+            groups);
+    }
+#endif
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor weight_cpu = weight.device() == Device::CPU ? weight : weight.cpu();
+    Tensor result = Tensor::zeros(out_shape, input.dtype());
+
+    bool has_bias = bias.ndim() > 0;
+    Tensor bias_cpu;
+    if (has_bias) {
+        bias_cpu = bias.device() == Device::CPU ? bias : bias.cpu();
+    }
+
+    dispatch_float(input.dtype(), "conv_transpose1d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+
+        Tensor in_c = input_cpu.is_contiguous() ? input_cpu
+                                                : input_cpu.ascontiguousarray();
+        Tensor w_c = weight_cpu.is_contiguous()
+                         ? weight_cpu
+                         : weight_cpu.ascontiguousarray();
+        const T *in_data = in_c.typed_data<T>();
+        const T *w_data = w_c.typed_data<T>();
+        T *out_data = result.typed_data<T>();
+
+        // Scatter-based: for each input position, scatter to output positions
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (int g = 0; g < groups; ++g) {
+                for (size_t ic = 0; ic < c_in_per_group; ++ic) {
+                    size_t ic_global =
+                        static_cast<size_t>(g) * c_in_per_group + ic;
+
+                    for (size_t i = 0; i < length; ++i) {
+                        size_t in_idx = has_batch ? b * c_in * length +
+                                                        ic_global * length + i
+                                                  : ic_global * length + i;
+                        double in_val = static_cast<double>(in_data[in_idx]);
+
+                        for (size_t oc = 0; oc < c_out_per_group; ++oc) {
+                            size_t oc_global =
+                                static_cast<size_t>(g) * c_out_per_group + oc;
+
+                            for (size_t k = 0; k < kernel_size; ++k) {
+                                int out_pos = static_cast<int>(i) * stride -
+                                              padding +
+                                              static_cast<int>(k) * dilation;
+                                if (out_pos >= 0 &&
+                                    out_pos < static_cast<int>(out_length)) {
+                                    // weight: (C_in, C_out/groups, K)
+                                    size_t w_idx = ic_global * c_out_per_group *
+                                                       kernel_size +
+                                                   oc * kernel_size + k;
+                                    size_t o_idx =
+                                        has_batch
+                                            ? b * c_out * out_length +
+                                                  oc_global * out_length +
+                                                  static_cast<size_t>(out_pos)
+                                            : oc_global * out_length +
+                                                  static_cast<size_t>(out_pos);
+                                    out_data[o_idx] += static_cast<T>(
+                                        in_val *
+                                        static_cast<double>(w_data[w_idx]));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add bias
+        if (has_bias) {
+            Tensor b_c = bias_cpu.is_contiguous()
+                             ? bias_cpu
+                             : bias_cpu.ascontiguousarray();
+            const T *bias_data = b_c.typed_data<T>();
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t oc = 0; oc < c_out; ++oc) {
+                    for (size_t o = 0; o < out_length; ++o) {
+                        size_t idx = has_batch ? b * c_out * out_length +
+                                                     oc * out_length + o
+                                               : oc * out_length + o;
+                        out_data[idx] +=
+                            static_cast<T>(static_cast<double>(bias_data[oc]));
+                    }
+                }
+            }
+        }
+    });
+
+    if (input.device() == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+// ============================================================================
+// Transposed 2D Convolution
+// ============================================================================
+
+Tensor conv_transpose2d(const Tensor &input, const Tensor &weight,
+                        const Tensor &bias, std::array<int, 2> stride,
+                        std::array<int, 2> padding,
+                        std::array<int, 2> output_padding,
+                        std::array<int, 2> dilation, int groups) {
+    if (stride[0] <= 0 || stride[1] <= 0) {
+        throw ValueError("conv_transpose2d: stride must be > 0");
+    }
+    if (padding[0] < 0 || padding[1] < 0) {
+        throw ValueError("conv_transpose2d: padding must be >= 0");
+    }
+    if (output_padding[0] < 0 || output_padding[0] >= stride[0] ||
+        output_padding[1] < 0 || output_padding[1] >= stride[1]) {
+        throw ValueError("conv_transpose2d: output_padding must be in "
+                         "[0, stride)");
+    }
+    if (dilation[0] <= 0 || dilation[1] <= 0) {
+        throw ValueError("conv_transpose2d: dilation must be > 0");
+    }
+    if (groups <= 0) {
+        throw ValueError("conv_transpose2d: groups must be > 0");
+    }
+    if (input.ndim() < 3 || input.ndim() > 4) {
+        throw ShapeError("conv_transpose2d: expected 3D or 4D input, got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+    if (weight.ndim() != 4) {
+        throw ShapeError("conv_transpose2d: weight must be 4D "
+                         "(C_in, C_out/groups, kH, kW)");
+    }
+
+    bool has_batch = (input.ndim() == 4);
+    size_t batch_size = has_batch ? input.shape()[0] : 1;
+    size_t c_in = has_batch ? input.shape()[1] : input.shape()[0];
+    size_t h_in = has_batch ? input.shape()[2] : input.shape()[1];
+    size_t w_in = has_batch ? input.shape()[3] : input.shape()[2];
+    size_t c_out_per_group = weight.shape()[1];
+    size_t kh = weight.shape()[2];
+    size_t kw = weight.shape()[3];
+    size_t c_out = c_out_per_group * static_cast<size_t>(groups);
+
+    if (c_in != weight.shape()[0]) {
+        throw ShapeError("conv_transpose2d: input channels must match "
+                         "weight.shape[0]");
+    }
+    if (c_in % static_cast<size_t>(groups) != 0) {
+        throw ShapeError("conv_transpose2d: C_in must be divisible by groups");
+    }
+
+    size_t c_in_per_group = c_in / static_cast<size_t>(groups);
+
+    size_t h_out = (h_in - 1) * static_cast<size_t>(stride[0]) -
+                   2 * static_cast<size_t>(padding[0]) +
+                   static_cast<size_t>(dilation[0]) * (kh - 1) +
+                   static_cast<size_t>(output_padding[0]) + 1;
+    size_t w_out = (w_in - 1) * static_cast<size_t>(stride[1]) -
+                   2 * static_cast<size_t>(padding[1]) +
+                   static_cast<size_t>(dilation[1]) * (kw - 1) +
+                   static_cast<size_t>(output_padding[1]) + 1;
+
+    Shape out_shape = has_batch ? Shape{batch_size, c_out, h_out, w_out}
+                                : Shape{c_out, h_out, w_out};
+
+#ifdef AXIOM_METAL_SUPPORT
+    if (input.device() == Device::GPU) {
+        return backends::metal::gpu_conv_transpose2d(
+            input, weight, bias, stride, padding, output_padding, dilation,
+            groups);
+    }
+#endif
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor weight_cpu = weight.device() == Device::CPU ? weight : weight.cpu();
+    Tensor result = Tensor::zeros(out_shape, input.dtype());
+
+    bool has_bias = bias.ndim() > 0;
+    Tensor bias_cpu;
+    if (has_bias) {
+        bias_cpu = bias.device() == Device::CPU ? bias : bias.cpu();
+    }
+
+    dispatch_float(input.dtype(), "conv_transpose2d", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+
+        Tensor in_c = input_cpu.is_contiguous() ? input_cpu
+                                                : input_cpu.ascontiguousarray();
+        Tensor w_c = weight_cpu.is_contiguous()
+                         ? weight_cpu
+                         : weight_cpu.ascontiguousarray();
+        const T *in_data = in_c.typed_data<T>();
+        const T *w_data = w_c.typed_data<T>();
+        T *out_data = result.typed_data<T>();
+
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (int g = 0; g < groups; ++g) {
+                for (size_t ic = 0; ic < c_in_per_group; ++ic) {
+                    size_t ic_global =
+                        static_cast<size_t>(g) * c_in_per_group + ic;
+
+                    for (size_t ih = 0; ih < h_in; ++ih) {
+                        for (size_t iw = 0; iw < w_in; ++iw) {
+                            size_t in_idx =
+                                has_batch
+                                    ? b * c_in * h_in * w_in +
+                                          ic_global * h_in * w_in + ih * w_in +
+                                          iw
+                                    : ic_global * h_in * w_in + ih * w_in + iw;
+                            double in_val =
+                                static_cast<double>(in_data[in_idx]);
+
+                            for (size_t oc = 0; oc < c_out_per_group; ++oc) {
+                                size_t oc_global =
+                                    static_cast<size_t>(g) * c_out_per_group +
+                                    oc;
+
+                                for (size_t fh = 0; fh < kh; ++fh) {
+                                    for (size_t fw = 0; fw < kw; ++fw) {
+                                        int oh =
+                                            static_cast<int>(ih) * stride[0] -
+                                            padding[0] +
+                                            static_cast<int>(fh) * dilation[0];
+                                        int ow =
+                                            static_cast<int>(iw) * stride[1] -
+                                            padding[1] +
+                                            static_cast<int>(fw) * dilation[1];
+
+                                        if (oh >= 0 &&
+                                            oh < static_cast<int>(h_out) &&
+                                            ow >= 0 &&
+                                            ow < static_cast<int>(w_out)) {
+                                            size_t w_idx =
+                                                ic_global * c_out_per_group *
+                                                    kh * kw +
+                                                oc * kh * kw + fh * kw + fw;
+                                            size_t o_idx =
+                                                has_batch
+                                                    ? b * c_out * h_out *
+                                                              w_out +
+                                                          oc_global * h_out *
+                                                              w_out +
+                                                          static_cast<size_t>(
+                                                              oh) *
+                                                              w_out +
+                                                          static_cast<size_t>(
+                                                              ow)
+                                                    : oc_global * h_out *
+                                                              w_out +
+                                                          static_cast<size_t>(
+                                                              oh) *
+                                                              w_out +
+                                                          static_cast<size_t>(
+                                                              ow);
+                                            out_data[o_idx] += static_cast<T>(
+                                                in_val * static_cast<double>(
+                                                             w_data[w_idx]));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (has_bias) {
+            Tensor b_c = bias_cpu.is_contiguous()
+                             ? bias_cpu
+                             : bias_cpu.ascontiguousarray();
+            const T *bias_data = b_c.typed_data<T>();
+            for (size_t b = 0; b < batch_size; ++b) {
+                for (size_t oc = 0; oc < c_out; ++oc) {
+                    for (size_t oh = 0; oh < h_out; ++oh) {
+                        for (size_t ow = 0; ow < w_out; ++ow) {
+                            size_t idx =
+                                has_batch
+                                    ? b * c_out * h_out * w_out +
+                                          oc * h_out * w_out + oh * w_out + ow
+                                    : oc * h_out * w_out + oh * w_out + ow;
+                            out_data[idx] += static_cast<T>(
+                                static_cast<double>(bias_data[oc]));
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    if (input.device() == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+// ============================================================================
+// Interpolation / Upsampling
+// ============================================================================
+
+Tensor interpolate(const Tensor &input, const std::vector<size_t> &size,
+                   const std::vector<float> &scale_factor, InterpolateMode mode,
+                   bool align_corners) {
+    if (input.ndim() < 3) {
+        throw ShapeError("interpolate: expected at least 3D input "
+                         "(N, C, ..spatial..), got " +
+                         std::to_string(input.ndim()) + "D");
+    }
+
+    size_t spatial_start = 2;
+    size_t num_spatial = input.ndim() - spatial_start;
+
+    // Determine target size
+    std::vector<size_t> target_size;
+    if (!size.empty()) {
+        target_size = size;
+    } else if (!scale_factor.empty()) {
+        if (scale_factor.size() != num_spatial) {
+            throw ValueError(
+                "interpolate: scale_factor length must match spatial dims");
+        }
+        target_size.resize(num_spatial);
+        for (size_t i = 0; i < num_spatial; ++i) {
+            target_size[i] = static_cast<size_t>(
+                static_cast<float>(input.shape()[spatial_start + i]) *
+                scale_factor[i]);
+        }
+    } else {
+        throw ValueError(
+            "interpolate: must specify either size or scale_factor");
+    }
+
+    if (target_size.size() != num_spatial) {
+        throw ValueError("interpolate: size length must match spatial dims");
+    }
+
+    // Build output shape
+    Shape out_shape;
+    out_shape.push_back(input.shape()[0]); // N
+    out_shape.push_back(input.shape()[1]); // C
+    for (auto s : target_size) {
+        out_shape.push_back(s);
+    }
+
+#ifdef AXIOM_METAL_SUPPORT
+    if (input.device() == Device::GPU) {
+        return backends::metal::gpu_interpolate(input, target_size, mode,
+                                                align_corners);
+    }
+#endif
+
+    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
+    Tensor result(out_shape, input.dtype(), Device::CPU);
+
+    dispatch_float(input.dtype(), "interpolate", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+
+        Tensor in_c = input_cpu.is_contiguous() ? input_cpu
+                                                : input_cpu.ascontiguousarray();
+        const T *in_data = in_c.typed_data<T>();
+        T *out_data = result.typed_data<T>();
+
+        size_t N = input.shape()[0];
+        size_t C = input.shape()[1];
+
+        if (num_spatial == 1) {
+            // 1D interpolation
+            size_t in_L = input.shape()[2];
+            size_t out_L = target_size[0];
+
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t c = 0; c < C; ++c) {
+                    const T *in_ptr = in_data + n * C * in_L + c * in_L;
+                    T *out_ptr = out_data + n * C * out_L + c * out_L;
+
+                    for (size_t o = 0; o < out_L; ++o) {
+                        if (mode == InterpolateMode::Nearest) {
+                            size_t src =
+                                static_cast<size_t>(static_cast<float>(o) *
+                                                    static_cast<float>(in_L) /
+                                                    static_cast<float>(out_L));
+                            if (src >= in_L)
+                                src = in_L - 1;
+                            out_ptr[o] = in_ptr[src];
+                        } else {
+                            // Linear interpolation for 1D
+                            float src_f;
+                            if (align_corners && out_L > 1) {
+                                src_f = static_cast<float>(o) *
+                                        static_cast<float>(in_L - 1) /
+                                        static_cast<float>(out_L - 1);
+                            } else {
+                                src_f = (static_cast<float>(o) + 0.5f) *
+                                            static_cast<float>(in_L) /
+                                            static_cast<float>(out_L) -
+                                        0.5f;
+                            }
+                            src_f = std::max(
+                                0.0f,
+                                std::min(src_f, static_cast<float>(in_L - 1)));
+                            size_t i0 = static_cast<size_t>(src_f);
+                            size_t i1 = std::min(i0 + 1, in_L - 1);
+                            float w1 = src_f - static_cast<float>(i0);
+                            float w0 = 1.0f - w1;
+                            out_ptr[o] = static_cast<T>(
+                                w0 * static_cast<float>(in_ptr[i0]) +
+                                w1 * static_cast<float>(in_ptr[i1]));
+                        }
+                    }
+                }
+            }
+        } else if (num_spatial == 2) {
+            // 2D interpolation
+            size_t in_H = input.shape()[2];
+            size_t in_W = input.shape()[3];
+            size_t out_H = target_size[0];
+            size_t out_W = target_size[1];
+
+            for (size_t n = 0; n < N; ++n) {
+                for (size_t c = 0; c < C; ++c) {
+                    const T *in_ptr =
+                        in_data + n * C * in_H * in_W + c * in_H * in_W;
+                    T *out_ptr =
+                        out_data + n * C * out_H * out_W + c * out_H * out_W;
+
+                    for (size_t oh = 0; oh < out_H; ++oh) {
+                        for (size_t ow = 0; ow < out_W; ++ow) {
+                            if (mode == InterpolateMode::Nearest) {
+                                size_t sh = static_cast<size_t>(
+                                    static_cast<float>(oh) *
+                                    static_cast<float>(in_H) /
+                                    static_cast<float>(out_H));
+                                size_t sw = static_cast<size_t>(
+                                    static_cast<float>(ow) *
+                                    static_cast<float>(in_W) /
+                                    static_cast<float>(out_W));
+                                if (sh >= in_H)
+                                    sh = in_H - 1;
+                                if (sw >= in_W)
+                                    sw = in_W - 1;
+                                out_ptr[oh * out_W + ow] =
+                                    in_ptr[sh * in_W + sw];
+                            } else if (mode == InterpolateMode::Bilinear) {
+                                float src_h, src_w;
+                                if (align_corners && out_H > 1) {
+                                    src_h = static_cast<float>(oh) *
+                                            static_cast<float>(in_H - 1) /
+                                            static_cast<float>(out_H - 1);
+                                } else {
+                                    src_h = (static_cast<float>(oh) + 0.5f) *
+                                                static_cast<float>(in_H) /
+                                                static_cast<float>(out_H) -
+                                            0.5f;
+                                }
+                                if (align_corners && out_W > 1) {
+                                    src_w = static_cast<float>(ow) *
+                                            static_cast<float>(in_W - 1) /
+                                            static_cast<float>(out_W - 1);
+                                } else {
+                                    src_w = (static_cast<float>(ow) + 0.5f) *
+                                                static_cast<float>(in_W) /
+                                                static_cast<float>(out_W) -
+                                            0.5f;
+                                }
+                                src_h = std::max(
+                                    0.0f, std::min(src_h, static_cast<float>(
+                                                              in_H - 1)));
+                                src_w = std::max(
+                                    0.0f, std::min(src_w, static_cast<float>(
+                                                              in_W - 1)));
+
+                                size_t h0 = static_cast<size_t>(src_h);
+                                size_t w0 = static_cast<size_t>(src_w);
+                                size_t h1 = std::min(h0 + 1, in_H - 1);
+                                size_t w1 = std::min(w0 + 1, in_W - 1);
+
+                                float wh = src_h - static_cast<float>(h0);
+                                float ww = src_w - static_cast<float>(w0);
+
+                                float v00 =
+                                    static_cast<float>(in_ptr[h0 * in_W + w0]);
+                                float v01 =
+                                    static_cast<float>(in_ptr[h0 * in_W + w1]);
+                                float v10 =
+                                    static_cast<float>(in_ptr[h1 * in_W + w0]);
+                                float v11 =
+                                    static_cast<float>(in_ptr[h1 * in_W + w1]);
+
+                                float val = (1 - wh) * (1 - ww) * v00 +
+                                            (1 - wh) * ww * v01 +
+                                            wh * (1 - ww) * v10 + wh * ww * v11;
+                                out_ptr[oh * out_W + ow] = static_cast<T>(val);
+                            } else {
+                                // Bicubic
+                                float src_h, src_w;
+                                if (align_corners && out_H > 1) {
+                                    src_h = static_cast<float>(oh) *
+                                            static_cast<float>(in_H - 1) /
+                                            static_cast<float>(out_H - 1);
+                                } else {
+                                    src_h = (static_cast<float>(oh) + 0.5f) *
+                                                static_cast<float>(in_H) /
+                                                static_cast<float>(out_H) -
+                                            0.5f;
+                                }
+                                if (align_corners && out_W > 1) {
+                                    src_w = static_cast<float>(ow) *
+                                            static_cast<float>(in_W - 1) /
+                                            static_cast<float>(out_W - 1);
+                                } else {
+                                    src_w = (static_cast<float>(ow) + 0.5f) *
+                                                static_cast<float>(in_W) /
+                                                static_cast<float>(out_W) -
+                                            0.5f;
+                                }
+
+                                // Cubic interpolation kernel
+                                auto cubic = [](float x) -> float {
+                                    float a = -0.75f;
+                                    x = std::abs(x);
+                                    if (x <= 1.0f) {
+                                        return (a + 2.0f) * x * x * x -
+                                               (a + 3.0f) * x * x + 1.0f;
+                                    }
+                                    if (x < 2.0f) {
+                                        return a * x * x * x -
+                                               5.0f * a * x * x + 8.0f * a * x -
+                                               4.0f * a;
+                                    }
+                                    return 0.0f;
+                                };
+
+                                int h_floor =
+                                    static_cast<int>(std::floor(src_h));
+                                int w_floor =
+                                    static_cast<int>(std::floor(src_w));
+
+                                float val = 0.0f;
+                                for (int dh = -1; dh <= 2; ++dh) {
+                                    int sh = std::max(
+                                        0,
+                                        std::min(h_floor + dh,
+                                                 static_cast<int>(in_H) - 1));
+                                    float wh = cubic(src_h - static_cast<float>(
+                                                                 h_floor + dh));
+                                    for (int dw = -1; dw <= 2; ++dw) {
+                                        int sw = std::max(
+                                            0, std::min(w_floor + dw,
+                                                        static_cast<int>(in_W) -
+                                                            1));
+                                        float ww =
+                                            cubic(src_w - static_cast<float>(
+                                                              w_floor + dw));
+                                        val += wh * ww *
+                                               static_cast<float>(
+                                                   in_ptr[sh * in_W + sw]);
+                                    }
+                                }
+                                out_ptr[oh * out_W + ow] = static_cast<T>(val);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            throw ValueError("interpolate: only 1D and 2D spatial "
+                             "interpolation supported, got " +
+                             std::to_string(num_spatial) + "D");
         }
     });
 

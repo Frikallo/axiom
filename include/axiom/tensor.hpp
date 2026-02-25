@@ -247,6 +247,9 @@ class Tensor {
     Tensor unflatten(int dim, const Shape &sizes) const;
 
     // NumPy-like aliases and view operations
+    Tensor permute(const std::vector<int> &dims) const {
+        return transpose(dims);
+    }
     Tensor T() const { return transpose(); }
     Tensor ravel() const { return flatten(); }
     Tensor negative() const;
@@ -428,6 +431,7 @@ class Tensor {
     Tensor tanh() const;
     Tensor softmax(int axis = -1) const;
     Tensor log_softmax(int axis = -1) const;
+    Tensor glu(int dim = -1) const;
 
     // Memory operations
     Tensor copy(MemoryOrder order = MemoryOrder::RowMajor) const;
