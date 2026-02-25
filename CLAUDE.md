@@ -41,6 +41,7 @@ Axiom is a C++20 high-performance tensor library with NumPy/PyTorch-compatible A
 | CPU backend | `src/backends/cpu/cpu_operations.hpp` | `src/backends/cpu/cpu_operations.cpp` |
 | GPU backend | `src/backends/metal/mpsgraph_operations.hpp` | `src/backends/metal/mpsgraph_operations.mm` |
 | Lazy eval / fusion | `include/axiom/graph/*.hpp` | `src/graph/*.cpp` |
+| NN modules | `include/axiom/nn/*.hpp` | `src/nn/*.cpp` |
 | Linear algebra | `include/axiom/linalg.hpp` | `src/tensor/linalg.cpp` |
 | Einops | `include/axiom/einops.hpp` | `src/tensor/einops.cpp` |
 | FFT | `include/axiom/fft.hpp` | `src/tensor/fft.cpp` |

@@ -9,6 +9,7 @@ Auto-generated from C++ headers in `include/axiom/`.
 | {doc}`linalg` | Linear algebra — SVD, eigendecomposition, solve, etc. (`axiom::linalg`) |
 | {doc}`fft` | Fast Fourier transforms (`axiom::fft`) |
 | {doc}`einops` | Einstein notation operations (`axiom::einops`) |
+| {doc}`nn` | Neural network modules for inference — layers, containers, attention (`axiom::nn`) |
 | {doc}`io` | Serialization — FlatBuffers `.axfb` and NumPy `.npy` (`axiom::io`) |
 | {doc}`dtypes` | `DType`, `Device` enums and type utilities |
 | {doc}`random` | Random number generation (`axiom::RandomGenerator`) |
@@ -25,6 +26,7 @@ operations
 linalg
 fft
 einops
+nn
 io
 dtypes
 random
