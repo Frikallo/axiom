@@ -467,12 +467,13 @@ run-benchmarks-json: benchmarks  ## Run benchmarks with JSON output
 BUILD_DIR_DIST := build-dist
 
 .PHONY: dist
-dist:  ## Build distribution package with bundled dependencies
+dist:  ## Build CPU-only distribution package with bundled dependencies
 	@echo "$(CYAN)Configuring distribution build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR_DIST) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) \
+	@$(CMAKE) -B $(BUILD_DIR_DIST) $(CMAKE_GENERATOR) $(CCACHE_FLAGS) \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX=$(BUILD_DIR_DIST)/install \
 		-DAXIOM_DIST_BUILD=ON \
+		-DAXIOM_CUDA_BACKEND=OFF \
 		-DAXIOM_BUILD_TESTS=OFF \
 		-DAXIOM_BUILD_EXAMPLES=OFF \
 		-DAXIOM_EMBED_METAL_LIBRARY=ON
@@ -482,7 +483,29 @@ dist:  ## Build distribution package with bundled dependencies
 	@$(CMAKE) --install $(BUILD_DIR_DIST)
 	@echo "$(CYAN)Creating distribution package...$(RESET)"
 	@cd $(BUILD_DIR_DIST) && $(CMAKE) --build . --target package
-	@echo "$(GREEN)✓ Distribution package created in $(BUILD_DIR_DIST)$(RESET)"
+	@cp $(BUILD_DIR_DIST)/axiom-*.tar.gz .
+	@echo "$(GREEN)✓ Distribution package:$(RESET)" axiom-*-linux-*.tar.gz
+
+BUILD_DIR_DIST_CUDA := build-dist-cuda
+
+.PHONY: dist-cuda
+dist-cuda:  ## Build CUDA distribution package with bundled CUDA libraries
+	@echo "$(CYAN)Configuring CUDA distribution build...$(RESET)"
+	@$(CMAKE) -B $(BUILD_DIR_DIST_CUDA) $(CMAKE_GENERATOR) $(CCACHE_FLAGS) \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=$(BUILD_DIR_DIST_CUDA)/install \
+		-DAXIOM_DIST_BUILD=ON \
+		-DAXIOM_CUDA_DIST=ON \
+		-DAXIOM_BUILD_TESTS=OFF \
+		-DAXIOM_BUILD_EXAMPLES=OFF
+	@echo "$(CYAN)Building CUDA distribution...$(RESET)"
+	@$(CMAKE) --build $(BUILD_DIR_DIST_CUDA) -j$(NPROC)
+	@echo "$(CYAN)Installing to CUDA distribution directory...$(RESET)"
+	@$(CMAKE) --install $(BUILD_DIR_DIST_CUDA)
+	@echo "$(CYAN)Creating CUDA distribution package...$(RESET)"
+	@cd $(BUILD_DIR_DIST_CUDA) && $(CMAKE) --build . --target package
+	@cp $(BUILD_DIR_DIST_CUDA)/axiom-*-cuda.tar.gz .
+	@echo "$(GREEN)✓ CUDA distribution package:$(RESET)" axiom-*-cuda.tar.gz
 
 .PHONY: dist-info
 dist-info:  ## Show distribution build configuration
@@ -504,7 +527,7 @@ endif
 .PHONY: clean-dist
 clean-dist:  ## Clean distribution build artifacts
 	@echo "$(CYAN)Cleaning distribution build...$(RESET)"
-	@rm -rf $(BUILD_DIR_DIST)
+	@rm -rf $(BUILD_DIR_DIST) $(BUILD_DIR_DIST_CUDA)
 	@echo "$(GREEN)✓ Distribution clean complete$(RESET)"
 
 # ============================================================================

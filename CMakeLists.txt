@@ -36,6 +36,7 @@ option(AXIOM_NATIVE_ARCH "Use -march=native for local builds (not portable)" OFF
 option(AXIOM_USE_OPENMP "Enable OpenMP parallelization" ON)
 option(AXIOM_CUDA_BACKEND "Enable CUDA GPU backend (auto-detected)" ON)
 option(AXIOM_DIST_BUILD "Bundle dependencies for distribution" OFF)
+option(AXIOM_CUDA_DIST "Bundle CUDA shared libraries for distribution" OFF)
 
 # BLAS backend selection
 set(AXIOM_BLAS_BACKEND "auto" CACHE STRING "BLAS backend: auto, accelerate, openblas, native")
@@ -169,51 +170,9 @@ elseif(AXIOM_BLAS_BACKEND STREQUAL "native")
 endif()
 
 # ============================================================================
-# CUDA Backend Detection
+# CUDA Backend Detection (cmake/AxiomCUDA.cmake)
 # ============================================================================
-set(AXIOM_HAS_CUDA OFF)
-if(AXIOM_CUDA_BACKEND)
-    find_package(CUDAToolkit QUIET)
-    if(CUDAToolkit_FOUND)
-        enable_language(CUDA)
-        set(CMAKE_CUDA_STANDARD 20)
-        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-        if(AXIOM_DIST_BUILD)
-            set(CMAKE_CUDA_ARCHITECTURES "70;80;86;89;90")
-        else()
-            # Detect native GPU arch via nvidia-smi and cap to nvcc's max.
-            set(_nvcc_max_arch 90)
-            if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")
-                set(_nvcc_max_arch 120)
-            endif()
-            set(_gpu_arch ${_nvcc_max_arch})
-            find_program(_NVIDIA_SMI nvidia-smi)
-            if(_NVIDIA_SMI)
-                execute_process(
-                    COMMAND ${_NVIDIA_SMI}
-                        --query-gpu=compute_cap --format=csv,noheader,nounits
-                    OUTPUT_VARIABLE _smi_out
-                    OUTPUT_STRIP_TRAILING_WHITESPACE
-                    ERROR_QUIET
-                    RESULT_VARIABLE _smi_rc)
-                if(_smi_rc EQUAL 0 AND _smi_out)
-                    # Take first GPU, convert "8.6" → 86
-                    string(REGEX MATCH "[0-9]+\\.[0-9]+" _cap "${_smi_out}")
-                    string(REPLACE "." "" _gpu_arch "${_cap}")
-                    if(_gpu_arch GREATER _nvcc_max_arch)
-                        message(STATUS "CUDA: GPU arch ${_gpu_arch} capped to ${_nvcc_max_arch} (nvcc limit)")
-                        set(_gpu_arch ${_nvcc_max_arch})
-                    endif()
-                endif()
-            endif()
-            set(CMAKE_CUDA_ARCHITECTURES "${_gpu_arch}")
-        endif()
-        set(AXIOM_HAS_CUDA ON)
-        message(STATUS "CUDA backend: enabled (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
-    else()
-        message(STATUS "CUDA backend: disabled (CUDA toolkit not found)")
-    endif()
-endif()
+include(AxiomCUDA)
 
 # ============================================================================
 # Platform-specific configurations (Metal on macOS)
@@ -566,10 +525,9 @@ if(APPLE AND AXIOM_HAS_METAL)
     target_compile_definitions(axiom PUBLIC AXIOM_METAL_SUPPORT)
 endif()
 
-# CUDA backend linking
+# CUDA backend linking (includes transitive deps: cublasLt, cusparse, nvJitLink)
 if(AXIOM_HAS_CUDA)
-    target_link_libraries(axiom PUBLIC CUDA::cudart CUDA::cublas CUDA::cusolver CUDA::cufft CUDA::nvrtc CUDA::cuda_driver)
-    target_compile_definitions(axiom PUBLIC AXIOM_CUDA_SUPPORT)
+    axiom_cuda_link_libraries(axiom)
 endif()
 
 # BLAS backend linking
@@ -680,21 +638,11 @@ if(AXIOM_HAS_OPENMP)
                 message(STATUS "OpenMP (dist): dynamic libomp (static not found)")
             endif()
         elseif(UNIX)
-            # Ask the compiler where static libgomp lives
-            execute_process(
-                COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libgomp.a
-                OUTPUT_VARIABLE _gomp_static
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                ERROR_QUIET
-            )
-            if(EXISTS "${_gomp_static}")
-                target_link_libraries(axiom PRIVATE "${_gomp_static}")
-                target_compile_options(axiom PRIVATE -fopenmp)
-                message(STATUS "OpenMP (dist): static libgomp.a")
-            else()
-                target_link_libraries(axiom PRIVATE OpenMP::OpenMP_CXX)
-                message(STATUS "OpenMP (dist): dynamic (static libgomp not found)")
-            endif()
+            # On Linux, libgomp.a is typically not compiled with -fPIC
+            # so it can't be linked into a shared library. Use dynamic libgomp
+            # which is part of the GCC runtime (universally available on Linux).
+            target_link_libraries(axiom PRIVATE OpenMP::OpenMP_CXX)
+            message(STATUS "OpenMP (dist): dynamic libgomp (GCC runtime)")
         else()
             # Windows: MSVC OpenMP is part of VC++ Redistributable (always available)
             target_link_libraries(axiom PRIVATE OpenMP::OpenMP_CXX)
@@ -905,6 +853,60 @@ if(AXIOM_DIST_BUILD)
 endif()
 
 # ============================================================================
+# Shared Library Bundling for Distribution
+# ============================================================================
+# Installs a shared library plus its SONAME and unversioned symlinks.
+function(axiom_bundle_shared_lib _lib_path _label)
+    if(NOT EXISTS "${_lib_path}")
+        message(WARNING "Bundle ${_label}: ${_lib_path} not found")
+        return()
+    endif()
+    get_filename_component(_real_file "${_lib_path}" REALPATH)
+    get_filename_component(_real_name "${_real_file}" NAME)
+    get_filename_component(_link_name "${_lib_path}" NAME)
+
+    install(FILES "${_real_file}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+    # SONAME symlink (e.g. libgomp.so.1 from libgomp.so.1.0.0)
+    string(REGEX MATCH "^lib.*\\.so\\.[0-9]+" _soname "${_real_name}")
+    if(_soname AND NOT "${_soname}" STREQUAL "${_real_name}")
+        install(CODE "
+            execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink
+                \"${_real_name}\"
+                \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/${_soname}\")
+        ")
+    endif()
+    # Unversioned symlink (e.g. libgomp.so)
+    if(NOT "${_link_name}" STREQUAL "${_real_name}" AND NOT "${_link_name}" STREQUAL "${_soname}")
+        install(CODE "
+            execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink
+                \"${_real_name}\"
+                \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/${_link_name}\")
+        ")
+    endif()
+    message(STATUS "Bundle ${_label}: ${_link_name} -> ${_real_name}")
+endfunction()
+
+# -- Bundle OpenMP (Linux) --------------------------------------------------
+if(AXIOM_DIST_BUILD AND AXIOM_HAS_OPENMP AND UNIX AND NOT APPLE)
+    # libgomp.a is not PIC on most distros, so bundle the shared lib instead.
+    # The unversioned libgomp.so lives under gcc's private dir; use the compiler
+    # to locate it, then resolve to the system versioned copy.
+    execute_process(
+        COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libgomp.so
+        OUTPUT_VARIABLE _gomp_shared
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(_gomp_shared AND EXISTS "${_gomp_shared}")
+        axiom_bundle_shared_lib("${_gomp_shared}" "OpenMP")
+    endif()
+endif()
+
+# -- Bundle CUDA libraries ---------------------------------------------------
+axiom_cuda_bundle_libraries()
+
+# ============================================================================
 # CPack Configuration for Distribution
 # ============================================================================
 if(AXIOM_DIST_BUILD)
@@ -920,6 +922,10 @@ if(AXIOM_DIST_BUILD)
         set(CPACK_SYSTEM_NAME "windows-${CMAKE_SYSTEM_PROCESSOR}")
     else()
         set(CPACK_SYSTEM_NAME "linux-${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+
+    if(AXIOM_CUDA_DIST)
+        set(CPACK_SYSTEM_NAME "${CPACK_SYSTEM_NAME}-cuda")
     endif()
 
     include(CPack)

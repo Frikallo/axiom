@@ -38,6 +38,12 @@ jobs:
             runner: ubuntu-latest
             arch: x86_64
 
+          # Linux x86_64 + CUDA
+          - os: linux-x64-cuda
+            runner: ubuntu-latest
+            arch: x86_64
+            cuda: true
+
           # Windows x86_64
           - os: windows-x64
             runner: windows-latest
@@ -81,6 +87,15 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y ninja-build libopenblas-dev liblapacke-dev gfortran
 
+    # -- CUDA Setup ------------------------------------------------------------
+    - name: Setup CUDA Toolkit
+      if: matrix.cuda
+      uses: Jimver/cuda-toolkit@v0.2.21
+      with:
+        cuda: '12.8.1'
+        method: network
+        sub-packages: '["nvcc", "cudart-dev", "cublas-dev", "cusolver-dev", "cusparse-dev", "cufft-dev", "nvrtc-dev", "nvjitlink-dev"]'
+
     # -- Windows Setup ---------------------------------------------------------
     - name: Setup Windows
       if: matrix.os == 'windows-x64'
@@ -120,6 +135,12 @@ jobs:
     - name: Configure (Unix)
       if: runner.os != 'Windows'
       run: |
+        CUDA_FLAGS=""
+        if [ "${{ matrix.cuda }}" = "true" ]; then
+          CUDA_FLAGS="-DAXIOM_CUDA_DIST=ON"
+        else
+          CUDA_FLAGS="-DAXIOM_CUDA_BACKEND=OFF"
+        fi
         cmake -B build \
           -G Ninja \
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
@@ -127,7 +148,8 @@ jobs:
           -DAXIOM_DIST_BUILD=ON \
           -DAXIOM_BUILD_TESTS=ON \
           -DAXIOM_BUILD_EXAMPLES=OFF \
-          -DAXIOM_EMBED_METAL_LIBRARY=ON
+          -DAXIOM_EMBED_METAL_LIBRARY=ON \
+          $CUDA_FLAGS
 
     - name: Configure (Windows)
       if: runner.os == 'Windows'
@@ -177,6 +199,18 @@ jobs:
         echo ""
         echo "Checking library dependencies:"
         ldd install/lib/libaxiom.so || true
+
+    - name: Verify CUDA Bundle
+      if: matrix.cuda
+      run: |
+        echo "Checking bundled CUDA libraries..."
+        ls -la install/lib/libcu* install/lib/libnv* 2>/dev/null || true
+        echo ""
+        echo "Verifying RPATH on libaxiom.so:"
+        readelf -d install/lib/libaxiom.so | grep -E 'RPATH|RUNPATH' || true
+        echo ""
+        echo "Checking all CUDA deps resolve via bundled libs:"
+        LD_LIBRARY_PATH=install/lib ldd install/lib/libaxiom.so | grep -E 'cuda|cublas|cusolver|cusparse|cufft|nvrtc|nvJitLink'
 
     - name: Verify Bundle (Windows)
       if: matrix.os == 'windows-x64'
