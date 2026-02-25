@@ -29,6 +29,11 @@ Tensor gpu_conv2d(const Tensor &input, const Tensor &weight, const Tensor &bias,
                   std::array<int, 2> stride, std::array<int, 2> padding,
                   std::array<int, 2> dilation, int groups);
 
+// Fused GPU scaled dot-product attention (Flash Attention v2)
+Tensor gpu_scaled_dot_product_attention(const Tensor &query, const Tensor &key,
+                                        const Tensor &value, const Tensor &mask,
+                                        float scale, bool is_causal);
+
 } // namespace metal
 } // namespace backends
 } // namespace axiom

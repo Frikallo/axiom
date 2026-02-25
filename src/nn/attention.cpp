@@ -1,7 +1,5 @@
 #include "axiom/nn/attention.hpp"
 
-#include <cmath>
-
 #include "axiom/error.hpp"
 #include "axiom/operations.hpp"
 
@@ -15,8 +13,8 @@ MultiHeadAttention::MultiHeadAttention(int num_heads) : num_heads_(num_heads) {
 }
 
 Tensor MultiHeadAttention::forward(const Tensor &query, const Tensor &key,
-                                   const Tensor &value,
-                                   const Tensor &mask) const {
+                                   const Tensor &value, const Tensor &mask,
+                                   bool is_causal) const {
     if (query.ndim() != 3) {
         throw ShapeError("MultiHeadAttention expects 3D input (batch, seq, "
                          "d_model), got " +
@@ -51,21 +49,9 @@ Tensor MultiHeadAttention::forward(const Tensor &query, const Tensor &key,
                    static_cast<size_t>(head_dim)})
             .transpose({0, 2, 1, 3});
 
-    // Scaled dot-product attention
-    float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
-    auto scores = ops::matmul(q, k, false, true);
-    auto scale_tensor =
-        Tensor::full({1}, scale, scores.device()).astype(scores.dtype());
-    scores = ops::multiply(scores, scale_tensor);
-
-    // Apply mask if provided (ensure contiguous for masked_fill)
-    if (mask.storage()) {
-        scores = ops::masked_fill(scores.ascontiguousarray(), mask, -1e9f);
-    }
-
-    auto attn_weights = ops::softmax(scores, -1);
-
-    auto attn_output = ops::matmul(attn_weights, v);
+    // Fused scaled dot-product attention (Flash Attention v2)
+    auto attn_output =
+        ops::scaled_dot_product_attention(q, k, v, mask, -1.0f, is_causal);
 
     // Transpose back: (batch, num_heads, seq, head_dim) -> (batch, seq,
     // num_heads, head_dim)

@@ -182,6 +182,9 @@ enum class OpType {
     Conv1D,
     Conv2D,
 
+    // Fused attention
+    ScaledDotProductAttention,
+
     _Count // Must be last — used for traits table sizing
 };
 
@@ -586,6 +589,22 @@ Tensor conv2d(const Tensor &input, const Tensor &weight,
               const Tensor &bias = Tensor(), std::array<int, 2> stride = {1, 1},
               std::array<int, 2> padding = {0, 0},
               std::array<int, 2> dilation = {1, 1}, int groups = 1);
+
+// ============================================================================
+// Fused attention
+// ============================================================================
+
+// Fused scaled dot-product attention (Flash Attention v2)
+// Q/K/V: (batch, num_heads, seq, head_dim) — already projected and reshaped
+// mask: optional Bool tensor, true = masked out. Empty Tensor() to skip.
+// scale: 1/sqrt(head_dim). If <= 0, auto-computed from Q.shape()[3].
+// is_causal: apply lower-triangular causal mask (no external mask needed)
+// Returns: (batch, num_heads, seq_q, head_dim)
+Tensor scaled_dot_product_attention(const Tensor &query, const Tensor &key,
+                                    const Tensor &value,
+                                    const Tensor &mask = Tensor(),
+                                    float scale = -1.0f,
+                                    bool is_causal = false);
 
 } // namespace ops
 } // namespace axiom

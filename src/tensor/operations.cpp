@@ -186,6 +186,8 @@ static std::string op_type_name(OpType op) {
         return "conv1d";
     case OpType::Conv2D:
         return "conv2d";
+    case OpType::ScaledDotProductAttention:
+        return "scaled_dot_product_attention";
     default:
         return "unknown";
     }
@@ -3257,6 +3259,77 @@ Tensor conv2d(const Tensor &input, const Tensor &weight, const Tensor &bias,
         return result.gpu();
     }
     return result;
+}
+
+// ============================================================================
+// Fused scaled dot-product attention
+// ============================================================================
+
+Tensor scaled_dot_product_attention(const Tensor &query, const Tensor &key,
+                                    const Tensor &value, const Tensor &mask,
+                                    float scale, bool is_causal) {
+    if (query.ndim() != 4) {
+        throw ShapeError("scaled_dot_product_attention: Q must be 4D "
+                         "(batch, heads, seq, head_dim), got " +
+                         std::to_string(query.ndim()) + "D");
+    }
+    if (key.ndim() != 4) {
+        throw ShapeError("scaled_dot_product_attention: K must be 4D, got " +
+                         std::to_string(key.ndim()) + "D");
+    }
+    if (value.ndim() != 4) {
+        throw ShapeError("scaled_dot_product_attention: V must be 4D, got " +
+                         std::to_string(value.ndim()) + "D");
+    }
+    if (query.shape()[0] != key.shape()[0] ||
+        query.shape()[0] != value.shape()[0]) {
+        throw ShapeError("scaled_dot_product_attention: batch size mismatch");
+    }
+    if (query.shape()[1] != key.shape()[1] ||
+        query.shape()[1] != value.shape()[1]) {
+        throw ShapeError("scaled_dot_product_attention: num_heads mismatch");
+    }
+    if (key.shape()[2] != value.shape()[2]) {
+        throw ShapeError(
+            "scaled_dot_product_attention: K and V seq length mismatch");
+    }
+    if (query.shape()[3] != key.shape()[3]) {
+        throw ShapeError(
+            "scaled_dot_product_attention: Q and K head_dim mismatch");
+    }
+
+    // Auto-compute scale
+    if (scale <= 0.0f) {
+        scale = 1.0f / std::sqrt(static_cast<float>(query.shape()[3]));
+    }
+
+    // Determine device
+    Device device = Device::CPU;
+    if (query.device() == Device::GPU || key.device() == Device::GPU ||
+        value.device() == Device::GPU) {
+        device = Device::GPU;
+    }
+
+    // Ensure all on same device
+    Tensor q = (query.device() == device) ? query : query.to(device);
+    Tensor k = (key.device() == device) ? key : key.to(device);
+    Tensor v = (value.device() == device) ? value : value.to(device);
+    Tensor m =
+        (mask.storage() && mask.device() != device) ? mask.to(device) : mask;
+
+#ifdef AXIOM_METAL_SUPPORT
+    if (device == Device::GPU) {
+        return backends::metal::gpu_scaled_dot_product_attention(
+            q, k, v, m, scale, is_causal);
+    }
+#endif
+
+    // CPU path: tiled flash attention
+    // Forward-declared in flash_attention_cpu.cpp
+    extern Tensor cpu_flash_attention(const Tensor &query, const Tensor &key,
+                                      const Tensor &value, const Tensor &mask,
+                                      float scale, bool is_causal);
+    return cpu_flash_attention(q, k, v, m, scale, is_causal);
 }
 
 } // namespace ops

@@ -300,6 +300,7 @@ set(AXIOM_SOURCES
     # CPU backend
     src/backends/cpu/cpu_storage.cpp
     src/backends/cpu/cpu_operations.cpp
+    src/backends/cpu/flash_attention_cpu.cpp
 
     # SIMD kernels (Highway)
     src/backends/cpu/simd/hwy_kernels.cc
@@ -361,7 +362,9 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/mpsgraph_fused.mm
         src/backends/metal/graph_cache.mm
+        src/backends/metal/flash_attention_dispatch.mm
         src/backends/metal/kernels.metal
+        src/backends/metal/flash_attention.metal
     )
 
     set_source_files_properties(
@@ -372,7 +375,9 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/mpsgraph_fused.mm
         src/backends/metal/graph_cache.mm
+        src/backends/metal/flash_attention_dispatch.mm
         src/backends/metal/kernels.metal
+        src/backends/metal/flash_attention.metal
         PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"
     )
@@ -394,15 +399,17 @@ if(APPLE AND AXIOM_HAS_METAL)
         target_compile_definitions(axiom PUBLIC AXIOM_METAL_EMBED_LIBRARY)
 
         set(METAL_KERNELS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/metal/kernels.metal)
+        set(METAL_FLASH_ATTN_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/metal/flash_attention.metal)
         set(METAL_LIBRARY_TEMP ${CMAKE_CURRENT_BINARY_DIR}/default.metallib.tmp)
         set(METAL_EMBED_ASM ${CMAKE_CURRENT_BINARY_DIR}/axiom-metal-embed.s)
 
-        # 1. Compile .metal source to a temporary .metallib file
+        # 1. Compile .metal sources to .air, then link into a single .metallib
         add_custom_command(
             OUTPUT ${METAL_LIBRARY_TEMP}
             COMMAND xcrun -sdk macosx metal -c ${METAL_KERNELS_FILE} -o ${CMAKE_CURRENT_BINARY_DIR}/kernels.air
-            COMMAND xcrun -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/kernels.air -o ${METAL_LIBRARY_TEMP}
-            DEPENDS ${METAL_KERNELS_FILE}
+            COMMAND xcrun -sdk macosx metal -c ${METAL_FLASH_ATTN_FILE} -o ${CMAKE_CURRENT_BINARY_DIR}/flash_attention.air
+            COMMAND xcrun -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/kernels.air ${CMAKE_CURRENT_BINARY_DIR}/flash_attention.air -o ${METAL_LIBRARY_TEMP}
+            DEPENDS ${METAL_KERNELS_FILE} ${METAL_FLASH_ATTN_FILE}
             COMMENT "Compiling Metal kernels to temporary library"
         )
 
@@ -422,14 +429,16 @@ if(APPLE AND AXIOM_HAS_METAL)
     else()
         # Compile Metal kernels to a separate file (for development)
         set(METAL_KERNELS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/metal/kernels.metal)
+        set(METAL_FLASH_ATTN_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/metal/flash_attention.metal)
         set(METAL_LIBRARY_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/default.metallib)
 
         add_custom_command(
             OUTPUT ${METAL_LIBRARY_OUTPUT}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}
             COMMAND xcrun -sdk macosx metal -c ${METAL_KERNELS_FILE} -o ${CMAKE_CURRENT_BINARY_DIR}/kernels.air
-            COMMAND xcrun -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/kernels.air -o ${METAL_LIBRARY_OUTPUT}
-            DEPENDS ${METAL_KERNELS_FILE}
+            COMMAND xcrun -sdk macosx metal -c ${METAL_FLASH_ATTN_FILE} -o ${CMAKE_CURRENT_BINARY_DIR}/flash_attention.air
+            COMMAND xcrun -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/kernels.air ${CMAKE_CURRENT_BINARY_DIR}/flash_attention.air -o ${METAL_LIBRARY_OUTPUT}
+            DEPENDS ${METAL_KERNELS_FILE} ${METAL_FLASH_ATTN_FILE}
             COMMENT "Compiling Metal kernels"
         )
 

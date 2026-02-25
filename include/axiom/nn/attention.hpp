@@ -11,9 +11,10 @@ class MultiHeadAttention : public Module {
 
     // query, key, value: (batch, seq, d_model)
     // mask: optional attention mask, or empty Tensor() to skip
+    // is_causal: apply lower-triangular causal mask inside the fused kernel
     // Returns: (batch, seq, d_model)
     Tensor forward(const Tensor &query, const Tensor &key, const Tensor &value,
-                   const Tensor &mask = Tensor()) const;
+                   const Tensor &mask = Tensor(), bool is_causal = false) const;
 
   private:
     Linear q_proj_;
