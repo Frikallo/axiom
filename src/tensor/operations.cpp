@@ -1425,6 +1425,25 @@ Tensor log_softmax(const Tensor &input, int axis) {
     return op->execute_reduction(input, {axis}, false);
 }
 
+Tensor glu(const Tensor &input, int dim) {
+    int ndim = static_cast<int>(input.ndim());
+    if (dim < 0) {
+        dim += ndim;
+    }
+    if (dim < 0 || dim >= ndim) {
+        throw ValueError("glu: dim " + std::to_string(dim) +
+                         " out of range for tensor with " +
+                         std::to_string(ndim) + " dimensions");
+    }
+    if (input.shape()[dim] % 2 != 0) {
+        throw ValueError("glu: dimension " + std::to_string(dim) + " size (" +
+                         std::to_string(input.shape()[dim]) +
+                         ") must be divisible by 2");
+    }
+    auto chunks = input.chunk(2, dim);
+    return multiply(chunks[0], sigmoid(chunks[1]));
+}
+
 // Reduction operations
 Tensor sum(const Tensor &input, const std::vector<int> &axis, bool keep_dims) {
     return execute_reduction_operation(OpType::Sum, input, axis, keep_dims);

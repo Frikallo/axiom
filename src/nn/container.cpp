@@ -31,4 +31,16 @@ const Module &ModuleList::operator[](size_t index) const {
 
 size_t ModuleList::size() const { return modules_.size(); }
 
+// ============================================================================
+// Sequential
+// ============================================================================
+
+Tensor Sequential::forward(const Tensor &input) const {
+    Tensor result = input;
+    for (auto &m : modules_) {
+        result = m->forward(result);
+    }
+    return result;
+}
+
 } // namespace axiom::nn

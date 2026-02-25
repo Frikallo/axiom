@@ -1483,6 +1483,7 @@ Tensor Tensor::softmax(int axis) const { return ops::softmax(*this, axis); }
 Tensor Tensor::log_softmax(int axis) const {
     return ops::log_softmax(*this, axis);
 }
+Tensor Tensor::glu(int dim) const { return ops::glu(*this, dim); }
 
 Tensor Tensor::copy(MemoryOrder order) const {
     auto new_tensor = Tensor(shape_, dtype_, device(), order);

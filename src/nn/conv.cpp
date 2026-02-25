@@ -14,6 +14,10 @@ Conv1d::Conv1d(int stride, int padding, int dilation, int groups, bool bias)
     }
 }
 
+Conv1d::Conv1d(const Conv1dConfig &config)
+    : Conv1d(config.stride, config.padding, config.dilation, config.groups,
+             config.bias) {}
+
 Tensor Conv1d::forward(const Tensor &input) const {
     if (!weight_.storage()) {
         throw RuntimeError("Conv1d: weight not initialized (call "
@@ -32,6 +36,10 @@ Conv2d::Conv2d(std::array<int, 2> stride, std::array<int, 2> padding,
         register_parameter("bias", bias_);
     }
 }
+
+Conv2d::Conv2d(const Conv2dConfig &config)
+    : Conv2d(config.stride, config.padding, config.dilation, config.groups,
+             config.bias) {}
 
 Tensor Conv2d::forward(const Tensor &input) const {
     if (!weight_.storage()) {

@@ -33,6 +33,49 @@ class ModuleList : public Module {
     auto begin() const { return modules_.begin(); }
     auto end() const { return modules_.end(); }
 
+    // Typed iteration: for (auto &block : layers_.each<ConformerBlock>()) { ...
+    // }
+    template <typename T> struct TypedModuleRange {
+        struct Iterator {
+            using It = std::vector<std::unique_ptr<Module>>::const_iterator;
+            It it;
+            const T &operator*() const { return static_cast<const T &>(**it); }
+            Iterator &operator++() {
+                ++it;
+                return *this;
+            }
+            bool operator!=(const Iterator &o) const { return it != o.it; }
+        };
+        const std::vector<std::unique_ptr<Module>> &modules;
+        Iterator begin() const { return {modules.begin()}; }
+        Iterator end() const { return {modules.end()}; }
+    };
+
+    template <typename T> TypedModuleRange<T> each() const {
+        return {modules_};
+    }
+
+  private:
+    std::vector<std::unique_ptr<Module>> modules_;
+};
+
+class Sequential : public Module {
+  public:
+    Sequential() = default;
+
+    template <typename T, typename... Args> T &emplace_back(Args &&...args) {
+        auto ptr = std::make_unique<T>(std::forward<Args>(args)...);
+        auto &ref = *ptr;
+        register_module(std::to_string(modules_.size()), ref);
+        modules_.push_back(std::move(ptr));
+        return ref;
+    }
+
+    Tensor forward(const Tensor &input) const override;
+    Tensor operator()(const Tensor &input) const { return forward(input); }
+
+    size_t size() const { return modules_.size(); }
+
   private:
     std::vector<std::unique_ptr<Module>> modules_;
 };

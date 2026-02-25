@@ -8,7 +8,7 @@ class Embedding : public Module {
   public:
     Embedding();
 
-    Tensor forward(const Tensor &indices) const;
+    Tensor forward(const Tensor &indices) const override;
     Tensor operator()(const Tensor &indices) const { return forward(indices); }
 
   private:

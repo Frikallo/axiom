@@ -4,6 +4,11 @@
 
 namespace axiom::nn {
 
+Tensor Module::forward(const Tensor & /*input*/) const {
+    throw RuntimeError(
+        "forward(const Tensor&) not implemented for this module");
+}
+
 Module &Module::to(Device device) {
     for (auto &[name, param] : params_) {
         if (param->storage()) {

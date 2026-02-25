@@ -19,6 +19,10 @@ class Module {
     Module(Module &&) = delete;
     Module &operator=(Module &&) = delete;
 
+    // Single-tensor forward pass (override in modules that support it)
+    // Modules with multi-arg forward (e.g. MHA) leave this as default.
+    virtual Tensor forward(const Tensor &input) const;
+
     // Move all parameters and submodules to device
     virtual Module &to(Device device);
 
@@ -41,5 +45,10 @@ class Module {
     std::vector<std::pair<std::string, Tensor *>> params_;
     std::vector<std::pair<std::string, Module *>> submodules_;
 };
+
+// Convenience macros: register_module(#name, name) / register_parameter(#name,
+// name)
+#define AX_REGISTER_MODULE(m) register_module(#m, m)
+#define AX_REGISTER_PARAMETER(p) register_parameter(#p, p)
 
 } // namespace axiom::nn

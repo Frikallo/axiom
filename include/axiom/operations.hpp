@@ -364,6 +364,7 @@ Tensor tanh(const Tensor &input);
 Tensor gelu(const Tensor &input);
 Tensor softmax(const Tensor &input, int axis = -1);
 Tensor log_softmax(const Tensor &input, int axis = -1);
+Tensor glu(const Tensor &input, int dim = -1);
 
 // Reduction operations
 Tensor sum(const Tensor &input, const std::vector<int> &axis = {},
