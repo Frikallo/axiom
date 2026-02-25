@@ -66,7 +66,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         endif()
     endif()
 elseif(MSVC)
-    add_compile_options(/W4 /EHsc /utf-8)
+    add_compile_options(/W4 /EHsc /utf-8 /Zc:preprocessor)
     # Disable some noisy warnings
     add_compile_options(/wd4244 /wd4267 /wd4996)
     if(CMAKE_BUILD_TYPE STREQUAL "Release")
