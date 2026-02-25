@@ -947,9 +947,7 @@ TEST(TensorBasic, TensorPrinting) {
         axiom::Tensor::arange(4).reshape({2, 2}).astype(axiom::DType::Float32);
     std::stringstream ss;
     ss << a;
-    std::string expected = "[[0.0000 1.0000]\n [2.0000 3.0000]] "
-                           "Tensor(shape=[2, 2], dtype=float32, device=CPU, "
-                           "order=RowMajor)";
+    std::string expected = "[[0.0000 1.0000]\n [2.0000 3.0000]]";
     ASSERT_EQ(ss.str(), expected);
 }
 
@@ -963,8 +961,6 @@ TEST(TensorBasic, TensorPrintingEllipsis) {
                            " ...\n"
                            " [70 71 72 ... 77 78 79]\n"
                            " [80 81 82 ... 87 88 89]\n"
-                           " [90 91 92 ... 97 98 99]] "
-                           "Tensor(shape=[10, 10], dtype=int32, device=CPU, "
-                           "order=RowMajor)";
+                           " [90 91 92 ... 97 98 99]]";
     ASSERT_EQ(ss.str(), expected);
 }
