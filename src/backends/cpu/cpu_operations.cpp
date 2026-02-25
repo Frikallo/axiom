@@ -821,10 +821,15 @@ template void CPUComplexBinaryOperation::execute_complex_typed<complex128_t>(
 // ============================================================================
 
 template <typename Func>
-Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input) const {
-    if (input.device() != Device::CPU) {
+Tensor CPUUnaryOperation<Func>::execute_unary(const Tensor &input_raw) const {
+    if (input_raw.device() != Device::CPU) {
         throw DeviceError::cpu_only("CPU unary operations");
     }
+
+    // Ensure input is contiguous — all code paths below iterate linearly
+    // over typed_data<T>() and assume contiguous layout.
+    const Tensor &input =
+        input_raw.is_contiguous() ? input_raw : input_raw.ascontiguousarray();
 
     // Check if this is an abs operation - complex abs returns real type
     bool is_abs_op = (op_type_ == ops::OpType::Abs);

@@ -82,17 +82,95 @@ TEST(NNErgonomics, GLUFloat64) {
     EXPECT_EQ(result.shape()[1], 4u);
 }
 
+TEST(NNErgonomics, ChunkGPUParity) {
+    SKIP_IF_NO_GPU();
+    // Verify chunk() views transfer correctly to/from GPU
+    float data[] = {1, 2, 3, 4, 5, 6, 7, 8};
+    auto cpu_t = Tensor::from_data(data, {2, 4});
+    auto gpu_t = cpu_t.gpu();
+
+    auto cpu_chunks = cpu_t.chunk(2, -1);
+    auto gpu_chunks = gpu_t.chunk(2, -1);
+
+    auto gc0 = gpu_chunks[0].cpu();
+    auto gc1 = gpu_chunks[1].cpu();
+
+    // chunk[0] should be [[1,2],[5,6]], chunk[1] should be [[3,4],[7,8]]
+    EXPECT_TRUE(cpu_chunks[0].allclose(gc0, 1e-5, 1e-5))
+        << "chunk[0] GPU/CPU mismatch: CPU=[" << cpu_chunks[0].item<float>({0, 0})
+        << "," << cpu_chunks[0].item<float>({0, 1}) << ";"
+        << cpu_chunks[0].item<float>({1, 0}) << ","
+        << cpu_chunks[0].item<float>({1, 1}) << "] vs GPU=["
+        << gc0.item<float>({0, 0}) << "," << gc0.item<float>({0, 1}) << ";"
+        << gc0.item<float>({1, 0}) << "," << gc0.item<float>({1, 1}) << "]";
+    EXPECT_TRUE(cpu_chunks[1].allclose(gc1, 1e-5, 1e-5))
+        << "chunk[1] GPU/CPU mismatch: CPU=[" << cpu_chunks[1].item<float>({0, 0})
+        << "," << cpu_chunks[1].item<float>({0, 1}) << ";"
+        << cpu_chunks[1].item<float>({1, 0}) << ","
+        << cpu_chunks[1].item<float>({1, 1}) << "] vs GPU=["
+        << gc1.item<float>({0, 0}) << "," << gc1.item<float>({0, 1}) << ";"
+        << gc1.item<float>({1, 0}) << "," << gc1.item<float>({1, 1}) << "]";
+}
+
+TEST(NNErgonomics, SigmoidOnGPUSlice) {
+    SKIP_IF_NO_GPU();
+    // Use distinct values so sigmoid results differ per-element
+    float data[] = {-2, -1, 0, 1, 2, 3, 4, 5};
+    auto cpu_t = Tensor::from_data(data, {2, 4});
+    auto gpu_t = cpu_t.gpu();
+
+    auto cpu_chunks = cpu_t.chunk(2, -1);
+    auto gpu_chunks = gpu_t.chunk(2, -1);
+
+    auto cpu_sig = ops::sigmoid(cpu_chunks[1]);
+    auto gpu_sig = ops::sigmoid(gpu_chunks[1]).cpu();
+
+    EXPECT_TRUE(cpu_sig.allclose(gpu_sig, 1e-5, 1e-5))
+        << "sigmoid on GPU slice doesn't match CPU: CPU=["
+        << cpu_sig.item<float>({0, 0}) << "," << cpu_sig.item<float>({0, 1})
+        << ";" << cpu_sig.item<float>({1, 0}) << ","
+        << cpu_sig.item<float>({1, 1}) << "] vs GPU=["
+        << gpu_sig.item<float>({0, 0}) << "," << gpu_sig.item<float>({0, 1})
+        << ";" << gpu_sig.item<float>({1, 0}) << ","
+        << gpu_sig.item<float>({1, 1}) << "]";
+}
+
+TEST(NNErgonomics, MultiplyGPUSlices) {
+    SKIP_IF_NO_GPU();
+    // Test multiply on two non-contiguous GPU slices (the core of GLU)
+    float data[] = {1, 2, 3, 4, 5, 6, 7, 8};
+    auto cpu_t = Tensor::from_data(data, {2, 4});
+    auto gpu_t = cpu_t.gpu();
+
+    auto cpu_chunks = cpu_t.chunk(2, -1);
+    auto gpu_chunks = gpu_t.chunk(2, -1);
+
+    // multiply(chunk[0], chunk[1]) — both non-contiguous
+    auto cpu_mul = ops::multiply(cpu_chunks[0], cpu_chunks[1]);
+    auto gpu_mul = ops::multiply(gpu_chunks[0], gpu_chunks[1]).cpu();
+
+    EXPECT_TRUE(cpu_mul.allclose(gpu_mul, 1e-5, 1e-5))
+        << "multiply on GPU slices doesn't match CPU: CPU=["
+        << cpu_mul.item<float>({0, 0}) << "," << cpu_mul.item<float>({0, 1})
+        << ";" << cpu_mul.item<float>({1, 0}) << ","
+        << cpu_mul.item<float>({1, 1}) << "] vs GPU=["
+        << gpu_mul.item<float>({0, 0}) << "," << gpu_mul.item<float>({0, 1})
+        << ";" << gpu_mul.item<float>({1, 0}) << ","
+        << gpu_mul.item<float>({1, 1}) << "]";
+}
+
 TEST(NNErgonomics, GLUGPU) {
     SKIP_IF_NO_GPU();
-    // GLU depends on chunk() which returns non-contiguous views (slices).
-    // GPU ops on non-contiguous views from chunk() have a known parity issue.
-    // Verify GLU shapes and dtype are correct on GPU.
-    auto input = Tensor::uniform(-2.0, 2.0, {4, 8}, DType::Float32).gpu();
-    auto result = ops::glu(input, -1);
-    EXPECT_EQ(result.device(), Device::GPU);
-    EXPECT_EQ(result.dtype(), DType::Float32);
-    EXPECT_EQ(result.shape()[0], 4u);
-    EXPECT_EQ(result.shape()[1], 4u);
+    auto cpu_input = Tensor::uniform(-2.0, 2.0, {4, 8}, DType::Float32);
+    auto gpu_input = cpu_input.gpu();
+
+    auto gpu_result = ops::glu(gpu_input, -1);
+    EXPECT_EQ(gpu_result.device(), Device::GPU);
+    EXPECT_EQ(gpu_result.shape()[1], 4u);
+
+    auto cpu_result = ops::glu(cpu_input, -1);
+    EXPECT_TRUE(cpu_result.allclose(gpu_result.cpu(), 1e-4, 1e-4))
+        << "GLU GPU/CPU mismatch";
 }
 
 // ============================================================================
