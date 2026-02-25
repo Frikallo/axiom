@@ -213,7 +213,6 @@ struct MacroTestModule : Module {
 TEST(NNErgonomics, RegisterMacros) {
     MacroTestModule mod;
     auto named = mod.named_parameters();
-    // Should have "weight_" from our param + "linear_." submodule params
     bool found_weight = false;
     for (auto &[name, ptr] : named) {
         if (name == "weight_") {
@@ -221,6 +220,42 @@ TEST(NNErgonomics, RegisterMacros) {
         }
     }
     EXPECT_TRUE(found_weight);
+}
+
+// Variadic macro: register many at once
+struct VariadicMacroModule : Module {
+    Tensor w1_;
+    Tensor w2_;
+    Tensor w3_;
+    Linear lin1_;
+    Linear lin2_;
+
+    VariadicMacroModule() {
+        AX_REGISTER_PARAMETERS(w1_, w2_, w3_);
+        AX_REGISTER_MODULES(lin1_, lin2_);
+    }
+};
+
+TEST(NNErgonomics, RegisterVariadicMacros) {
+    VariadicMacroModule mod;
+    auto named = mod.named_parameters();
+    // 3 own params + 2 submodules (Linear each has weight+bias = 2 params × 2)
+    // lin1_ has bias=true by default → weight + bias = 2 params each
+    // Total: 3 + 4 = 7
+    EXPECT_EQ(named.size(), 7u);
+
+    // Check our own params are there
+    std::vector<std::string> names;
+    for (auto &[name, ptr] : named) {
+        names.push_back(name);
+    }
+    EXPECT_EQ(names[0], "w1_");
+    EXPECT_EQ(names[1], "w2_");
+    EXPECT_EQ(names[2], "w3_");
+    EXPECT_EQ(names[3], "lin1_.weight");
+    EXPECT_EQ(names[4], "lin1_.bias");
+    EXPECT_EQ(names[5], "lin2_.weight");
+    EXPECT_EQ(names[6], "lin2_.bias");
 }
 
 // ============================================================================
@@ -247,6 +282,24 @@ TEST(NNErgonomics, ModuleListEach) {
     EXPECT_EQ(ids[0], 10);
     EXPECT_EQ(ids[1], 20);
     EXPECT_EQ(ids[2], 30);
+}
+
+TEST(NNErgonomics, ModuleListEachMutable) {
+    ModuleList list;
+    list.emplace_back<DummyLayer>(1);
+    list.emplace_back<DummyLayer>(2);
+
+    // Mutable iteration — modify through non-const each<T>()
+    for (auto &layer : list.each<DummyLayer>()) {
+        layer.id *= 100;
+    }
+
+    std::vector<int> ids;
+    for (const auto &layer : list.each<DummyLayer>()) {
+        ids.push_back(layer.id);
+    }
+    EXPECT_EQ(ids[0], 100);
+    EXPECT_EQ(ids[1], 200);
 }
 
 // ============================================================================

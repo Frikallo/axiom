@@ -35,23 +35,32 @@ class ModuleList : public Module {
 
     // Typed iteration: for (auto &block : layers_.each<ConformerBlock>()) { ...
     // }
-    template <typename T> struct TypedModuleRange {
+    template <typename T, bool Const> struct TypedModuleRangeImpl {
+        using Vec = std::vector<std::unique_ptr<Module>>;
+        using VecRef = std::conditional_t<Const, const Vec &, Vec &>;
+        using Ref = std::conditional_t<Const, const T &, T &>;
+        using It = std::conditional_t<Const, typename Vec::const_iterator,
+                                      typename Vec::iterator>;
+
         struct Iterator {
-            using It = std::vector<std::unique_ptr<Module>>::const_iterator;
             It it;
-            const T &operator*() const { return static_cast<const T &>(**it); }
+            Ref operator*() const { return static_cast<Ref>(**it); }
             Iterator &operator++() {
                 ++it;
                 return *this;
             }
             bool operator!=(const Iterator &o) const { return it != o.it; }
         };
-        const std::vector<std::unique_ptr<Module>> &modules;
+
+        VecRef modules;
         Iterator begin() const { return {modules.begin()}; }
         Iterator end() const { return {modules.end()}; }
     };
 
-    template <typename T> TypedModuleRange<T> each() const {
+    template <typename T> TypedModuleRangeImpl<T, true> each() const {
+        return {modules_};
+    }
+    template <typename T> TypedModuleRangeImpl<T, false> each() {
         return {modules_};
     }
 
