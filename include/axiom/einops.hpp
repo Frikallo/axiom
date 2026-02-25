@@ -59,6 +59,7 @@ class EinopsExpression {
     std::string input_pattern_;
     std::string output_pattern_;
     std::map<std::string, size_t> axis_sizes_;
+    mutable int anonymous_axis_counter_ = 0;
 
     ParsedPattern parsed_input_;
     ParsedPattern parsed_output_;
@@ -81,6 +82,11 @@ class EinopsExpression {
     std::vector<std::string>
     get_pattern_axes(const ParsedPattern &pattern) const;
     std::map<std::string, size_t> infer_axis_sizes(const Tensor &tensor) const;
+
+    // Access already-parsed patterns (avoids re-parsing with different
+    // counters)
+    const ParsedPattern &parsed_input() const { return parsed_input_; }
+    const ParsedPattern &parsed_output() const { return parsed_output_; }
 
   private:
     void parse_patterns();
@@ -148,6 +154,46 @@ Tensor reduce(const Tensor &tensor, const std::string &pattern,
  *   einsum("ij->j", {A})            // sum over rows
  */
 Tensor einsum(const std::string &equation, const std::vector<Tensor> &operands);
+
+/**
+ * Repeat tensor according to einops pattern (add/tile dimensions)
+ * @param tensor Input tensor
+ * @param pattern Einops pattern string like "h w -> h w c" (new axes in output)
+ * @param axis_sizes Sizes for new axes
+ * @return Repeated tensor
+ *
+ * Example:
+ *   repeat(x, "h w -> h w c", {{"c", 3}})       // Add channel dim
+ *   repeat(x, "h w -> h repeat w", {{"repeat", 3}})  // Tile rows
+ */
+Tensor repeat(const Tensor &tensor, const std::string &pattern,
+              const std::map<std::string, size_t> &axis_sizes = {});
+
+/**
+ * Pack multiple tensors into a single tensor with a wildcard dimension
+ * @param tensors Input tensors
+ * @param pattern Pattern string with exactly one '*' wildcard
+ * @return Pair of (packed tensor, packed_shapes for unpack)
+ *
+ * Example:
+ *   auto [packed, ps] = pack({img1, img2, img3}, "* h w")
+ */
+std::pair<Tensor, std::vector<Shape>> pack(const std::vector<Tensor> &tensors,
+                                           const std::string &pattern);
+
+/**
+ * Unpack a packed tensor back into individual tensors
+ * @param tensor Packed tensor
+ * @param packed_shapes Shapes from pack() for each tensor's wildcard dims
+ * @param pattern Pattern string with exactly one '*' wildcard
+ * @return Vector of unpacked tensors
+ *
+ * Example:
+ *   auto tensors = unpack(packed, ps, "* h w")
+ */
+std::vector<Tensor> unpack(const Tensor &tensor,
+                           const std::vector<Shape> &packed_shapes,
+                           const std::string &pattern);
 
 // ============================================================================
 // Exception types for einops operations

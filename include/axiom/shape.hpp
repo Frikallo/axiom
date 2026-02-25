@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <ostream>
 #include <vector>
 
 #include <fxdiv.h>
@@ -161,5 +162,16 @@ class ShapeUtils {
 Shape squeeze_shape(const Shape &shape, int axis = -1);
 Shape unsqueeze_shape(const Shape &shape, int axis);
 Shape reshape_shape(const Shape &current_shape, const Shape &new_shape);
+
+inline std::ostream &operator<<(std::ostream &os, const Shape &shape) {
+    os << "(";
+    for (size_t i = 0; i < shape.size(); ++i) {
+        if (i > 0)
+            os << ", ";
+        os << shape[i];
+    }
+    os << ")";
+    return os;
+}
 
 } // namespace axiom

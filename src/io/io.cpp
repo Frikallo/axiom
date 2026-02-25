@@ -158,7 +158,12 @@ std::string element_to_string(const void *data, size_t index) {
         return value ? "true" : "false";
     } else {
         std::stringstream ss;
-        ss << value;
+        // Cast int8_t/uint8_t to int so they print as numbers, not characters
+        if constexpr (sizeof(T) == 1) {
+            ss << static_cast<int>(value);
+        } else {
+            ss << value;
+        }
         return ss.str();
     }
 }
@@ -289,8 +294,6 @@ std::string to_string(const Tensor &tensor) {
     std::stringstream ss;
     std::vector<size_t> coords(t_cpu.ndim(), 0);
     print_recursive(ss, t_cpu, coords, 0, 3);
-
-    ss << " " << t_cpu.repr();
 
     return ss.str();
 }

@@ -92,6 +92,7 @@ class Tensor {
     const Shape &shape() const;
     size_t ndim() const { return shape().size(); }
     size_t size() const { return ShapeUtils::size(shape()); }
+    size_t numel() const { return size(); }
     const Strides &strides() const;
     size_t itemsize() const { return dtype_size(dtype()); }
     size_t nbytes() const { return size() * itemsize(); }
@@ -235,6 +236,8 @@ class Tensor {
               const std::map<std::string, size_t> &axis_sizes = {}) const;
     Tensor reduce(const std::string &pattern, const std::string &reduction,
                   const std::map<std::string, size_t> &axis_sizes = {}) const;
+    Tensor repeat(const std::string &pattern,
+                  const std::map<std::string, size_t> &axis_sizes = {}) const;
     Tensor transpose() const;
     Tensor transpose(const std::vector<int> &axes) const;
     Tensor squeeze(int axis = -1) const;
@@ -285,6 +288,9 @@ class Tensor {
     // repeat: Copies data to create repeated tensor
     // Each dim is repeated by the corresponding factor
     Tensor repeat(const std::vector<size_t> &repeats) const;
+    Tensor repeat(std::initializer_list<size_t> repeats) const {
+        return repeat(std::vector<size_t>(repeats));
+    }
     Tensor tile(const std::vector<size_t> &reps) const {
         return repeat(reps);
     } // NumPy alias
@@ -454,6 +460,7 @@ class Tensor {
     // Utility methods
     std::string repr() const;
     std::string str() const;
+    std::string shape_str() const;
     bool same_shape(const Tensor &other) const;
     bool same_dtype(const Tensor &other) const;
     bool same_device(const Tensor &other) const;
