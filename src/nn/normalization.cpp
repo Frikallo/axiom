@@ -42,6 +42,50 @@ BatchNorm1d::BatchNorm1d(float eps) : eps_(eps) {
     register_parameter("num_batches_tracked", num_batches_tracked_);
 }
 
+// Shared implementation: (x - mean) / sqrt(var + eps) * weight + bias
+// Upcasts to Float32 for numerical stability, casts back to input dtype.
+// Moves stats to input device once at the top to avoid per-op device moves.
+static Tensor batch_norm_forward(const Tensor &input,
+                                 const Tensor &running_mean,
+                                 const Tensor &running_var,
+                                 const Tensor &weight, const Tensor &bias,
+                                 float eps, const Shape &stat_shape) {
+    DType input_dtype = input.dtype();
+    Device device = input.device();
+
+    // Upcast to at least Float32 for numerical stability (matches PyTorch)
+    DType compute_dtype =
+        (input_dtype == DType::Float64) ? DType::Float64 : DType::Float32;
+    auto x =
+        (input_dtype == compute_dtype) ? input : input.astype(compute_dtype);
+
+    // Cast to compute dtype first (avoids GPU rejecting Float64), then move
+    auto mean =
+        running_mean.astype(compute_dtype).to(device).reshape(stat_shape);
+    auto var = running_var.astype(compute_dtype).to(device).reshape(stat_shape);
+
+    auto eps_tensor =
+        Tensor::full<float>({1}, eps).astype(compute_dtype).to(device);
+    auto inv_std = ops::reciprocal(ops::sqrt(ops::add(var, eps_tensor)));
+    auto result = ops::multiply(ops::subtract(x, mean), inv_std);
+
+    if (weight.storage()) {
+        result = ops::multiply(
+            result,
+            weight.astype(compute_dtype).to(device).reshape(stat_shape));
+    }
+    if (bias.storage()) {
+        result = ops::add(
+            result, bias.astype(compute_dtype).to(device).reshape(stat_shape));
+    }
+
+    // Cast back to input dtype
+    if (result.dtype() != input_dtype) {
+        result = result.astype(input_dtype);
+    }
+    return result;
+}
+
 Tensor BatchNorm1d::forward(const Tensor &input) const {
     if (!running_mean_.storage() || !running_var_.storage()) {
         throw RuntimeError("BatchNorm1d: running stats not initialized (call "
@@ -53,25 +97,10 @@ Tensor BatchNorm1d::forward(const Tensor &input) const {
                          std::to_string(input.ndim()) + "D");
     }
 
-    // Stats are per-channel: reshape to broadcast over (N, C, ...) dims
-    // running_mean/var are shape (C,) — reshape to (1, C) or (1, C, 1)
     Shape stat_shape(input.ndim(), 1);
     stat_shape[1] = input.shape()[1];
-
-    auto mean = running_mean_.reshape(stat_shape);
-    auto var = running_var_.reshape(stat_shape);
-    auto eps_tensor = Tensor::full<float>({1}, eps_, input.device());
-    auto inv_std = ops::reciprocal(ops::sqrt(ops::add(var, eps_tensor)));
-
-    auto result = ops::multiply(ops::subtract(input, mean), inv_std);
-
-    if (weight_.storage()) {
-        result = ops::multiply(result, weight_.reshape(stat_shape));
-    }
-    if (bias_.storage()) {
-        result = ops::add(result, bias_.reshape(stat_shape));
-    }
-    return result;
+    return batch_norm_forward(input, running_mean_, running_var_, weight_,
+                              bias_, eps_, stat_shape);
 }
 
 // ============================================================================
@@ -96,23 +125,9 @@ Tensor BatchNorm2d::forward(const Tensor &input) const {
                          std::to_string(input.ndim()) + "D");
     }
 
-    // Stats are per-channel: reshape to (1, C, 1, 1)
     Shape stat_shape = {1, input.shape()[1], 1, 1};
-
-    auto mean = running_mean_.reshape(stat_shape);
-    auto var = running_var_.reshape(stat_shape);
-    auto eps_tensor = Tensor::full<float>({1}, eps_, input.device());
-    auto inv_std = ops::reciprocal(ops::sqrt(ops::add(var, eps_tensor)));
-
-    auto result = ops::multiply(ops::subtract(input, mean), inv_std);
-
-    if (weight_.storage()) {
-        result = ops::multiply(result, weight_.reshape(stat_shape));
-    }
-    if (bias_.storage()) {
-        result = ops::add(result, bias_.reshape(stat_shape));
-    }
-    return result;
+    return batch_norm_forward(input, running_mean_, running_var_, weight_,
+                              bias_, eps_, stat_shape);
 }
 
 } // namespace axiom::nn
