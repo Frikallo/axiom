@@ -127,6 +127,8 @@ inline constexpr OpTraits OP_TRAITS[] = {
     // Convolution
     /*Conv1D*/            {0,0,0,0,0,0},
     /*Conv2D*/            {0,0,0,0,0,0},
+    // Fused attention
+    /*ScaledDotProductAttention*/ {0,0,0,0,0,0},
 };
 // clang-format on
 
