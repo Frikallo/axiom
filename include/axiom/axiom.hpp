@@ -22,3 +22,6 @@
 #include "axiom/system.hpp"
 #include "axiom/tensor.hpp"
 #include "axiom/tensor_operators.hpp"
+
+// Neural network module system
+#include "axiom/nn.hpp"

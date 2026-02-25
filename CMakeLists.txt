@@ -318,6 +318,15 @@ set(AXIOM_SOURCES
 
     # Parallel utilities
     src/parallel/parallel.cpp
+
+    # Neural network modules
+    src/nn/module.cpp
+    src/nn/linear.cpp
+    src/nn/embedding.cpp
+    src/nn/normalization.cpp
+    src/nn/conv.cpp
+    src/nn/container.cpp
+    src/nn/attention.cpp
 )
 
 # Add platform-specific BLAS backends
