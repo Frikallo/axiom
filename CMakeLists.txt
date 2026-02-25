@@ -328,6 +328,8 @@ set(AXIOM_SOURCES
     src/nn/conv.cpp
     src/nn/container.cpp
     src/nn/attention.cpp
+    src/nn/activation.cpp
+    src/nn/pooling.cpp
 )
 
 # Add platform-specific BLAS backends

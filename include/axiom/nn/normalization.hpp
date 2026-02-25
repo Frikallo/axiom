@@ -61,4 +61,46 @@ class BatchNorm2d : public Module {
     float eps_;
 };
 
+class GroupNorm : public Module {
+  public:
+    explicit GroupNorm(int num_groups, float eps = 1e-5f);
+
+    Tensor forward(const Tensor &input) const override;
+    Tensor operator()(const Tensor &input) const { return forward(input); }
+
+  private:
+    int num_groups_;
+    Tensor weight_;
+    Tensor bias_;
+    float eps_;
+};
+
+class InstanceNorm1d : public Module {
+  public:
+    explicit InstanceNorm1d(float eps = 1e-5f, bool affine = true);
+
+    Tensor forward(const Tensor &input) const override;
+    Tensor operator()(const Tensor &input) const { return forward(input); }
+
+  private:
+    Tensor weight_;
+    Tensor bias_;
+    float eps_;
+    bool affine_;
+};
+
+class InstanceNorm2d : public Module {
+  public:
+    explicit InstanceNorm2d(float eps = 1e-5f, bool affine = true);
+
+    Tensor forward(const Tensor &input) const override;
+    Tensor operator()(const Tensor &input) const { return forward(input); }
+
+  private:
+    Tensor weight_;
+    Tensor bias_;
+    float eps_;
+    bool affine_;
+};
+
 } // namespace axiom::nn

@@ -173,3 +173,62 @@ TEST(NNModule, LoadStateDictExtraKeysIgnored) {
     EXPECT_NO_THROW(mod.load_state_dict(state_dict));
     EXPECT_TRUE(mod.weight_.shape() == Shape({3, 4}));
 }
+
+// ============================================================================
+// state_dict() export
+// ============================================================================
+
+TEST(NNModule, StateDictBasic) {
+    SimpleModule mod;
+    mod.weight_ = Tensor::ones({3, 4});
+    mod.bias_ = Tensor::zeros({3});
+
+    auto sd = mod.state_dict();
+    EXPECT_EQ(sd.size(), 2u);
+    EXPECT_TRUE(sd.count("weight") > 0);
+    EXPECT_TRUE(sd.count("bias") > 0);
+    EXPECT_TRUE(sd["weight"].shape() == Shape({3, 4}));
+}
+
+TEST(NNModule, StateDictHierarchical) {
+    ParentModule parent;
+    parent.scale_ = Tensor::full({1}, 2.0f);
+    parent.child_.weight_ = Tensor::ones({4, 5});
+    parent.child_.bias_ = Tensor::zeros({4});
+
+    auto sd = parent.state_dict();
+    EXPECT_EQ(sd.size(), 3u);
+    EXPECT_TRUE(sd.count("scale") > 0);
+    EXPECT_TRUE(sd.count("child.weight") > 0);
+    EXPECT_TRUE(sd.count("child.bias") > 0);
+}
+
+TEST(NNModule, StateDictWithPrefix) {
+    SimpleModule mod;
+    mod.weight_ = Tensor::ones({2, 3});
+    mod.bias_ = Tensor::zeros({2});
+
+    auto sd = mod.state_dict("model.");
+    EXPECT_TRUE(sd.count("model.weight") > 0);
+    EXPECT_TRUE(sd.count("model.bias") > 0);
+}
+
+TEST(NNModule, StateDictRoundTrip) {
+    SimpleModule mod1;
+    mod1.weight_ = Tensor::randn({3, 4});
+    mod1.bias_ = Tensor::randn({3});
+
+    auto sd = mod1.state_dict();
+
+    SimpleModule mod2;
+    mod2.load_state_dict(sd);
+
+    EXPECT_TRUE(mod1.weight_.allclose(mod2.weight_));
+    EXPECT_TRUE(mod1.bias_.allclose(mod2.bias_));
+}
+
+TEST(NNModule, StateDictEmpty) {
+    SimpleModule mod; // uninitialized params
+    auto sd = mod.state_dict();
+    EXPECT_EQ(sd.size(), 2u); // keys exist but tensors are empty
+}

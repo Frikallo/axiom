@@ -32,6 +32,11 @@ class Module {
     load_state_dict(const std::map<std::string, Tensor> &state_dict,
                     const std::string &prefix = "", bool strict = true);
 
+    // Export all parameters as a flat name->Tensor map (inverse of
+    // load_state_dict)
+    std::map<std::string, Tensor>
+    state_dict(const std::string &prefix = "") const;
+
     // Parameter introspection
     std::vector<std::pair<std::string, Tensor *>>
     named_parameters(const std::string &prefix = "") const;

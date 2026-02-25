@@ -68,6 +68,63 @@ class ModuleList : public Module {
     std::vector<std::unique_ptr<Module>> modules_;
 };
 
+class ModuleDict : public Module {
+  public:
+    ModuleDict() = default;
+
+    // Add a module constructed in-place, returns typed reference
+    template <typename T, typename... Args>
+    T &emplace(const std::string &key, Args &&...args) {
+        auto ptr = std::make_unique<T>(std::forward<Args>(args)...);
+        auto &ref = *ptr;
+        register_module(key, ref);
+        modules_.emplace_back(key, std::move(ptr));
+        return ref;
+    }
+
+    // Add a pre-constructed module
+    Module &insert(const std::string &key, std::unique_ptr<Module> module);
+
+    Module &operator[](const std::string &key);
+    const Module &operator[](const std::string &key) const;
+
+    bool contains(const std::string &key) const;
+    std::vector<std::string> keys() const;
+    size_t size() const;
+
+    template <typename T> T &get(const std::string &key) {
+        return static_cast<T &>((*this)[key]);
+    }
+    template <typename T> const T &get(const std::string &key) const {
+        return static_cast<const T &>((*this)[key]);
+    }
+
+    auto begin() { return modules_.begin(); }
+    auto end() { return modules_.end(); }
+    auto begin() const { return modules_.begin(); }
+    auto end() const { return modules_.end(); }
+
+  private:
+    std::vector<std::pair<std::string, std::unique_ptr<Module>>> modules_;
+};
+
+class ParameterDict : public Module {
+  public:
+    ParameterDict() = default;
+
+    void insert(const std::string &key, const Tensor &param);
+
+    Tensor &operator[](const std::string &key);
+    const Tensor &operator[](const std::string &key) const;
+
+    bool contains(const std::string &key) const;
+    std::vector<std::string> keys() const;
+    size_t size() const;
+
+  private:
+    std::vector<std::pair<std::string, Tensor>> params_;
+};
+
 class Sequential : public Module {
   public:
     Sequential() = default;

@@ -2352,6 +2352,53 @@ Tensor gpu_conv2d(const Tensor &input, const Tensor &weight,
 }
 
 // ============================================================================
+// GPU Transposed Convolution — CPU fallback (scatter-based)
+// MPSGraph's convolutionTranspose2D requires careful output shape handling;
+// for correctness we delegate to the CPU implementation and transfer back.
+// ============================================================================
+
+Tensor gpu_conv_transpose1d(const Tensor &input, const Tensor &weight,
+                            const Tensor &bias, int stride, int padding,
+                            int output_padding, int dilation, int groups) {
+    // CPU fallback: transfer to CPU, compute, transfer back
+    auto cpu_input = input.cpu();
+    auto cpu_weight = weight.cpu();
+    auto cpu_bias = (bias.ndim() > 0) ? bias.cpu() : bias;
+    auto cpu_result = ops::conv_transpose1d(cpu_input, cpu_weight, cpu_bias,
+                                            stride, padding, output_padding,
+                                            dilation, groups);
+    return cpu_result.gpu();
+}
+
+Tensor gpu_conv_transpose2d(const Tensor &input, const Tensor &weight,
+                            const Tensor &bias, std::array<int, 2> stride,
+                            std::array<int, 2> padding,
+                            std::array<int, 2> output_padding,
+                            std::array<int, 2> dilation, int groups) {
+    auto cpu_input = input.cpu();
+    auto cpu_weight = weight.cpu();
+    auto cpu_bias = (bias.ndim() > 0) ? bias.cpu() : bias;
+    auto cpu_result = ops::conv_transpose2d(cpu_input, cpu_weight, cpu_bias,
+                                            stride, padding, output_padding,
+                                            dilation, groups);
+    return cpu_result.gpu();
+}
+
+// ============================================================================
+// GPU Interpolation — nearest/bilinear via MPSGraph, bicubic via CPU fallback
+// ============================================================================
+
+Tensor gpu_interpolate(const Tensor &input,
+                       const std::vector<size_t> &target_size,
+                       ops::InterpolateMode mode, bool align_corners) {
+    // CPU fallback for all modes — transfer to CPU, compute, transfer back
+    auto cpu_input = input.cpu();
+    auto cpu_result =
+        ops::interpolate(cpu_input, target_size, {}, mode, align_corners);
+    return cpu_result.gpu();
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 

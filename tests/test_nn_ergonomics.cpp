@@ -97,15 +97,17 @@ TEST(NNErgonomics, ChunkGPUParity) {
 
     // chunk[0] should be [[1,2],[5,6]], chunk[1] should be [[3,4],[7,8]]
     EXPECT_TRUE(cpu_chunks[0].allclose(gc0, 1e-5, 1e-5))
-        << "chunk[0] GPU/CPU mismatch: CPU=[" << cpu_chunks[0].item<float>({0, 0})
-        << "," << cpu_chunks[0].item<float>({0, 1}) << ";"
+        << "chunk[0] GPU/CPU mismatch: CPU=["
+        << cpu_chunks[0].item<float>({0, 0}) << ","
+        << cpu_chunks[0].item<float>({0, 1}) << ";"
         << cpu_chunks[0].item<float>({1, 0}) << ","
         << cpu_chunks[0].item<float>({1, 1}) << "] vs GPU=["
         << gc0.item<float>({0, 0}) << "," << gc0.item<float>({0, 1}) << ";"
         << gc0.item<float>({1, 0}) << "," << gc0.item<float>({1, 1}) << "]";
     EXPECT_TRUE(cpu_chunks[1].allclose(gc1, 1e-5, 1e-5))
-        << "chunk[1] GPU/CPU mismatch: CPU=[" << cpu_chunks[1].item<float>({0, 0})
-        << "," << cpu_chunks[1].item<float>({0, 1}) << ";"
+        << "chunk[1] GPU/CPU mismatch: CPU=["
+        << cpu_chunks[1].item<float>({0, 0}) << ","
+        << cpu_chunks[1].item<float>({0, 1}) << ";"
         << cpu_chunks[1].item<float>({1, 0}) << ","
         << cpu_chunks[1].item<float>({1, 1}) << "] vs GPU=["
         << gc1.item<float>({0, 0}) << "," << gc1.item<float>({0, 1}) << ";"
@@ -492,4 +494,138 @@ TEST(NNErgonomics, SequentialGPU) {
 
     auto cpu_output = seq(input.cpu());
     ExpectTensorsClose(output.cpu(), cpu_output, 1e-5, 1e-5);
+}
+
+// ============================================================================
+// ModuleDict
+// ============================================================================
+
+TEST(NNErgonomics, ModuleDictInsertAndAccess) {
+    ModuleDict dict;
+    dict.emplace<Linear>("linear");
+    dict.emplace<LayerNorm>("norm");
+
+    EXPECT_EQ(dict.size(), 2u);
+    EXPECT_TRUE(dict.contains("linear"));
+    EXPECT_TRUE(dict.contains("norm"));
+    EXPECT_FALSE(dict.contains("missing"));
+}
+
+TEST(NNErgonomics, ModuleDictKeys) {
+    ModuleDict dict;
+    dict.emplace<Linear>("b_linear");
+    dict.emplace<Linear>("a_linear");
+
+    auto keys = dict.keys();
+    ASSERT_EQ(keys.size(), 2u);
+    // Insertion order preserved
+    EXPECT_EQ(keys[0], "b_linear");
+    EXPECT_EQ(keys[1], "a_linear");
+}
+
+TEST(NNErgonomics, ModuleDictTypedGet) {
+    ModuleDict dict;
+    dict.emplace<Linear>("lin");
+
+    auto &lin = dict.get<Linear>("lin");
+    auto params = lin.parameters();
+    EXPECT_GE(params.size(), 1u);
+}
+
+TEST(NNErgonomics, ModuleDictStateDictIntegration) {
+    ModuleDict dict;
+    dict.emplace<Linear>("encoder");
+
+    auto named = dict.named_parameters();
+    bool found = false;
+    for (auto &[name, ptr] : named) {
+        if (name.find("encoder") != std::string::npos) {
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST(NNErgonomics, ModuleDictToDevice) {
+    ModuleDict dict;
+    dict.emplace<Linear>("lin");
+
+    // Load state
+    std::map<std::string, Tensor> state;
+    state["lin.weight"] = Tensor::randn({4, 3});
+    state["lin.bias"] = Tensor::randn({4});
+    dict.load_state_dict(state);
+
+    dict.to(Device::CPU); // Should not crash
+    auto &lin = dict.get<Linear>("lin");
+    auto params = lin.parameters();
+    for (auto *p : params) {
+        if (p->storage()) {
+            EXPECT_EQ(p->device(), Device::CPU);
+        }
+    }
+}
+
+TEST(NNErgonomics, ModuleDictMissing) {
+    ModuleDict dict;
+    EXPECT_THROW(dict["missing"], IndexError);
+}
+
+// ============================================================================
+// ParameterDict
+// ============================================================================
+
+TEST(NNErgonomics, ParameterDictInsertAndAccess) {
+    ParameterDict pdict;
+    pdict.insert("weight", Tensor::ones({3, 4}));
+    pdict.insert("bias", Tensor::zeros({3}));
+
+    EXPECT_EQ(pdict.size(), 2u);
+    EXPECT_TRUE(pdict.contains("weight"));
+    EXPECT_TRUE(pdict.contains("bias"));
+    EXPECT_TRUE(pdict["weight"].shape() == Shape({3, 4}));
+}
+
+TEST(NNErgonomics, ParameterDictKeys) {
+    ParameterDict pdict;
+    pdict.insert("beta", Tensor::ones({2}));
+    pdict.insert("alpha", Tensor::ones({3}));
+
+    auto keys = pdict.keys();
+    ASSERT_EQ(keys.size(), 2u);
+    EXPECT_EQ(keys[0], "beta");
+    EXPECT_EQ(keys[1], "alpha");
+}
+
+TEST(NNErgonomics, ParameterDictStateDictIntegration) {
+    ParameterDict pdict;
+    pdict.insert("weight", Tensor::ones({3, 4}));
+
+    // state_dict should include the parameter
+    auto sd = pdict.state_dict();
+    EXPECT_TRUE(sd.count("weight") > 0);
+}
+
+TEST(NNErgonomics, ParameterDictLoadStateDict) {
+    ParameterDict pdict;
+    pdict.insert("w", Tensor());
+
+    std::map<std::string, Tensor> state;
+    state["w"] = Tensor::randn({5, 5});
+    pdict.load_state_dict(state);
+
+    EXPECT_TRUE(pdict["w"].shape() == Shape({5, 5}));
+}
+
+TEST(NNErgonomics, ParameterDictToDevice) {
+    ParameterDict pdict;
+    pdict.insert("w", Tensor::ones({3}));
+    pdict.to(Device::CPU);
+
+    EXPECT_EQ(pdict["w"].device(), Device::CPU);
+}
+
+TEST(NNErgonomics, ParameterDictMissing) {
+    ParameterDict pdict;
+    EXPECT_THROW(pdict["missing"], IndexError);
 }
