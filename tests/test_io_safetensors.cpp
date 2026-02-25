@@ -1,6 +1,7 @@
 #include "axiom_test_utils.hpp"
 
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 
 namespace {
@@ -20,7 +21,9 @@ void write_safetensors(const std::string &path, const std::string &header_json,
 }
 
 std::string test_file_path(const std::string &name) {
-    return "/tmp/axiom_test_" + name + ".safetensors";
+    return (std::filesystem::temp_directory_path() /
+            ("axiom_test_" + name + ".safetensors"))
+        .string();
 }
 
 } // namespace
