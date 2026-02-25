@@ -141,6 +141,11 @@ EinopsExpression::parse_axis_element(const std::string &token) const {
     if (token == "...") {
         // Ellipsis - represents remaining dimensions
         return EllipsisAxis{};
+    } else if (token == "_") {
+        // Anonymous axis - each _ gets a unique internal name
+        std::string anon_name =
+            "__anon_axis_" + std::to_string(anonymous_axis_counter_++) + "__";
+        return SimpleAxis{anon_name};
     } else if (token == "1") {
         // Unity axis represented by literal '1'
         return UnityAxis{};
@@ -166,6 +171,15 @@ EinopsExpression::parse_axis_element(const std::string &token) const {
 
         while (iss >> axis) {
             if (axis.empty()) {
+                continue;
+            }
+
+            // Check for anonymous _ axis inside groups
+            if (axis == "_") {
+                std::string anon_name =
+                    "__anon_axis_" + std::to_string(anonymous_axis_counter_++) +
+                    "__";
+                axes.push_back(anon_name);
                 continue;
             }
 
@@ -589,26 +603,10 @@ Tensor reduce(const Tensor &tensor, const std::string &pattern,
     // Parse the einops expression
     EinopsExpression expr(pattern, axis_sizes);
 
-    // Split pattern for parsing
-    size_t arrow_pos = pattern.find("->");
-    if (arrow_pos == std::string::npos) {
-        throw EinopsParseError(
-            "Pattern must contain '->' to separate input and output: " +
-            pattern);
-    }
-
-    std::string input_pattern_str = pattern.substr(0, arrow_pos);
-    std::string output_pattern_str = pattern.substr(arrow_pos + 2);
-
-    // Trim whitespace
-    input_pattern_str.erase(0, input_pattern_str.find_first_not_of(" \t"));
-    input_pattern_str.erase(input_pattern_str.find_last_not_of(" \t") + 1);
-    output_pattern_str.erase(0, output_pattern_str.find_first_not_of(" \t"));
-    output_pattern_str.erase(output_pattern_str.find_last_not_of(" \t") + 1);
-
-    // Parse patterns
-    auto parsed_input = expr.parse_single_pattern(input_pattern_str);
-    auto parsed_output = expr.parse_single_pattern(output_pattern_str);
+    // Use already-parsed patterns to avoid re-parsing (which would generate
+    // different anonymous axis counter values for _ axes)
+    const auto &parsed_input = expr.parsed_input();
+    const auto &parsed_output = expr.parsed_output();
 
     // Compute axis sizes from tensor
     auto sizes = expr.infer_axis_sizes(tensor);
@@ -1320,6 +1318,344 @@ Tensor einsum(const std::string &equation,
     }
 
     throw EinopsError("einsum: unsupported equation pattern: " + equation);
+}
+
+// ============================================================================
+// einops::repeat() implementation
+// ============================================================================
+
+Tensor repeat(const Tensor &tensor, const std::string &pattern,
+              const std::map<std::string, size_t> &axis_sizes) {
+    // Parse the pattern
+    size_t arrow_pos = pattern.find("->");
+    if (arrow_pos == std::string::npos) {
+        throw EinopsParseError(
+            "Pattern must contain '->' to separate input and output: " +
+            pattern);
+    }
+
+    std::string input_str = pattern.substr(0, arrow_pos);
+    std::string output_str = pattern.substr(arrow_pos + 2);
+
+    // Trim whitespace
+    input_str.erase(0, input_str.find_first_not_of(" \t"));
+    input_str.erase(input_str.find_last_not_of(" \t") + 1);
+    output_str.erase(0, output_str.find_first_not_of(" \t"));
+    output_str.erase(output_str.find_last_not_of(" \t") + 1);
+
+    // Use EinopsExpression just for parsing (we skip its
+    // output-must-be-in-input validation by providing axis_sizes for new axes)
+    EinopsExpression expr(pattern, axis_sizes);
+
+    auto parsed_input = expr.parse_single_pattern(input_str);
+    auto parsed_output = expr.parse_single_pattern(output_str);
+
+    // Infer axis sizes from tensor
+    auto sizes = expr.infer_axis_sizes(tensor);
+
+    // Merge in user-provided axis_sizes for new axes
+    for (const auto &[name, size] : axis_sizes) {
+        sizes[name] = size;
+    }
+
+    // Step 1: Expand input groups to individual dimensions
+    Tensor working = tensor;
+    std::vector<std::string> input_axes;
+    Shape expanded_shape;
+
+    for (const auto &element : parsed_input.elements) {
+        if (std::holds_alternative<SimpleAxis>(element)) {
+            const auto &axis = std::get<SimpleAxis>(element);
+            input_axes.push_back(axis.name);
+            expanded_shape.push_back(sizes.at(axis.name));
+        } else if (std::holds_alternative<UnityAxis>(element)) {
+            input_axes.push_back("__unity__");
+            expanded_shape.push_back(1);
+        } else if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            for (const auto &axis : group.axes) {
+                input_axes.push_back(axis);
+                expanded_shape.push_back(sizes.at(axis));
+            }
+        }
+    }
+
+    if (expanded_shape != working.shape()) {
+        working = working.reshape(expanded_shape);
+    }
+
+    // Step 2: Build output axis list and identify new axes
+    std::vector<std::string> output_axes;
+    for (const auto &element : parsed_output.elements) {
+        if (std::holds_alternative<SimpleAxis>(element)) {
+            output_axes.push_back(std::get<SimpleAxis>(element).name);
+        } else if (std::holds_alternative<UnityAxis>(element)) {
+            output_axes.push_back("__unity__");
+        } else if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            for (const auto &axis : group.axes) {
+                output_axes.push_back(axis);
+            }
+        }
+    }
+
+    std::set<std::string> input_set(input_axes.begin(), input_axes.end());
+
+    // Step 3: Transpose input axes to match their order in output
+    // First, collect the order of input axes as they appear in output
+    std::vector<int> transpose_order;
+    for (const auto &axis : output_axes) {
+        if (input_set.count(axis)) {
+            // Find position in input_axes
+            for (size_t i = 0; i < input_axes.size(); ++i) {
+                if (input_axes[i] == axis) {
+                    transpose_order.push_back(static_cast<int>(i));
+                    break;
+                }
+            }
+        }
+    }
+
+    bool needs_transpose = false;
+    for (size_t i = 0; i < transpose_order.size(); ++i) {
+        if (transpose_order[i] != static_cast<int>(i)) {
+            needs_transpose = true;
+            break;
+        }
+    }
+
+    if (needs_transpose && transpose_order.size() > 1) {
+        working = working.transpose(transpose_order);
+        // Rebuild input_axes to reflect transposed order
+        std::vector<std::string> transposed_axes;
+        for (int idx : transpose_order) {
+            transposed_axes.push_back(input_axes[idx]);
+        }
+        input_axes = transposed_axes;
+    }
+
+    // Step 4: Insert size-1 dims for new axes and build expand shape
+    // Walk through output_axes, for each axis either it's from input (keep) or
+    // new (unsqueeze)
+    size_t input_pos = 0;
+    Shape expand_shape;
+
+    for (size_t i = 0; i < output_axes.size(); ++i) {
+        const auto &axis = output_axes[i];
+        if (input_set.count(axis)) {
+            // Existing axis from input
+            expand_shape.push_back(working.shape()[input_pos]);
+            input_pos++;
+        } else {
+            // New axis - unsqueeze at this position
+            working = working.unsqueeze(static_cast<int>(i));
+            // Look up size
+            auto it = sizes.find(axis);
+            if (it == sizes.end()) {
+                throw EinopsShapeError("repeat: unknown size for new axis '" +
+                                       axis + "'. Provide it in axis_sizes.");
+            }
+            expand_shape.push_back(it->second);
+            input_pos++; // unsqueeze added a dim, so next input_pos is shifted
+        }
+    }
+
+    // Step 5: Expand to broadcast size-1 dims
+    working = working.expand(expand_shape);
+
+    // Step 6: Materialize (expand is a zero-copy view)
+    working = working.ascontiguousarray();
+
+    // Step 7: Reshape to merge output groups
+    Shape final_shape;
+    for (const auto &element : parsed_output.elements) {
+        if (std::holds_alternative<SimpleAxis>(element)) {
+            const auto &axis = std::get<SimpleAxis>(element);
+            final_shape.push_back(sizes.at(axis.name));
+        } else if (std::holds_alternative<UnityAxis>(element)) {
+            final_shape.push_back(1);
+        } else if (std::holds_alternative<GroupedAxes>(element)) {
+            const auto &group = std::get<GroupedAxes>(element);
+            size_t group_size = 1;
+            for (const auto &axis : group.axes) {
+                group_size *= sizes.at(axis);
+            }
+            final_shape.push_back(group_size);
+        }
+    }
+
+    if (working.shape() != final_shape) {
+        working = working.reshape(final_shape);
+    }
+
+    return working;
+}
+
+// ============================================================================
+// einops::pack() implementation
+// ============================================================================
+
+// Helper: tokenize a pack/unpack pattern and find the * position
+static std::pair<std::vector<std::string>, int>
+parse_pack_pattern(const std::string &pattern) {
+    std::vector<std::string> tokens;
+    std::istringstream iss(pattern);
+    std::string tok;
+    int star_pos = -1;
+
+    while (iss >> tok) {
+        if (tok == "*") {
+            star_pos = static_cast<int>(tokens.size());
+        }
+        tokens.push_back(tok);
+    }
+
+    if (star_pos < 0) {
+        throw EinopsParseError(
+            "pack/unpack pattern must contain exactly one '*': " + pattern);
+    }
+
+    return {tokens, star_pos};
+}
+
+std::pair<Tensor, std::vector<Shape>> pack(const std::vector<Tensor> &tensors,
+                                           const std::string &pattern) {
+    if (tensors.empty()) {
+        throw EinopsError("pack: at least one tensor required");
+    }
+
+    auto [tokens, star_pos] = parse_pack_pattern(pattern);
+    size_t n_before = static_cast<size_t>(star_pos);
+    size_t n_after = tokens.size() - n_before - 1; // -1 for the * itself
+
+    std::vector<Shape> packed_shapes;
+    std::vector<Tensor> reshaped;
+
+    for (size_t t = 0; t < tensors.size(); ++t) {
+        const auto &tensor = tensors[t];
+        if (tensor.ndim() < n_before + n_after) {
+            throw EinopsShapeError("pack: tensor " + std::to_string(t) +
+                                   " has " + std::to_string(tensor.ndim()) +
+                                   " dims but pattern requires at least " +
+                                   std::to_string(n_before + n_after));
+        }
+
+        // Validate fixed dims match across tensors
+        if (t > 0) {
+            for (size_t i = 0; i < n_before; ++i) {
+                if (tensor.shape()[i] != tensors[0].shape()[i]) {
+                    throw EinopsShapeError(
+                        "pack: dimension mismatch at position " +
+                        std::to_string(i));
+                }
+            }
+            for (size_t i = 0; i < n_after; ++i) {
+                size_t from_end = tensor.ndim() - n_after + i;
+                size_t from_end_ref = tensors[0].ndim() - n_after + i;
+                if (tensor.shape()[from_end] !=
+                    tensors[0].shape()[from_end_ref]) {
+                    throw EinopsShapeError(
+                        "pack: trailing dimension mismatch at position " +
+                        std::to_string(i));
+                }
+            }
+        }
+
+        // Extract the * dims shape
+        size_t star_dims = tensor.ndim() - n_before - n_after;
+        Shape star_shape;
+        for (size_t i = 0; i < star_dims; ++i) {
+            star_shape.push_back(tensor.shape()[n_before + i]);
+        }
+        packed_shapes.push_back(star_shape);
+
+        // Flatten star dims to a single dim
+        size_t flat_size = 1;
+        for (size_t s : star_shape) {
+            flat_size *= s;
+        }
+
+        Shape new_shape;
+        for (size_t i = 0; i < n_before; ++i) {
+            new_shape.push_back(tensor.shape()[i]);
+        }
+        new_shape.push_back(flat_size);
+        for (size_t i = 0; i < n_after; ++i) {
+            new_shape.push_back(tensor.shape()[tensor.ndim() - n_after + i]);
+        }
+
+        reshaped.push_back(tensor.reshape(new_shape));
+    }
+
+    // Concatenate along the star axis
+    Tensor packed = Tensor::concatenate(reshaped, static_cast<int>(n_before));
+    return {packed, packed_shapes};
+}
+
+// ============================================================================
+// einops::unpack() implementation
+// ============================================================================
+
+std::vector<Tensor> unpack(const Tensor &tensor,
+                           const std::vector<Shape> &packed_shapes,
+                           const std::string &pattern) {
+    if (packed_shapes.empty()) {
+        throw EinopsError("unpack: at least one packed_shape required");
+    }
+
+    auto [tokens, star_pos] = parse_pack_pattern(pattern);
+    size_t n_before = static_cast<size_t>(star_pos);
+    size_t n_after = tokens.size() - n_before - 1;
+
+    // Compute flat sizes for each tensor's star dims
+    std::vector<size_t> flat_sizes;
+    for (const auto &shape : packed_shapes) {
+        size_t flat = 1;
+        for (size_t s : shape) {
+            flat *= s;
+        }
+        flat_sizes.push_back(flat);
+    }
+
+    // Build split indices (cumulative sums)
+    std::vector<size_t> split_indices;
+    size_t cumulative = 0;
+    for (size_t i = 0; i < flat_sizes.size() - 1; ++i) {
+        cumulative += flat_sizes[i];
+        split_indices.push_back(cumulative);
+    }
+
+    // Split along the star axis
+    auto pieces = tensor.split(split_indices, static_cast<int>(n_before));
+
+    // Reshape each piece to restore original star dims
+    std::vector<Tensor> result;
+    for (size_t i = 0; i < pieces.size(); ++i) {
+        const auto &piece = pieces[i];
+        const auto &star_shape = packed_shapes[i];
+
+        Shape new_shape;
+        for (size_t j = 0; j < n_before; ++j) {
+            new_shape.push_back(piece.shape()[j]);
+        }
+
+        if (star_shape.empty()) {
+            // Scalar star dims - squeeze the flat dim
+            // (don't add any dims for the star)
+        } else {
+            for (size_t s : star_shape) {
+                new_shape.push_back(s);
+            }
+        }
+
+        for (size_t j = 0; j < n_after; ++j) {
+            new_shape.push_back(piece.shape()[piece.ndim() - n_after + j]);
+        }
+
+        result.push_back(piece.reshape(new_shape));
+    }
+
+    return result;
 }
 
 } // namespace einops

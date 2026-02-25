@@ -1,58 +1,36 @@
 #include <axiom/axiom.hpp>
+#include <chrono>
 #include <iostream>
 
 using namespace axiom;
 
 int main() {
-    // Create tensors with NumPy-like syntax
-    auto x = Tensor::randn({64, 128, 256}, DType::Float32, Device::GPU);
-    auto y = Tensor::ones({256, 512}, DType::Float32, Device::GPU);
-
-    // Matrix operations
-    auto result = x.matmul(y);
-
-    // Einops-style rearrangement
-    auto reshaped = x.rearrange("b h w -> b (h w)");
-
-    // Broadcasting and element-wise ops
-    auto scaled = (x * 2.0f + 1.0f).relu();
-
-    std::cout << result << std::endl;
-
-    // Benchmark matmul of huge tensors on GPU
-    auto a = Tensor::randn({1000, 1000}, DType::Float32, Device::GPU);
-    auto b = Tensor::randn({1000, 1000}, DType::Float32, Device::GPU);
+    auto a = Tensor::randn({1, 128, 2048}, DType::Float32, Device::GPU,
+                           MemoryOrder::RowMajor);
+    std::cout << a << std::endl;
+    std::cout << a.shape() << std::endl;
+    std::cout << a.repr() << std::endl;
+    // Transfer to CPU
     auto start = std::chrono::high_resolution_clock::now();
-    auto c = a.matmul(b);
+    auto b = a.to(Device::CPU);
     auto end = std::chrono::high_resolution_clock::now();
-    std::cout << "Matmul of 1000x1000 tensors on GPU took "
+    std::cout << "Time taken: "
               << std::chrono::duration_cast<std::chrono::milliseconds>(end -
                                                                        start)
                      .count()
               << "ms" << std::endl;
-
-    // Benchmark matmul of huge tensors on CPU with proper warmup
-    auto a_cpu = Tensor::randn({1000, 1000}, DType::Float32, Device::CPU);
-    auto b_cpu = Tensor::randn({1000, 1000}, DType::Float32, Device::CPU);
-
-    // Warmup runs
-    for (int i = 0; i < 3; ++i) {
-        auto warmup = a_cpu.matmul(b_cpu);
-    }
-
-    // Timed runs
-    constexpr int num_runs = 10;
-    auto start_cpu = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < num_runs; ++i) {
-        auto c_cpu = a_cpu.matmul(b_cpu);
-    }
-    auto end_cpu = std::chrono::high_resolution_clock::now();
-    auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                        end_cpu - start_cpu)
-                        .count();
-    std::cout << "Matmul of 1000x1000 tensors on CPU took "
-              << (total_us / num_runs) << "us (avg of " << num_runs << " runs)"
-              << std::endl;
-
+    std::cout << b.shape() << std::endl;
+    std::cout << b.repr() << std::endl;
+    // Transfer to GPU
+    start = std::chrono::high_resolution_clock::now();
+    auto c = b.to(Device::GPU);
+    end = std::chrono::high_resolution_clock::now();
+    std::cout << "Time taken: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(end -
+                                                                       start)
+                     .count()
+              << "ms" << std::endl;
+    std::cout << c.shape() << std::endl;
+    std::cout << c.repr() << std::endl;
     return 0;
 }

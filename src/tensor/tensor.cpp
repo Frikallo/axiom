@@ -620,6 +620,11 @@ Tensor Tensor::reduce(const std::string &pattern, const std::string &reduction,
     return einops::reduce(*this, pattern, reduction, axis_sizes);
 }
 
+Tensor Tensor::repeat(const std::string &pattern,
+                      const std::map<std::string, size_t> &axis_sizes) const {
+    return einops::repeat(*this, pattern, axis_sizes);
+}
+
 Tensor Tensor::transpose() const {
     // Materialize lazy tensors before transpose
     materialize_if_needed();
@@ -1625,6 +1630,18 @@ std::string Tensor::repr() const {
 }
 
 std::string Tensor::str() const { return repr(); }
+
+std::string Tensor::shape_str() const {
+    std::ostringstream oss;
+    oss << "(";
+    for (size_t i = 0; i < shape_.size(); ++i) {
+        if (i > 0)
+            oss << ", ";
+        oss << shape_[i];
+    }
+    oss << ")";
+    return oss.str();
+}
 
 bool Tensor::same_shape(const Tensor &other) const {
     return ShapeUtils::shapes_equal(shape_, other.shape_);
