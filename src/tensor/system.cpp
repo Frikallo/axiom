@@ -5,11 +5,21 @@
 #ifdef __APPLE__
 namespace axiom::backends::metal {
 bool is_metal_available();
-}
+class MetalExecutionStream {
+  public:
+    static MetalExecutionStream &instance();
+    void synchronize();
+};
+} // namespace axiom::backends::metal
 #elif defined(AXIOM_CUDA_SUPPORT)
 namespace axiom::backends::cuda {
 bool is_cuda_available();
-}
+class CudaExecutionStream {
+  public:
+    static CudaExecutionStream &instance();
+    void synchronize();
+};
+} // namespace axiom::backends::cuda
 #endif
 
 namespace axiom::system {
@@ -50,5 +60,16 @@ std::string device_to_string(Device device) {
     default:
         return "Unknown";
     }
+}
+void synchronize() {
+#ifdef __APPLE__
+    if (backends::metal::is_metal_available()) {
+        backends::metal::MetalExecutionStream::instance().synchronize();
+    }
+#elif defined(AXIOM_CUDA_SUPPORT)
+    if (backends::cuda::is_cuda_available()) {
+        backends::cuda::CudaExecutionStream::instance().synchronize();
+    }
+#endif
 }
 } // namespace axiom::system

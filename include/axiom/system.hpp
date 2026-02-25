@@ -35,5 +35,14 @@ bool should_run_gpu_tests();
 
 std::string device_to_string(Device device);
 
+/**
+ * @brief Synchronize the GPU device, blocking until all pending work completes.
+ *
+ * Equivalent to torch.cuda.synchronize() / torch.mps.synchronize().
+ * This does NOT transfer data — use tensor.cpu() for that.
+ * No-op if no GPU backend is active.
+ */
+void synchronize();
+
 } // namespace system
 } // namespace axiom

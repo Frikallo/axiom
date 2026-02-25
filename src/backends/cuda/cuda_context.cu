@@ -44,6 +44,7 @@ CudaContext::CudaContext()
     cublasHandle_t blas_handle = nullptr;
     cublasCreate(&blas_handle);
     cublasSetStream(blas_handle, s);
+    cublasSetMathMode(blas_handle, CUBLAS_TF32_TENSOR_OP_MATH);
     cublas_handle_ = static_cast<void *>(blas_handle);
 
     cusolverDnHandle_t solver_handle = nullptr;

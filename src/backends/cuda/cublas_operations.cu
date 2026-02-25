@@ -103,18 +103,24 @@ static void cublas_gemm_f32(cublasHandle_t handle,
     float alpha = 1.0f;
     float beta = 0.0f;
 
-    cublasStatus_t status = cublasSgemm(
+    // Use cublasGemmEx with TF32 to leverage Tensor Cores on Ampere+ GPUs.
+    // TF32 uses 19-bit mantissa (vs FP32's 23-bit) — sufficient for deep
+    // learning and most scientific workloads, with ~8x throughput improvement.
+    cublasStatus_t status = cublasGemmEx(
         handle, op_b, op_a,
         N, M, K,
         &alpha,
-        b_ptr, ldb,
-        a_ptr, lda,
+        b_ptr, CUDA_R_32F, ldb,
+        a_ptr, CUDA_R_32F, lda,
         &beta,
-        c_ptr, ldc);
+        c_ptr, CUDA_R_32F, ldc,
+        CUBLAS_COMPUTE_32F_FAST_TF32,
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
         throw RuntimeError::internal(
-            "cublasSgemm failed with status " + std::to_string(status));
+            "cublasGemmEx (f32/TF32) failed with status " +
+            std::to_string(status));
     }
 }
 

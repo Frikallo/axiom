@@ -20,19 +20,27 @@ int main(int argc, char* argv[]) {
     auto A = Tensor::randn({n, n}, DType::Float32, Device::GPU);
     auto B = Tensor::randn({n, n}, DType::Float32, Device::GPU);
 
+    Tensor C;
+
     // Warmup
     for (int i = 0; i < warmup; i++) {
-        auto C = A.matmul(B);
-        C.cpu();
+        C = A.matmul(B);
+        C.storage();  // Force lazy graph execution
+        system::synchronize();
     }
 
     // Benchmark
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; i++) {
-        auto C = A.matmul(B);
-        C.cpu();
+        C = A.matmul(B);
+        C.storage();  // Force lazy graph execution (no D2H copy)
+        system::synchronize();
     }
     auto end = std::chrono::high_resolution_clock::now();
+
+    // Prevent dead-code elimination
+    volatile auto ptr = C.storage().get();
+    (void)ptr;
 
     double elapsed_ms =
         std::chrono::duration<double, std::milli>(end - start).count();
