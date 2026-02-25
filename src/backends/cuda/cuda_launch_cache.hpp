@@ -43,8 +43,8 @@ class CudaLaunchCache {
             auto it = cache_.find(key);
             if (it != cache_.end()) {
                 block = it->second;
-                unsigned int grid = static_cast<unsigned int>(
-                    (numel + block - 1) / block);
+                unsigned int grid =
+                    static_cast<unsigned int>((numel + block - 1) / block);
                 return {grid, block};
             }
         }
