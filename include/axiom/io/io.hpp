@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "axiom/io/numpy.hpp"
+#include "axiom/io/safetensors.hpp"
 #include "axiom/tensor.hpp"
 
 namespace axiom {
@@ -14,7 +15,7 @@ namespace io {
 // File Format Detection
 // ============================================================================
 
-enum class FileFormat { Unknown, Axiom, NumPy };
+enum class FileFormat { Unknown, Axiom, NumPy, SafeTensors };
 
 /**
  * Detect file format by examining magic bytes.

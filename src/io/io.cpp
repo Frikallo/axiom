@@ -1,5 +1,6 @@
 #include "axiom/io/io.hpp"
 #include "axiom/io/numpy.hpp"
+#include "axiom/io/safetensors.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -41,6 +42,11 @@ FileFormat detect_format(const std::string &filename) {
         return FileFormat::Axiom;
     }
 
+    // SafeTensors has no magic bytes — detect by file extension
+    if (safetensors::is_safetensors_file(filename)) {
+        return FileFormat::SafeTensors;
+    }
+
     return FileFormat::Unknown;
 }
 
@@ -50,6 +56,8 @@ std::string format_name(FileFormat format) {
         return "Axiom FlatBuffers";
     case FileFormat::NumPy:
         return "NumPy";
+    case FileFormat::SafeTensors:
+        return "SafeTensors";
     case FileFormat::Unknown:
     default:
         return "Unknown";
@@ -68,10 +76,17 @@ Tensor load(const std::string &filename, Device device) {
         return flatbuffers::load(filename, device);
     case FileFormat::NumPy:
         return numpy::load(filename, device);
+    case FileFormat::SafeTensors: {
+        auto tensors = safetensors::load(filename, device);
+        if (tensors.empty()) {
+            throw FileFormatError("SafeTensors file contains no tensors");
+        }
+        return tensors.begin()->second;
+    }
     case FileFormat::Unknown:
     default:
         throw FileFormatError("Unknown file format. Supported formats: .axfb "
-                              "(FlatBuffers), .npy (NumPy)");
+                              "(FlatBuffers), .npy (NumPy), .safetensors");
     }
 }
 
@@ -96,10 +111,12 @@ std::map<std::string, Tensor> load_archive(const std::string &filename,
         result[name] = numpy::load(filename, device);
         return result;
     }
+    case FileFormat::SafeTensors:
+        return safetensors::load(filename, device);
     case FileFormat::Unknown:
     default:
         throw FileFormatError("Unknown file format. Supported formats: .axfb "
-                              "(FlatBuffers), .npy (NumPy)");
+                              "(FlatBuffers), .npy (NumPy), .safetensors");
     }
 }
 

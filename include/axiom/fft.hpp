@@ -217,5 +217,26 @@ Tensor bartlett_window(int64_t M, bool periodic = true,
 Tensor kaiser_window(int64_t M, double beta = 12.0, bool periodic = true,
                      DType dtype = DType::Float32, Device device = Device::CPU);
 
+// ============================================================================
+// Short-Time Fourier Transform
+// ============================================================================
+
+/**
+ * Compute the Short-Time Fourier Transform.
+ * @param input 1D or 2D real-valued signal (..., signal_length)
+ * @param n_fft FFT window size
+ * @param hop_length Number of samples between frames (default: n_fft/4)
+ * @param win_length Window length (default: n_fft)
+ * @param window Optional window tensor of length win_length
+ * @param center If true, pad signal on both sides with reflect padding
+ * @param pad_mode Padding mode when center=true ("reflect")
+ * @param normalized If true, normalize output by 1/sqrt(n_fft)
+ * @return Complex tensor of shape (..., n_fft/2+1, n_frames)
+ */
+Tensor stft(const Tensor &input, int64_t n_fft, int64_t hop_length = -1,
+            int64_t win_length = -1, const Tensor &window = Tensor(),
+            bool center = true, const std::string &pad_mode = "reflect",
+            bool normalized = false);
+
 } // namespace fft
 } // namespace axiom
