@@ -32,6 +32,7 @@ target_link_libraries(your_target PRIVATE axiom)
 ```cpp
 #include <axiom/axiom.hpp>
 using namespace axiom;
+using namespace axiom::nn;
 
 int main() {
     // Create tensors
@@ -51,6 +52,14 @@ int main() {
 
     // FFT
     auto spectrum = fft::fft(a);
+
+    // Neural network inference
+    nn::Linear layer(true);
+    std::map<std::string, Tensor> weights;
+    weights["weight"] = Tensor::randn({5, 4});
+    weights["bias"] = Tensor::zeros({5});
+    layer.load_state_dict(weights);
+    auto out = layer(a);                         // (3, 5)
 
     return 0;
 }

@@ -345,6 +345,99 @@ auto windowed_fft = fft::fft(windowed_signal);
 auto freqs = fft::fftfreq(256, 1.0 / 44100);
 ```
 
+## Neural Network Modules (`axiom::nn`)
+
+Axiom provides a PyTorch-style `nn::Module` system for structured inference. Define models as composable structs with automatic weight loading from HuggingFace safetensors.
+
+### Defining a Model
+
+```cpp
+#include <axiom/axiom.hpp>
+#include <axiom/nn.hpp>
+using namespace axiom;
+using namespace axiom::nn;
+
+struct TwoLayerNet : Module {
+    Linear fc1_{true};   // with bias
+    Linear fc2_{true};
+
+    TwoLayerNet() {
+        register_module("fc1", fc1_);
+        register_module("fc2", fc2_);
+    }
+
+    Tensor forward(const Tensor &x) const {
+        return fc2_(ops::relu(fc1_(x)));
+    }
+};
+```
+
+### Loading Weights
+
+Weights load from a flat `name -> Tensor` map with hierarchical prefix resolution, matching HuggingFace conventions:
+
+```cpp
+// From safetensors
+auto weights = io::safetensors::load("model.safetensors");
+
+TwoLayerNet net;
+net.load_state_dict(weights, "model.");  // Prefix strips "model." from keys
+net.to(Device::GPU);                     // Move all parameters to GPU
+
+auto output = net.forward(input);
+```
+
+### Available Layers
+
+| Layer | Description |
+|-------|-------------|
+| `Linear` | Fully-connected layer (`weight`, optional `bias`) |
+| `Embedding` | Lookup table (`weight`) |
+| `LayerNorm` | Layer normalization (`weight`, `bias`) |
+| `RMSNorm` | RMS normalization (`weight`) |
+| `Conv1d` | 1D convolution with stride/padding/dilation/groups |
+| `Conv2d` | 2D convolution with stride/padding/dilation/groups |
+| `MultiHeadAttention` | Multi-head scaled dot-product attention (Q/K/V/out projections) |
+| `ModuleList` | Ordered container of submodules (typed `emplace_back<T>()`) |
+
+All layers are configuration-only constructors — dimensions are inferred from loaded weights. Every `forward()` throws `RuntimeError` if called before `load_state_dict()`.
+
+### Composing with ModuleList
+
+```cpp
+struct TransformerEncoder : Module {
+    ModuleList layers_;
+    LayerNorm ln_;
+
+    TransformerEncoder(int n_layers, int n_heads) {
+        register_module("layers", layers_);
+        register_module("ln", ln_);
+        for (int i = 0; i < n_layers; ++i)
+            layers_.emplace_back<EncoderLayer>(n_heads);
+    }
+
+    Tensor forward(const Tensor &x) const {
+        auto h = x;
+        for (size_t i = 0; i < layers_.size(); ++i) {
+            auto &layer = static_cast<const EncoderLayer &>(layers_[i]);
+            h = layer.forward(h);
+        }
+        return ln_(h);
+    }
+};
+```
+
+### Parameter Introspection
+
+```cpp
+auto params = model.parameters();              // vector<Tensor*>
+auto named = model.named_parameters();         // vector<pair<string, Tensor*>>
+
+// Example: count total values
+size_t total = 0;
+for (auto *p : params) total += p->size();
+```
+
 ## Debugging
 
 ```cpp
