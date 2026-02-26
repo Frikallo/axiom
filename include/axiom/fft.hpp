@@ -217,6 +217,89 @@ Tensor bartlett_window(int64_t M, bool periodic = true,
 Tensor kaiser_window(int64_t M, double beta = 12.0, bool periodic = true,
                      DType dtype = DType::Float32, Device device = Device::CPU);
 
+/**
+ * Cosine window.
+ * w[n] = sin(pi * n / (M-1))
+ * @param M Number of points in the output window
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor cosine_window(int64_t M, bool periodic = true,
+                     DType dtype = DType::Float32, Device device = Device::CPU);
+
+/**
+ * Exponential (Poisson) window.
+ * w[n] = exp(-|n - center| / tau)
+ * @param M Number of points in the output window
+ * @param tau Decay scale parameter (default: 1.0)
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor exponential_window(int64_t M, double tau = 1.0, bool periodic = true,
+                          DType dtype = DType::Float32,
+                          Device device = Device::CPU);
+
+/**
+ * Gaussian window.
+ * w[n] = exp(-0.5 * ((n - center) / std)^2)
+ * @param M Number of points in the output window
+ * @param std Standard deviation (default: 1.0)
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor gaussian_window(int64_t M, double std = 1.0, bool periodic = true,
+                       DType dtype = DType::Float32,
+                       Device device = Device::CPU);
+
+/**
+ * Nuttall window (4-term Blackman-Harris variant).
+ * w[n] = a0 - a1*cos(2*pi*n/(M-1)) + a2*cos(4*pi*n/(M-1)) -
+ * a3*cos(6*pi*n/(M-1)) with a = {0.3635819, 0.4891775, 0.1365995, 0.0106411}
+ * @param M Number of points in the output window
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor nuttall_window(int64_t M, bool periodic = true,
+                      DType dtype = DType::Float32,
+                      Device device = Device::CPU);
+
+/**
+ * General cosine window.
+ * w[n] = sum_k (-1)^k * a[k] * cos(2*pi*k*n / (M-1))
+ * @param M Number of points in the output window
+ * @param a Cosine coefficients
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor general_cosine_window(int64_t M, const std::vector<double> &a,
+                             bool periodic = true, DType dtype = DType::Float32,
+                             Device device = Device::CPU);
+
+/**
+ * General Hamming window.
+ * w[n] = alpha - (1 - alpha) * cos(2*pi*n / (M-1))
+ * @param M Number of points in the output window
+ * @param alpha Window coefficient (default: 0.54 for Hamming)
+ * @param periodic If true, returns a periodic window
+ * @param dtype Output dtype
+ * @param device Output device
+ * @return 1D tensor of length M containing the window
+ */
+Tensor general_hamming_window(int64_t M, double alpha = 0.54,
+                              bool periodic = true,
+                              DType dtype = DType::Float32,
+                              Device device = Device::CPU);
+
 // ============================================================================
 // Short-Time Fourier Transform
 // ============================================================================
