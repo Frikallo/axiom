@@ -49,6 +49,14 @@ Tensor gpu_scaled_dot_product_attention(const Tensor &query, const Tensor &key,
                                         const Tensor &value, const Tensor &mask,
                                         float scale, bool is_causal);
 
+// GPU pad (MPSGraph native, avoids CPU roundtrip)
+Tensor gpu_pad(const Tensor &input,
+               const std::vector<std::pair<size_t, size_t>> &pad_width,
+               const std::string &mode, double value);
+
+// GPU fill (creates constant tensor on GPU)
+Tensor gpu_fill_constant(const Shape &shape, DType dtype, double value);
+
 } // namespace metal
 } // namespace backends
 } // namespace axiom

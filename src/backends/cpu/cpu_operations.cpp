@@ -2257,13 +2257,14 @@ Tensor CPUArgMaxOperation::execute_reduction(const Tensor &input,
     int ax = axis.empty() ? -1 : axis[0];
 
     // For full reduction (axis=-1 or all axes), flatten first
+    Tensor src = input;
     if (ax == -1 || axis.size() > 1) {
-        auto flat = input.flatten();
+        src = input.flatten();
         ax = 0;
     }
 
-    return dispatch_numeric(input.dtype(), "ArgMax", [&]<typename DT>(DT) {
-        return execute_argmax_typed<typename DT::value_type>(input, ax,
+    return dispatch_numeric(src.dtype(), "ArgMax", [&]<typename DT>(DT) {
+        return execute_argmax_typed<typename DT::value_type>(src, ax,
                                                              keep_dims);
     });
 }
@@ -2372,13 +2373,14 @@ Tensor CPUArgMinOperation::execute_reduction(const Tensor &input,
     int ax = axis.empty() ? -1 : axis[0];
 
     // For full reduction (axis=-1 or all axes), flatten first
+    Tensor src = input;
     if (ax == -1 || axis.size() > 1) {
-        auto flat = input.flatten();
+        src = input.flatten();
         ax = 0;
     }
 
-    return dispatch_numeric(input.dtype(), "ArgMin", [&]<typename DT>(DT) {
-        return execute_argmin_typed<typename DT::value_type>(input, ax,
+    return dispatch_numeric(src.dtype(), "ArgMin", [&]<typename DT>(DT) {
+        return execute_argmin_typed<typename DT::value_type>(src, ax,
                                                              keep_dims);
     });
 }
@@ -3236,29 +3238,34 @@ Tensor CPUSoftmaxOperation::execute_reduction(const Tensor &input,
         throw DeviceError::cpu_only("CPU Softmax");
     }
 
+    // Softmax typed kernels use flat indexing that assumes contiguous layout.
+    // Force contiguity so non-contiguous tensors (from transpose/permute)
+    // produce correct results.
+    Tensor src = input.is_contiguous() ? input : input.ascontiguousarray();
+
     int ax = axis.empty() ? -1 : axis[0];
 
-    switch (input.dtype()) {
+    switch (src.dtype()) {
     case DType::Float16: {
         // For float16, compute in float32 for numerical stability, then convert
         // back
-        Tensor input_f32 = input.astype(DType::Float32);
+        Tensor input_f32 = src.astype(DType::Float32);
         Tensor result_f32 = execute_softmax_typed<float>(input_f32, ax);
         return result_f32.astype(DType::Float16);
     }
     case DType::BFloat16: {
         // For bfloat16, compute in float32 for numerical stability, then
         // convert back
-        Tensor input_f32 = input.astype(DType::Float32);
+        Tensor input_f32 = src.astype(DType::Float32);
         Tensor result_f32 = execute_softmax_typed<float>(input_f32, ax);
         return result_f32.astype(DType::BFloat16);
     }
     case DType::Float32:
-        return execute_softmax_typed<float>(input, ax);
+        return execute_softmax_typed<float>(src, ax);
     case DType::Float64:
-        return execute_softmax_typed<double>(input, ax);
+        return execute_softmax_typed<double>(src, ax);
     default:
-        throw TypeError::unsupported_dtype(dtype_name(input.dtype()), name());
+        throw TypeError::unsupported_dtype(dtype_name(src.dtype()), name());
     }
 }
 

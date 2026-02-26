@@ -2153,13 +2153,21 @@ Tensor pad(const Tensor &input,
                                pad_width[i].second);
     }
 
-    // Create output tensor
-    Tensor result = Tensor::zeros(output_shape, input.dtype(), input.device(),
+#ifdef AXIOM_METAL_SUPPORT
+    // GPU fast-path: native MPSGraph padding (no CPU roundtrip)
+    // "circular" mode has no MPSGraph equivalent — falls through to CPU path
+    if (input.device() == Device::GPU && mode != "circular") {
+        return backends::metal::gpu_pad(input, pad_width, mode, value);
+    }
+#endif
+
+    // CPU path (also used as fallback for GPU circular mode)
+    bool was_gpu = (input.device() == Device::GPU);
+    Tensor result = Tensor::zeros(output_shape, input.dtype(), Device::CPU,
                                   input.memory_order());
 
-    // For GPU tensors, move to CPU for padding, then back
-    Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
-    Tensor result_cpu = result.device() == Device::CPU ? result : result.cpu();
+    Tensor input_cpu = was_gpu ? input.cpu() : input;
+    Tensor result_cpu = result;
 
     // Fill with constant value if mode is constant
     if (mode == "constant" && value != 0.0) {
@@ -2240,10 +2248,7 @@ Tensor pad(const Tensor &input,
         }
     }
 
-    if (input.device() == Device::GPU) {
-        return result_cpu.gpu();
-    }
-    return result_cpu;
+    return was_gpu ? result_cpu.gpu() : result_cpu;
 }
 
 Tensor atleast_1d(const Tensor &tensor) {

@@ -2604,6 +2604,102 @@ Tensor gpu_interpolate(const Tensor &input,
 }
 
 // ============================================================================
+// GPU Pad (MPSGraph native)
+// ============================================================================
+
+Tensor gpu_pad(const Tensor &input_raw,
+               const std::vector<std::pair<size_t, size_t>> &pad_width,
+               const std::string &mode, double value) {
+    @autoreleasepool {
+        Tensor input = ensureContiguous(input_raw);
+
+        // Build left/right padding arrays for MPSGraph
+        NSMutableArray<NSNumber *> *left_pad =
+            [NSMutableArray arrayWithCapacity:pad_width.size()];
+        NSMutableArray<NSNumber *> *right_pad =
+            [NSMutableArray arrayWithCapacity:pad_width.size()];
+        for (const auto &p : pad_width) {
+            [left_pad addObject:@(static_cast<NSInteger>(p.first))];
+            [right_pad addObject:@(static_cast<NSInteger>(p.second))];
+        }
+
+        // Map mode string to MPSGraphPaddingMode
+        // "circular" has no MPSGraph equivalent — caller falls back to CPU
+        MPSGraphPaddingMode mps_mode;
+        if (mode == "constant") {
+            mps_mode = MPSGraphPaddingModeConstant;
+        } else if (mode == "reflect") {
+            mps_mode = MPSGraphPaddingModeReflect;
+        } else {
+            // "replicate" → clamp to edge
+            mps_mode = MPSGraphPaddingModeClampToEdge;
+        }
+
+        MPSGraph *graph = [[MPSGraph alloc] init];
+        MPSGraphTensor *x = createPlaceholder(graph, input);
+
+        MPSGraphTensor *result_tensor =
+            [graph padTensor:x
+              withPaddingMode:mps_mode
+                  leftPadding:left_pad
+                 rightPadding:right_pad
+                constantValue:value
+                         name:nil];
+
+        // Compute output shape
+        Shape output_shape;
+        for (size_t i = 0; i < input.ndim(); ++i) {
+            output_shape.push_back(pad_width[i].first + input.shape()[i] +
+                                   pad_width[i].second);
+        }
+
+        Tensor result(output_shape, input.dtype(), Device::GPU);
+
+        MPSGraphTensorData *input_data = createTensorData(input);
+        MPSGraphTensorData *result_data = createTensorData(result);
+
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds =
+            @{x : input_data};
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
+            @{result_tensor : result_data};
+
+        encodeMPSGraphAsync(graph, feeds, targets);
+
+        return result;
+    }
+}
+
+// ============================================================================
+// GPU Fill Constant
+// ============================================================================
+
+Tensor gpu_fill_constant(const Shape &shape, DType dtype, double value) {
+    @autoreleasepool {
+        MPSGraph *graph = [[MPSGraph alloc] init];
+
+        MPSDataType mps_dtype = getMPSDataType(dtype);
+        MPSShape *mps_shape = getMPSShape(shape);
+
+        MPSGraphTensor *constant_tensor =
+            [graph constantWithScalar:value
+                                shape:mps_shape
+                             dataType:mps_dtype];
+
+        Tensor result(shape, dtype, Device::GPU);
+        MPSGraphTensorData *result_data = createTensorData(result);
+
+        // No feeds — the constant is baked into the graph
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds = @{};
+        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
+            @{constant_tensor : result_data};
+
+        encodeMPSGraphAsync(graph, feeds, targets);
+
+        return result;
+    }
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 

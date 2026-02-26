@@ -598,7 +598,10 @@ Tensor Tensor::reshape(const Shape &new_shape, MemoryOrder order) const {
                     itemsize());
             }
         } else {
-            new_tensor.storage_->copy_from(*storage_);
+            // GPU path: must handle non-contiguous tensors (e.g. after
+            // transpose/permute) by making contiguous before raw copy
+            auto src = is_contiguous() ? *this : ascontiguousarray();
+            new_tensor.storage_->copy_from(*src.storage_);
         }
         return new_tensor;
     }

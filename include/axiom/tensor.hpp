@@ -192,11 +192,17 @@ class Tensor {
 
     template <typename T> void fill(const T &value) {
         materialize_if_needed();
-        if (device() != Device::CPU) {
-            throw DeviceError::cpu_only("fill()");
-        }
         if (!flags_.writeable) {
             throw MemoryError("Tensor is not writeable");
+        }
+
+        if (device() != Device::CPU) {
+            // GPU path: fill a CPU tensor and copy to GPU storage
+            Tensor cpu_tmp(shape_, dtype_, Device::CPU);
+            T *data_ptr = cpu_tmp.typed_data<T>();
+            std::fill(data_ptr, data_ptr + size(), value);
+            storage_->copy_from(*cpu_tmp.storage_);
+            return;
         }
 
         if (is_contiguous()) {
