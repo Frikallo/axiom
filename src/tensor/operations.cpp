@@ -192,6 +192,22 @@ static std::string op_type_name(OpType op) {
         return "conv_transpose2d";
     case OpType::ScaledDotProductAttention:
         return "scaled_dot_product_attention";
+    case OpType::Reshape:
+        return "reshape";
+    case OpType::Transpose:
+        return "transpose";
+    case OpType::Pad:
+        return "pad";
+    case OpType::Slice:
+        return "slice";
+    case OpType::Unsqueeze:
+        return "unsqueeze";
+    case OpType::Concat:
+        return "concat";
+    case OpType::GLU:
+        return "glu";
+    case OpType::BatchNorm1D:
+        return "batch_norm_1d";
     default:
         return "unknown";
     }
@@ -1401,17 +1417,19 @@ Tensor gelu(const Tensor &input) {
 }
 
 Tensor softmax(const Tensor &input, int axis) {
-    Device target_device = input.device();
+    // GPU: route through lazy eval for graph compilation
+    if (input.device() == Device::GPU) {
+        return graph::GraphRegistry::create_lazy_softmax(OpType::Softmax, input,
+                                                         axis);
+    }
 
+    Device target_device = input.device();
     const Operation *op =
         OperationRegistry::get_operation(OpType::Softmax, target_device);
-
     if (!op) {
         throw DeviceError("Softmax operation not available for device: " +
                           axiom::system::device_to_string(target_device));
     }
-
-    // Softmax uses execute_reduction with a single axis
     return op->execute_reduction(input, {axis}, false);
 }
 
@@ -1444,6 +1462,14 @@ Tensor glu(const Tensor &input, int dim) {
                          std::to_string(input.shape()[dim]) +
                          ") must be divisible by 2");
     }
+
+    // GPU: route through lazy eval for graph compilation
+    if (input.device() == Device::GPU) {
+        Shape out_shape = input.shape();
+        out_shape[dim] /= 2;
+        return graph::GraphRegistry::create_lazy_glu(input, dim, out_shape);
+    }
+
     auto chunks = input.chunk(2, dim);
     return multiply(chunks[0], sigmoid(chunks[1]));
 }
@@ -1547,6 +1573,11 @@ Tensor where(const Tensor &condition, const Tensor &a, const Tensor &b) {
 // ============================================================================
 
 Tensor masked_fill(const Tensor &input, const Tensor &mask, float value) {
+    // GPU: route through lazy eval for graph compilation
+    if (input.device() == Device::GPU) {
+        return graph::GraphRegistry::create_lazy_masked_fill(input, mask,
+                                                             value);
+    }
     auto value_tensor = Tensor::full({1}, value, input.device());
     return masked_fill(input, mask, value_tensor);
 }
@@ -1749,13 +1780,11 @@ Tensor layer_norm(const Tensor &input, const Tensor &weight, const Tensor &bias,
         (weight.device() == device) ? weight : weight.to(device);
     Tensor bias_on_device = (bias.device() == device) ? bias : bias.to(device);
 
-#ifdef AXIOM_METAL_SUPPORT
-    // GPU fast-path: fused single-graph execution
+    // GPU: route through lazy eval for graph compilation
     if (device == Device::GPU) {
-        return backends::metal::gpu_layer_norm(
+        return graph::GraphRegistry::create_lazy_layernorm(
             input_on_device, weight_on_device, bias_on_device, axis, eps);
     }
-#endif
 
     // Normalize axis
     int norm_axis = axis;
@@ -2153,13 +2182,12 @@ Tensor pad(const Tensor &input,
                                pad_width[i].second);
     }
 
-#ifdef AXIOM_METAL_SUPPORT
-    // GPU fast-path: native MPSGraph padding (no CPU roundtrip)
-    // "circular" mode has no MPSGraph equivalent — falls through to CPU path
+    // GPU: route through lazy eval for graph compilation
+    // ("circular" mode has no MPSGraph equivalent — falls through to CPU path)
     if (input.device() == Device::GPU && mode != "circular") {
-        return backends::metal::gpu_pad(input, pad_width, mode, value);
+        return graph::GraphRegistry::create_lazy_pad(input, pad_width, value,
+                                                     output_shape);
     }
-#endif
 
     // CPU path (also used as fallback for GPU circular mode)
     bool was_gpu = (input.device() == Device::GPU);
@@ -2994,12 +3022,16 @@ Tensor conv1d(const Tensor &input, const Tensor &weight, const Tensor &bias,
     Shape out_shape = has_batch ? Shape{batch_size, c_out, out_length}
                                 : Shape{c_out, out_length};
 
-#ifdef AXIOM_METAL_SUPPORT
+    // GPU: route through lazy eval for graph compilation
     if (input.device() == Device::GPU) {
-        return backends::metal::gpu_conv1d(input, weight, bias, stride, padding,
-                                           dilation, groups);
+        graph::ConvParams cp;
+        cp.stride = {stride};
+        cp.padding = {padding};
+        cp.dilation = {dilation};
+        cp.groups = groups;
+        return graph::GraphRegistry::create_lazy_conv(
+            OpType::Conv1D, input, weight, bias, cp, out_shape);
     }
-#endif
 
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
     Tensor weight_cpu = weight.device() == Device::CPU ? weight : weight.cpu();
@@ -3168,12 +3200,16 @@ Tensor conv2d(const Tensor &input, const Tensor &weight, const Tensor &bias,
     Shape out_shape = has_batch ? Shape{batch_size, c_out, h_out, w_out}
                                 : Shape{c_out, h_out, w_out};
 
-#ifdef AXIOM_METAL_SUPPORT
+    // GPU: route through lazy eval for graph compilation
     if (input.device() == Device::GPU) {
-        return backends::metal::gpu_conv2d(input, weight, bias, stride, padding,
-                                           dilation, groups);
+        graph::ConvParams cp;
+        cp.stride = {stride[0], stride[1]};
+        cp.padding = {padding[0], padding[1]};
+        cp.dilation = {dilation[0], dilation[1]};
+        cp.groups = groups;
+        return graph::GraphRegistry::create_lazy_conv(
+            OpType::Conv2D, input, weight, bias, cp, out_shape);
     }
-#endif
 
     Tensor input_cpu = input.device() == Device::CPU ? input : input.cpu();
     Tensor weight_cpu = weight.device() == Device::CPU ? weight : weight.cpu();

@@ -43,8 +43,41 @@ struct ReshapeParams {
     Shape new_shape;
 };
 
-using OpParams = std::variant<NoParams, ReductionParams, MatMulParams,
-                              ActivationParams, ReshapeParams>;
+struct NormParams {
+    int axis = -1;
+    float eps = 1e-5f;
+};
+
+struct ConvParams {
+    std::vector<int> stride;
+    std::vector<int> padding;
+    std::vector<int> dilation;
+    int groups = 1;
+};
+
+struct PadParams {
+    std::vector<std::pair<size_t, size_t>> pad_widths;
+    double value = 0.0;
+};
+
+struct TransposeParams {
+    std::vector<int> axes;
+};
+
+struct SliceParams {
+    std::vector<int64_t> starts;
+    std::vector<int64_t> ends;
+    std::vector<int64_t> strides;
+};
+
+struct MaskedFillParams {
+    float value = 0.0f;
+};
+
+using OpParams =
+    std::variant<NoParams, ReductionParams, MatMulParams, ActivationParams,
+                 ReshapeParams, NormParams, ConvParams, PadParams,
+                 TransposeParams, SliceParams, MaskedFillParams>;
 
 // Convenience accessor: returns T& if the variant holds T, throws otherwise
 template <typename T> const T &get_params(const OpParams &p) {

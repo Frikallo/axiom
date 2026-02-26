@@ -156,6 +156,37 @@ GraphSignature compute_signature(const GraphNode *root) {
                     h = fnv_hash_u64(h, p.new_shape.size());
                     for (auto dim : p.new_shape)
                         h = fnv_hash_u64(h, dim);
+                } else if constexpr (std::is_same_v<T, NormParams>) {
+                    h = fnv_hash_i32(h, p.axis);
+                    h = fnv_hash_float(h, p.eps);
+                } else if constexpr (std::is_same_v<T, ConvParams>) {
+                    for (int s : p.stride)
+                        h = fnv_hash_i32(h, s);
+                    for (int pad : p.padding)
+                        h = fnv_hash_i32(h, pad);
+                    for (int d : p.dilation)
+                        h = fnv_hash_i32(h, d);
+                    h = fnv_hash_i32(h, p.groups);
+                } else if constexpr (std::is_same_v<T, PadParams>) {
+                    h = fnv_hash_u64(h, p.pad_widths.size());
+                    for (const auto &[l, r] : p.pad_widths) {
+                        h = fnv_hash_u64(h, l);
+                        h = fnv_hash_u64(h, r);
+                    }
+                    h = fnv_hash_float(h, static_cast<float>(p.value));
+                } else if constexpr (std::is_same_v<T, TransposeParams>) {
+                    h = fnv_hash_u64(h, p.axes.size());
+                    for (int ax : p.axes)
+                        h = fnv_hash_i32(h, ax);
+                } else if constexpr (std::is_same_v<T, SliceParams>) {
+                    for (auto s : p.starts)
+                        h = fnv_hash_u64(h, static_cast<uint64_t>(s));
+                    for (auto e : p.ends)
+                        h = fnv_hash_u64(h, static_cast<uint64_t>(e));
+                    for (auto st : p.strides)
+                        h = fnv_hash_u64(h, static_cast<uint64_t>(st));
+                } else if constexpr (std::is_same_v<T, MaskedFillParams>) {
+                    h = fnv_hash_float(h, p.value);
                 }
                 // NoParams: nothing to hash
             },

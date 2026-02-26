@@ -85,25 +85,28 @@ static id<MTLComputePipelineState> getGatherPipelineState(DType dtype) {
     return pipeline_state;
 }
 
-// Copies non-contiguous GPU tensor to contiguous using GPU gather kernel
+// Copies non-contiguous GPU tensor to contiguous using GPU gather kernel.
+// Encodes into the execution stream's command buffer for async execution —
+// no synchronization or blocking. Metal guarantees in-order execution within
+// a command queue, so the gather output is ready before any subsequent ops.
 static Tensor makeContiguousViaGatherKernel(const Tensor& tensor) {
     if (tensor.is_contiguous()) {
         return tensor;
     }
-    
+
     // Create output tensor
     Tensor result(tensor.shape(), tensor.dtype(), Device::GPU);
-    
+
     // Get pipeline state for this dtype
     id<MTLComputePipelineState> pipeline_state = getGatherPipelineState(tensor.dtype());
-    
+
     // Get storage buffers
     auto* src_storage = as_metal_buffer_provider(tensor.storage().get());
     auto* dst_storage = as_metal_buffer_provider(result.storage().get());
 
     id<MTLBuffer> src_buffer = (__bridge id<MTLBuffer>)src_storage->buffer();
     id<MTLBuffer> dst_buffer = (__bridge id<MTLBuffer>)dst_storage->buffer();
-    
+
     // Prepare kernel parameters
     GatherStridedParams params;
     params.ndim = static_cast<uint32_t>(tensor.ndim());
@@ -119,26 +122,21 @@ static Tensor makeContiguousViaGatherKernel(const Tensor& tensor) {
         params.shape[i] = static_cast<uint32_t>(tensor.shape()[i]);
         int64_t stride = tensor.strides()[i];
         if (stride < 0) {
-            // Mark this axis as flipped
             params.flip_mask |= (1u << i);
         }
-        // Use absolute value of stride in elements
         params.src_strides[i] = static_cast<uint32_t>(std::abs(stride) / tensor.itemsize());
     }
 
-    // Buffer offset is just the tensor's offset (no adjustment needed here,
-    // the kernel will handle coordinate transformation for flipped axes)
     size_t effective_offset = tensor.offset();
 
-    // Create command buffer and encoder
-    // Note: We use synchronous execution here to ensure the contiguous data
-    // is ready before subsequent MPSGraph operations use it.
-    // This is acceptable because non-contiguous tensors are relatively rare.
-    id<MTLCommandQueue> command_queue =
-        (__bridge id<MTLCommandQueue>)MetalContext::instance().command_queue();
-    id<MTLCommandBuffer> command_buffer = [command_queue commandBuffer];
+    // Encode into the execution stream's command buffer (async, no blocking).
+    // End any active kernel coalescing first, then get a fresh encoder.
+    auto& stream = MetalExecutionStream::instance();
+    stream.end_kernel_coalescing();
+
+    // Get a compute encoder from the stream (encodes onto the MPS command buffer)
     id<MTLComputeCommandEncoder> command_encoder =
-        [command_buffer computeCommandEncoder];
+        (__bridge id<MTLComputeCommandEncoder>)stream.compute_encoder();
 
     [command_encoder setComputePipelineState:pipeline_state];
     [command_encoder setBuffer:src_buffer offset:effective_offset atIndex:0];
@@ -155,20 +153,20 @@ static Tensor makeContiguousViaGatherKernel(const Tensor& tensor) {
 
     [command_encoder dispatchThreadgroups:thread_groups
                     threadsPerThreadgroup:threads_per_group];
-    [command_encoder endEncoding];
-    [command_buffer commit];
-    [command_buffer waitUntilCompleted];
 
-    if ([command_buffer status] == MTLCommandBufferStatusError) {
-        NSLog(@"Gather kernel error: %@", [command_buffer error]);
-        throw DeviceError("GPU gather kernel execution failed");
-    }
+    // End the compute encoder so subsequent MPSGraph operations can encode
+    stream.end_kernel_coalescing();
 
     return result;
 }
 
 // Helper to ensure a GPU tensor is contiguous (uses GPU gather kernel)
 static inline Tensor ensureContiguous(const Tensor& tensor) {
+    return makeContiguousViaGatherKernel(tensor);
+}
+
+// Public API: expose GPU contiguous copy for use by tensor.cpp
+Tensor gpu_make_contiguous(const Tensor& tensor) {
     return makeContiguousViaGatherKernel(tensor);
 }
 
@@ -1565,43 +1563,52 @@ private:
         @autoreleasepool {
             Tensor input = ensureContiguous(input_raw);
 
-            // Normalize axis
             int norm_axis = axis;
             if (norm_axis < 0) {
                 norm_axis += static_cast<int>(input.ndim());
             }
 
-            MPSGraph* graph = [[MPSGraph alloc] init];
+            // Cache key: op type + shape + axis
+            MPSGraphCacheKey cache_key = make_reduction_cache_key(
+                type(),
+                shapeToVector(input.shape()),
+                dtypeToInt(input.dtype()),
+                dtypeToInt(input.dtype()),
+                {norm_axis},
+                /*keep_dims=*/true
+            );
 
-            // Create input placeholder
-            MPSGraphTensor* x = createPlaceholder(graph, input);
+            CachedMPSGraph* cached = MPSGraphCache::instance().get_or_create(cache_key, [&]() {
+                CachedMPSGraph entry;
+                MPSGraph* graph = [[MPSGraph alloc] init];
+                MPSGraphTensor* x = createPlaceholder(graph, input);
 
-            // MPSGraph has built-in numerically stable softmax
-            MPSGraphTensor* result_tensor = [graph softMaxWithTensor:x axis:norm_axis name:nil];
+                MPSGraphTensor* result_tensor = [graph softMaxWithTensor:x axis:norm_axis name:nil];
+                if (is_log_) {
+                    result_tensor = [graph logarithmWithTensor:result_tensor name:nil];
+                }
 
-            if (is_log_) {
-                result_tensor = [graph logarithmWithTensor:result_tensor name:nil];
-            }
+                entry.graph = (void*)CFBridgingRetain(graph);
+                entry.placeholders[0] = (__bridge void*)x;
+                entry.num_placeholders = 1;
+                entry.output = (__bridge void*)result_tensor;
+                return entry;
+            });
 
-            // Create output tensor (same shape as input)
+            MPSGraph* graph = (__bridge MPSGraph*)cached->graph;
+            MPSGraphTensor* x = (__bridge MPSGraphTensor*)cached->placeholders[0];
+            MPSGraphTensor* result_tensor = (__bridge MPSGraphTensor*)cached->output;
+
             Tensor result(input.shape(), input.dtype(), Device::GPU);
 
-            // Create tensor data
-            MPSGraphTensorData* input_data = createTensorData(input);
-            MPSGraphTensorData* result_data = createTensorData(result);
-
-            // Create feeds and targets
             NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* feeds = @{
-                x: input_data
+                x: createTensorData(input)
             };
-
             NSDictionary<MPSGraphTensor*, MPSGraphTensorData*>* targets = @{
-                result_tensor: result_data
+                result_tensor: createTensorData(result)
             };
 
-            // Execute the graph asynchronously (batched execution)
             encodeMPSGraphAsync(graph, feeds, targets);
-
             return result;
         }
     }
@@ -1998,95 +2005,131 @@ public:
 };
 
 // ============================================================================
-// Fused LayerNorm Operation
+// Fused LayerNorm Operation — Custom Metal Kernel
 // ============================================================================
+// Uses a custom Metal compute kernel instead of MPSGraph, eliminating graph
+// compilation overhead (~2-3ms per call). The kernel processes one row per
+// threadgroup using vectorized reads and SIMD reduction.
+
+// Must match LayerNormParams in kernels.metal
+struct LayerNormParams {
+    uint32_t axis_size;
+    float eps;
+};
+
+// Cached pipeline states for LayerNorm kernel (one per dtype × variant)
+static std::map<std::string, id<MTLComputePipelineState>> g_layer_norm_pipelines;
+
+static id<MTLComputePipelineState> getLayerNormPipelineState(DType dtype, bool looped) {
+    std::string key = looped ? "looped_" : "fwd_";
+    switch (dtype) {
+        case DType::Float32: key += "float"; break;
+        case DType::Float16: key += "half"; break;
+        default:
+            throw TypeError::unsupported_dtype(dtype_name(dtype), "LayerNorm kernel");
+    }
+
+    auto it = g_layer_norm_pipelines.find(key);
+    if (it != g_layer_norm_pipelines.end()) {
+        return it->second;
+    }
+
+    std::string kernel_name = "layer_norm_" + key;
+
+    id<MTLDevice> device = (__bridge id<MTLDevice>)MetalContext::instance().device();
+    id<MTLLibrary> library = (__bridge id<MTLLibrary>)get_default_library();
+
+    NSError *error = nil;
+    id<MTLFunction> function = [library newFunctionWithName:
+        [NSString stringWithUTF8String:kernel_name.c_str()]];
+    if (!function) {
+        throw DeviceError("Failed to find Metal kernel: " + kernel_name);
+    }
+
+    id<MTLComputePipelineState> pipeline =
+        [device newComputePipelineStateWithFunction:function error:&error];
+    if (!pipeline) {
+        throw DeviceError("Failed to create pipeline for: " + kernel_name);
+    }
+
+    g_layer_norm_pipelines[key] = pipeline;
+    return pipeline;
+}
 
 Tensor MPSGraphLayerNormOperation::execute_layer_norm(
     const Tensor &input_raw, const Tensor &weight_raw, const Tensor &bias_raw,
     int axis, float eps) const {
-    @autoreleasepool {
-        Tensor input = ensureContiguous(input_raw);
-        Tensor weight = ensureContiguous(weight_raw);
-        Tensor bias = ensureContiguous(bias_raw);
+    Tensor input = ensureContiguous(input_raw);
+    Tensor weight = ensureContiguous(weight_raw);
+    Tensor bias = ensureContiguous(bias_raw);
 
-        int norm_axis = axis;
-        if (norm_axis < 0) {
-            norm_axis += static_cast<int>(input.ndim());
-        }
-
-        MPSGraph *graph = [[MPSGraph alloc] init];
-
-        MPSGraphTensor *x = createPlaceholder(graph, input);
-        MPSGraphTensor *w = createPlaceholder(graph, weight);
-        MPSGraphTensor *b = createPlaceholder(graph, bias);
-
-        // mean = mean(x, axis, keepdims=true)
-        MPSGraphTensor *x_mean = [graph meanOfTensor:x
-                                                axes:@[ @(norm_axis) ]
-                                                name:nil];
-
-        // centered = x - mean
-        MPSGraphTensor *centered = [graph subtractionWithPrimaryTensor:x
-                                                       secondaryTensor:x_mean
-                                                                  name:nil];
-
-        // var = mean(centered^2, axis, keepdims=true)
-        MPSGraphTensor *centered_sq =
-            [graph multiplicationWithPrimaryTensor:centered
-                                  secondaryTensor:centered
-                                             name:nil];
-        MPSGraphTensor *variance = [graph meanOfTensor:centered_sq
-                                                  axes:@[ @(norm_axis) ]
-                                                  name:nil];
-
-        // std = sqrt(var + eps)
-        MPSGraphTensor *eps_tensor =
-            [graph constantWithScalar:eps
-                                shape:@[ @1 ]
-                             dataType:getMPSDataType(input.dtype())];
-        MPSGraphTensor *var_eps =
-            [graph additionWithPrimaryTensor:variance
-                            secondaryTensor:eps_tensor
-                                       name:nil];
-        MPSGraphTensor *std_dev =
-            [graph squareRootWithTensor:var_eps name:nil];
-
-        // normalized = centered / std
-        MPSGraphTensor *normalized =
-            [graph divisionWithPrimaryTensor:centered
-                            secondaryTensor:std_dev
-                                       name:nil];
-
-        // result = normalized * weight + bias
-        MPSGraphTensor *scaled =
-            [graph multiplicationWithPrimaryTensor:normalized
-                                  secondaryTensor:w
-                                             name:nil];
-        MPSGraphTensor *result_tensor =
-            [graph additionWithPrimaryTensor:scaled
-                            secondaryTensor:b
-                                       name:nil];
-
-        Tensor result(input.shape(), input.dtype(), Device::GPU);
-
-        MPSGraphTensorData *input_data = createTensorData(input);
-        MPSGraphTensorData *weight_data = createTensorData(weight);
-        MPSGraphTensorData *bias_data = createTensorData(bias);
-        MPSGraphTensorData *result_data = createTensorData(result);
-
-        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds = @{
-            x : input_data,
-            w : weight_data,
-            b : bias_data
-        };
-
-        NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
-            @{result_tensor : result_data};
-
-        encodeMPSGraphAsync(graph, feeds, targets);
-
-        return result;
+    int norm_axis = axis;
+    if (norm_axis < 0) {
+        norm_axis += static_cast<int>(input.ndim());
     }
+
+    // Compute axis_size (product of dimensions from norm_axis to end)
+    size_t axis_size = 1;
+    for (size_t i = static_cast<size_t>(norm_axis); i < input.ndim(); ++i) {
+        axis_size *= input.shape()[i];
+    }
+
+    // Compute num_rows (product of dimensions before norm_axis)
+    size_t num_rows = 1;
+    for (size_t i = 0; i < static_cast<size_t>(norm_axis); ++i) {
+        num_rows *= input.shape()[i];
+    }
+
+    // Choose kernel variant: single-pass for small axis_size, looped for large
+    constexpr size_t N_READS = 4;
+    constexpr size_t MAX_THREADS = 1024;
+    bool use_looped = (axis_size / N_READS) > MAX_THREADS;
+
+    id<MTLComputePipelineState> pipeline =
+        getLayerNormPipelineState(input.dtype(), use_looped);
+
+    // Get buffers
+    auto *src_storage = as_metal_buffer_provider(input.storage().get());
+    auto *wt_storage = as_metal_buffer_provider(weight.storage().get());
+    auto *bi_storage = as_metal_buffer_provider(bias.storage().get());
+
+    id<MTLBuffer> src_buf = (__bridge id<MTLBuffer>)src_storage->buffer();
+    id<MTLBuffer> wt_buf = (__bridge id<MTLBuffer>)wt_storage->buffer();
+    id<MTLBuffer> bi_buf = (__bridge id<MTLBuffer>)bi_storage->buffer();
+
+    Tensor result(input.shape(), input.dtype(), Device::GPU);
+    auto *dst_storage = as_metal_buffer_provider(result.storage().get());
+    id<MTLBuffer> dst_buf = (__bridge id<MTLBuffer>)dst_storage->buffer();
+
+    LayerNormParams params;
+    params.axis_size = static_cast<uint32_t>(axis_size);
+    params.eps = eps;
+
+    // Dispatch kernel
+    auto &stream = MetalExecutionStream::instance();
+    stream.end_kernel_coalescing();
+
+    id<MTLComputeCommandEncoder> encoder =
+        (__bridge id<MTLComputeCommandEncoder>)stream.compute_encoder();
+
+    [encoder setComputePipelineState:pipeline];
+    [encoder setBuffer:src_buf offset:input.offset() atIndex:0];
+    [encoder setBuffer:dst_buf offset:0 atIndex:1];
+    [encoder setBuffer:wt_buf offset:weight.offset() atIndex:2];
+    [encoder setBuffer:bi_buf offset:bias.offset() atIndex:3];
+    [encoder setBytes:&params length:sizeof(params) atIndex:4];
+
+    // Threads per threadgroup: ceil(axis_size / N_READS), capped at 1024
+    NSUInteger threads_per_tg = std::min(
+        (axis_size + N_READS - 1) / N_READS, MAX_THREADS);
+    MTLSize tg_size = MTLSizeMake(threads_per_tg, 1, 1);
+    MTLSize grid_size = MTLSizeMake(num_rows, 1, 1);
+
+    [encoder dispatchThreadgroups:grid_size threadsPerThreadgroup:tg_size];
+
+    stream.end_kernel_coalescing();
+
+    return result;
 }
 
 // ============================================================================
@@ -2177,57 +2220,81 @@ Tensor MPSGraphConv2DOperation::execute_conv2d(
         Tensor input = ensureContiguous(input_raw);
         Tensor weight = ensureContiguous(weight_raw);
 
-        // Ensure 4D: (N, C, H, W)
         bool was_3d = (input.ndim() == 3);
         if (was_3d) {
             input = input.unsqueeze(0);
         }
 
-        MPSGraph *graph = [[MPSGraph alloc] init];
-
-        MPSGraphTensor *x = createPlaceholder(graph, input);
-        MPSGraphTensor *w = createPlaceholder(graph, weight);
-
-        // Create convolution descriptor
-        MPSGraphConvolution2DOpDescriptor *desc =
-            [MPSGraphConvolution2DOpDescriptor
-                descriptorWithStrideInX:stride[1]
-                              strideInY:stride[0]
-                        dilationRateInX:dilation[1]
-                        dilationRateInY:dilation[0]
-                                 groups:groups
-                          paddingLeft:padding[1]
-                         paddingRight:padding[1]
-                            paddingTop:padding[0]
-                         paddingBottom:padding[0]
-                           paddingStyle:MPSGraphPaddingStyleExplicit
-                             dataLayout:MPSGraphTensorNamedDataLayoutNCHW
-                          weightsLayout:MPSGraphTensorNamedDataLayoutOIHW];
-
-        MPSGraphTensor *conv_result =
-            [graph convolution2DWithSourceTensor:x
-                                  weightsTensor:w
-                                     descriptor:desc
-                                           name:nil];
-
-        // Add bias if present
         bool has_bias = bias_raw.ndim() > 0;
-        MPSGraphTensor *result_tensor = conv_result;
         Tensor bias_gpu;
         if (has_bias) {
             bias_gpu = ensureContiguous(bias_raw);
-            // Reshape bias from (C_out,) to (1, C_out, 1, 1) for broadcast
-            NSArray<NSNumber *> *bias_shape = @[ @1, @((NSInteger)bias_gpu.shape()[0]), @1, @1 ];
-            MPSGraphTensor *b = createPlaceholder(graph, bias_gpu);
-            MPSGraphTensor *b_reshaped = [graph reshapeTensor:b
-                                                    withShape:bias_shape
-                                                         name:nil];
-            result_tensor = [graph additionWithPrimaryTensor:conv_result
-                                            secondaryTensor:b_reshaped
-                                                       name:nil];
         }
 
-        // Determine output shape
+        // Build cache key: input shape + weight shape + conv params
+        MPSGraphCacheKey cache_key;
+        cache_key.op_type = ops::OpType::Conv2D;
+        cache_key.input_shapes[0] = shapeToVector(input.shape());
+        cache_key.input_shapes[1] = shapeToVector(weight.shape());
+        cache_key.num_inputs = has_bias ? 3 : 2;
+        cache_key.input_dtypes[0] = dtypeToInt(input.dtype());
+        cache_key.input_dtypes[1] = dtypeToInt(weight.dtype());
+        cache_key.output_dtype = dtypeToInt(input.dtype());
+        // Encode conv params into reduction_axes
+        cache_key.reduction_axes = {stride[0], stride[1], padding[0], padding[1],
+                                    dilation[0], dilation[1], groups,
+                                    has_bias ? 1 : 0};
+
+        CachedMPSGraph *cached = MPSGraphCache::instance().get_or_create(cache_key, [&]() {
+            CachedMPSGraph entry;
+            MPSGraph *graph = [[MPSGraph alloc] init];
+
+            MPSGraphTensor *x = createPlaceholder(graph, input);
+            MPSGraphTensor *w = createPlaceholder(graph, weight);
+
+            MPSGraphConvolution2DOpDescriptor *desc =
+                [MPSGraphConvolution2DOpDescriptor
+                    descriptorWithStrideInX:stride[1]
+                                  strideInY:stride[0]
+                            dilationRateInX:dilation[1]
+                            dilationRateInY:dilation[0]
+                                     groups:groups
+                              paddingLeft:padding[1]
+                             paddingRight:padding[1]
+                                paddingTop:padding[0]
+                             paddingBottom:padding[0]
+                               paddingStyle:MPSGraphPaddingStyleExplicit
+                                 dataLayout:MPSGraphTensorNamedDataLayoutNCHW
+                              weightsLayout:MPSGraphTensorNamedDataLayoutOIHW];
+
+            MPSGraphTensor *result_tensor =
+                [graph convolution2DWithSourceTensor:x
+                                      weightsTensor:w
+                                         descriptor:desc
+                                               name:nil];
+
+            if (has_bias) {
+                NSArray<NSNumber *> *bias_shape =
+                    @[ @1, @((NSInteger)bias_gpu.shape()[0]), @1, @1 ];
+                MPSGraphTensor *b = createPlaceholder(graph, bias_gpu);
+                MPSGraphTensor *b_reshaped =
+                    [graph reshapeTensor:b withShape:bias_shape name:nil];
+                result_tensor =
+                    [graph additionWithPrimaryTensor:result_tensor
+                                    secondaryTensor:b_reshaped
+                                               name:nil];
+                entry.placeholders[2] = (__bridge void *)b;
+            }
+
+            entry.graph = (void *)CFBridgingRetain(graph);
+            entry.placeholders[0] = (__bridge void *)x;
+            entry.placeholders[1] = (__bridge void *)w;
+            entry.num_placeholders = has_bias ? 3 : 2;
+            entry.output = (__bridge void *)result_tensor;
+            return entry;
+        });
+
+        // Compute output shape
         size_t n = input.shape()[0];
         size_t c_out = weight.shape()[0];
         size_t h_in = input.shape()[2];
@@ -2241,28 +2308,25 @@ Tensor MPSGraphConv2DOperation::execute_conv2d(
         size_t w_out =
             (w_in + 2 * (size_t)padding[1] - dilated_kw) / (size_t)stride[1] + 1;
 
-        Shape out_shape = was_3d ? Shape{c_out, h_out, w_out}
-                                 : Shape{n, c_out, h_out, w_out};
         Shape gpu_out_shape{n, c_out, h_out, w_out};
         Tensor result(gpu_out_shape, input.dtype(), Device::GPU);
 
-        MPSGraphTensorData *input_data = createTensorData(input);
-        MPSGraphTensorData *weight_data = createTensorData(weight);
-        MPSGraphTensorData *result_data = createTensorData(result);
+        MPSGraph *graph = (__bridge MPSGraph *)cached->graph;
+        MPSGraphTensor *result_tensor = (__bridge MPSGraphTensor *)cached->output;
 
         NSMutableDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds =
-            [NSMutableDictionary dictionaryWithDictionary:@{
-                x : input_data,
-                w : weight_data
-            }];
-
+            [NSMutableDictionary dictionaryWithCapacity:3];
+        feeds[(__bridge MPSGraphTensor *)cached->placeholders[0]] =
+            createTensorData(input);
+        feeds[(__bridge MPSGraphTensor *)cached->placeholders[1]] =
+            createTensorData(weight);
         if (has_bias) {
-            MPSGraphTensor *b_placeholder = [graph.placeholderTensors objectAtIndex:2];
-            feeds[b_placeholder] = createTensorData(bias_gpu);
+            feeds[(__bridge MPSGraphTensor *)cached->placeholders[2]] =
+                createTensorData(bias_gpu);
         }
 
         NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
-            @{result_tensor : result_data};
+            @{result_tensor : createTensorData(result)};
 
         encodeMPSGraphAsync(graph, feeds, targets);
 
@@ -2332,6 +2396,131 @@ Tensor gpu_rms_norm(const Tensor &input, const Tensor &weight, int axis,
                     float eps) {
     MPSGraphRMSNormOperation op;
     return op.execute_rms_norm(input, weight, axis, eps);
+}
+
+// ============================================================================
+// Direct MPS Linear (MPSNDArrayMatrixMultiplication — no MPSGraph overhead)
+// ============================================================================
+
+// Cached kernels keyed by {source_count, dtype}
+static std::map<std::pair<int, int>, MPSNDArrayMatrixMultiplication *>
+    g_linear_kernels;
+
+Tensor gpu_linear(const Tensor &input_raw, const Tensor &weight_raw,
+                  const Tensor &bias_raw, bool has_bias) {
+    @autoreleasepool {
+        Tensor input = ensureContiguous(input_raw);
+        Tensor weight = ensureContiguous(weight_raw);
+
+        MPSDataType mps_dtype = getMPSDataType(input.dtype());
+        int source_count = has_bias ? 3 : 2;
+
+        // --- Cache kernel by {source_count, dtype} ---
+        auto cache_key = std::make_pair(source_count, static_cast<int>(input.dtype()));
+        auto it = g_linear_kernels.find(cache_key);
+        MPSNDArrayMatrixMultiplication *kernel;
+        if (it != g_linear_kernels.end()) {
+            kernel = it->second;
+        } else {
+            id<MTLDevice> device =
+                (__bridge id<MTLDevice>)MetalContext::instance().device();
+            kernel = [[MPSNDArrayMatrixMultiplication alloc]
+                initWithDevice:device
+                   sourceCount:source_count];
+            g_linear_kernels[cache_key] = kernel;
+        }
+
+        // --- Get buffers ---
+        auto *src_storage =
+            as_metal_buffer_provider(input.storage().get());
+        auto *wt_storage =
+            as_metal_buffer_provider(weight.storage().get());
+        id<MTLBuffer> input_buf =
+            (__bridge id<MTLBuffer>)src_storage->buffer();
+        id<MTLBuffer> weight_buf =
+            (__bridge id<MTLBuffer>)wt_storage->buffer();
+
+        // --- Output shape: input shape with last dim replaced by out_features ---
+        Shape out_shape = input.shape();
+        out_shape.back() = weight.shape()[0]; // out_features
+        Tensor output(out_shape, input.dtype(), Device::GPU);
+        auto *out_storage =
+            as_metal_buffer_provider(output.storage().get());
+        id<MTLBuffer> output_buf =
+            (__bridge id<MTLBuffer>)out_storage->buffer();
+
+        // --- Build NDArray descriptors ---
+        MPSNDArrayDescriptor *input_desc =
+            [MPSNDArrayDescriptor descriptorWithDataType:mps_dtype
+                                                   shape:getMPSShape(input.shape())];
+        input_desc.preferPackedRows = YES;
+        MPSNDArray *input_nda =
+            [[MPSNDArray alloc] initWithBuffer:input_buf
+                                        offset:input.offset() * input.itemsize()
+                                    descriptor:input_desc];
+
+        // Weight: transpose dims 0↔1 (out×in → in×out, zero-copy)
+        MPSNDArrayDescriptor *weight_desc =
+            [MPSNDArrayDescriptor descriptorWithDataType:mps_dtype
+                                                   shape:getMPSShape(weight.shape())];
+        weight_desc.preferPackedRows = YES;
+        [weight_desc transposeDimension:0 withDimension:1];
+        MPSNDArray *weight_nda =
+            [[MPSNDArray alloc] initWithBuffer:weight_buf
+                                        offset:weight.offset() * weight.itemsize()
+                                    descriptor:weight_desc];
+
+        MPSNDArrayDescriptor *out_desc =
+            [MPSNDArrayDescriptor descriptorWithDataType:mps_dtype
+                                                   shape:getMPSShape(out_shape)];
+        out_desc.preferPackedRows = YES;
+        MPSNDArray *out_nda =
+            [[MPSNDArray alloc] initWithBuffer:output_buf
+                                        offset:0
+                                    descriptor:out_desc];
+
+        // --- Encode ---
+        auto &stream = MetalExecutionStream::instance();
+        stream.end_kernel_coalescing();
+
+        id<MTLComputeCommandEncoder> encoder =
+            (__bridge id<MTLComputeCommandEncoder>)stream.compute_encoder();
+        MPSCommandBuffer *mps_buf =
+            (__bridge MPSCommandBuffer *)stream.current_mps_buffer();
+        id<MTLCommandBuffer> cmd_buf = mps_buf.commandBuffer;
+
+        if (has_bias) {
+            Tensor bias = ensureContiguous(bias_raw);
+            auto *bi_storage =
+                as_metal_buffer_provider(bias.storage().get());
+            id<MTLBuffer> bias_buf =
+                (__bridge id<MTLBuffer>)bi_storage->buffer();
+
+            MPSNDArrayDescriptor *bias_desc =
+                [MPSNDArrayDescriptor descriptorWithDataType:mps_dtype
+                                                       shape:getMPSShape(bias.shape())];
+            bias_desc.preferPackedRows = YES;
+            MPSNDArray *bias_nda =
+                [[MPSNDArray alloc] initWithBuffer:bias_buf
+                                            offset:bias.offset() * bias.itemsize()
+                                        descriptor:bias_desc];
+
+            [kernel encodeToCommandEncoder:encoder
+                             commandBuffer:cmd_buf
+                              sourceArrays:@[ input_nda, weight_nda, bias_nda ]
+                          destinationArray:out_nda];
+        } else {
+            [kernel encodeToCommandEncoder:encoder
+                             commandBuffer:cmd_buf
+                              sourceArrays:@[ input_nda, weight_nda ]
+                          destinationArray:out_nda];
+        }
+
+        stream.end_kernel_coalescing();
+        stream.increment_batch();
+
+        return output;
+    }
 }
 
 Tensor gpu_conv1d(const Tensor &input, const Tensor &weight,
@@ -2613,38 +2802,67 @@ Tensor gpu_pad(const Tensor &input_raw,
     @autoreleasepool {
         Tensor input = ensureContiguous(input_raw);
 
-        // Build left/right padding arrays for MPSGraph
-        NSMutableArray<NSNumber *> *left_pad =
-            [NSMutableArray arrayWithCapacity:pad_width.size()];
-        NSMutableArray<NSNumber *> *right_pad =
-            [NSMutableArray arrayWithCapacity:pad_width.size()];
-        for (const auto &p : pad_width) {
-            [left_pad addObject:@(static_cast<NSInteger>(p.first))];
-            [right_pad addObject:@(static_cast<NSInteger>(p.second))];
-        }
-
         // Map mode string to MPSGraphPaddingMode
-        // "circular" has no MPSGraph equivalent — caller falls back to CPU
         MPSGraphPaddingMode mps_mode;
+        int mode_int;
         if (mode == "constant") {
             mps_mode = MPSGraphPaddingModeConstant;
+            mode_int = 0;
         } else if (mode == "reflect") {
             mps_mode = MPSGraphPaddingModeReflect;
+            mode_int = 1;
         } else {
-            // "replicate" → clamp to edge
             mps_mode = MPSGraphPaddingModeClampToEdge;
+            mode_int = 2;
         }
 
-        MPSGraph *graph = [[MPSGraph alloc] init];
-        MPSGraphTensor *x = createPlaceholder(graph, input);
+        // Build cache key: input shape + pad widths + mode
+        // Encode pad widths as: [left0, right0, left1, right1, ..., mode]
+        std::vector<int> pad_params;
+        pad_params.reserve(pad_width.size() * 2 + 1);
+        for (const auto &p : pad_width) {
+            pad_params.push_back(static_cast<int>(p.first));
+            pad_params.push_back(static_cast<int>(p.second));
+        }
+        pad_params.push_back(mode_int);
 
-        MPSGraphTensor *result_tensor =
-            [graph padTensor:x
-              withPaddingMode:mps_mode
-                  leftPadding:left_pad
-                 rightPadding:right_pad
-                constantValue:value
-                         name:nil];
+        MPSGraphCacheKey cache_key = make_reduction_cache_key(
+            ops::OpType::Scatter,  // reuse unused op type slot for pad
+            shapeToVector(input.shape()),
+            dtypeToInt(input.dtype()),
+            dtypeToInt(input.dtype()),
+            pad_params,
+            /*keep_dims=*/false
+        );
+
+        CachedMPSGraph *cached = MPSGraphCache::instance().get_or_create(cache_key, [&]() {
+            CachedMPSGraph entry;
+            MPSGraph *graph = [[MPSGraph alloc] init];
+            MPSGraphTensor *x = createPlaceholder(graph, input);
+
+            NSMutableArray<NSNumber *> *left_pad =
+                [NSMutableArray arrayWithCapacity:pad_width.size()];
+            NSMutableArray<NSNumber *> *right_pad =
+                [NSMutableArray arrayWithCapacity:pad_width.size()];
+            for (const auto &p : pad_width) {
+                [left_pad addObject:@(static_cast<NSInteger>(p.first))];
+                [right_pad addObject:@(static_cast<NSInteger>(p.second))];
+            }
+
+            MPSGraphTensor *result_tensor =
+                [graph padTensor:x
+                  withPaddingMode:mps_mode
+                      leftPadding:left_pad
+                     rightPadding:right_pad
+                    constantValue:value
+                             name:nil];
+
+            entry.graph = (void *)CFBridgingRetain(graph);
+            entry.placeholders[0] = (__bridge void *)x;
+            entry.num_placeholders = 1;
+            entry.output = (__bridge void *)result_tensor;
+            return entry;
+        });
 
         // Compute output shape
         Shape output_shape;
@@ -2653,15 +2871,16 @@ Tensor gpu_pad(const Tensor &input_raw,
                                    pad_width[i].second);
         }
 
+        MPSGraph *graph = (__bridge MPSGraph *)cached->graph;
+        MPSGraphTensor *x = (__bridge MPSGraphTensor *)cached->placeholders[0];
+        MPSGraphTensor *result_tensor = (__bridge MPSGraphTensor *)cached->output;
+
         Tensor result(output_shape, input.dtype(), Device::GPU);
 
-        MPSGraphTensorData *input_data = createTensorData(input);
-        MPSGraphTensorData *result_data = createTensorData(result);
-
         NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *feeds =
-            @{x : input_data};
+            @{x : createTensorData(input)};
         NSDictionary<MPSGraphTensor *, MPSGraphTensorData *> *targets =
-            @{result_tensor : result_data};
+            @{result_tensor : createTensorData(result)};
 
         encodeMPSGraphAsync(graph, feeds, targets);
 

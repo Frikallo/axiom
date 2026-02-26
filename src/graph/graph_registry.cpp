@@ -13,6 +13,16 @@
 #include <cstdlib>
 #include <unordered_set>
 
+#ifdef AXIOM_METAL_SUPPORT
+namespace axiom {
+namespace graph {
+// Defined in mpsgraph_graph_compiler.mm — compiles a lazy DAG into a single
+// MPSGraph.
+void materialize_gpu_graph(GraphNode *root);
+} // namespace graph
+} // namespace axiom
+#endif
+
 namespace axiom {
 namespace graph {
 
@@ -557,6 +567,209 @@ Tensor GraphRegistry::create_lazy_matmul(const Tensor &a, const Tensor &b,
     return create_tensor_from_node(node);
 }
 
+// ============================================================================
+// GPU full-graph lazy node creation
+// These capture non-elementwise ops into the lazy DAG so the GPU graph
+// compiler can compile entire forward passes into single MPSGraphs.
+// ============================================================================
+
+// Helper: add an input node (lazy or constant) and manage ref counts
+static void add_input(std::shared_ptr<GraphNode> &node, const Tensor &t) {
+    if (tensor_is_lazy(t)) {
+        auto input_node = get_lazy_node(t);
+        node->inputs.push_back(input_node);
+        input_node->ref_count++;
+    } else {
+        node->inputs.push_back(make_constant_node(t));
+    }
+}
+
+// Track node and auto-materialize if threshold exceeded
+Tensor GraphRegistry::finalize_lazy_node(std::shared_ptr<GraphNode> node) {
+    pending_nodes_.push_back(node);
+    if (pending_nodes_.size() >
+        g_max_pending_nodes.load(std::memory_order_relaxed)) {
+        materialize(node.get());
+    }
+    return create_tensor_from_node(node);
+}
+
+// Create and immediately materialize (eager mode)
+Tensor GraphRegistry::materialize_and_return(std::shared_ptr<GraphNode> node) {
+    materialize(node.get());
+    return create_materialized_tensor(node.get());
+}
+
+Tensor GraphRegistry::create_lazy_softmax(ops::OpType op, const Tensor &input,
+                                          int axis) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = op;
+    node->params = ActivationParams{0.01f, axis};
+    node->output_shape = input.shape(); // softmax preserves shape
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input);
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
+Tensor GraphRegistry::create_lazy_layernorm(const Tensor &input,
+                                            const Tensor &weight,
+                                            const Tensor &bias, int axis,
+                                            float eps) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = ops::OpType::LayerNorm;
+    node->params = NormParams{axis, eps};
+    node->output_shape = input.shape(); // layernorm preserves shape
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input);  // input[0] = data
+    add_input(node, weight); // input[1] = scale
+    add_input(node, bias);   // input[2] = bias
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
+Tensor GraphRegistry::create_lazy_batchnorm(
+    const Tensor &input, const Tensor &weight, const Tensor &bias,
+    const Tensor &running_mean, const Tensor &running_var, float eps) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = ops::OpType::BatchNorm1D;
+    node->params = NormParams{1, eps}; // axis=1 for batch norm (channel dim)
+    node->output_shape = input.shape();
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input);        // input[0] = data
+    add_input(node, weight);       // input[1] = scale (gamma)
+    add_input(node, bias);         // input[2] = bias (beta)
+    add_input(node, running_mean); // input[3] = running mean
+    add_input(node, running_var);  // input[4] = running var
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
+Tensor GraphRegistry::create_lazy_conv(ops::OpType op, const Tensor &input,
+                                       const Tensor &weight, const Tensor &bias,
+                                       const ConvParams &params,
+                                       const Shape &output_shape) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = op;
+    node->params = params;
+    node->output_shape = output_shape;
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input);  // input[0] = data
+    add_input(node, weight); // input[1] = filter
+    add_input(node, bias);   // input[2] = bias (may be empty)
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
+Tensor GraphRegistry::create_lazy_reshape(const Tensor &input,
+                                          const Shape &new_shape) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = ops::OpType::Reshape;
+    node->params = ReshapeParams{new_shape};
+    node->output_shape = new_shape;
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input);
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
+Tensor GraphRegistry::create_lazy_transpose(
+    const Tensor &input, const std::vector<int> &axes,
+    const Shape &output_shape, const Strides & /*output_strides*/) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = ops::OpType::Transpose;
+    node->params = TransposeParams{axes};
+    node->output_shape = output_shape;
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input);
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
+Tensor GraphRegistry::create_lazy_pad(
+    const Tensor &input,
+    const std::vector<std::pair<size_t, size_t>> &pad_widths, double value,
+    const Shape &output_shape) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = ops::OpType::Pad;
+    node->params = PadParams{pad_widths, value};
+    node->output_shape = output_shape;
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input);
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
+Tensor GraphRegistry::create_lazy_slice(const Tensor &input,
+                                        const std::vector<int64_t> &starts,
+                                        const std::vector<int64_t> &ends,
+                                        const std::vector<int64_t> &strides,
+                                        const Shape &output_shape) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = ops::OpType::Slice;
+    node->params = SliceParams{starts, ends, strides};
+    node->output_shape = output_shape;
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input);
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
+Tensor GraphRegistry::create_lazy_masked_fill(const Tensor &input,
+                                              const Tensor &mask, float value) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = ops::OpType::MaskedFill;
+    node->params = MaskedFillParams{value};
+    node->output_shape = input.shape();
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input); // input[0] = data
+    add_input(node, mask);  // input[1] = mask
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
+Tensor GraphRegistry::create_lazy_glu(const Tensor &input, int dim,
+                                      const Shape &output_shape) {
+    auto node = std::make_shared<GraphNode>();
+    node->op_type = ops::OpType::GLU;
+    node->params = ActivationParams{0.0f, dim};
+    node->output_shape = output_shape;
+    node->output_dtype = input.dtype();
+    node->target_device = input.device();
+    add_input(node, input);
+
+    if (is_eager_mode_enabled())
+        return materialize_and_return(node);
+    return finalize_lazy_node(node);
+}
+
 // Collect constant/materialized input tensors in topological order,
 // matching the order expected by the compiled plan's input_slots.
 static std::vector<Tensor>
@@ -618,6 +831,25 @@ void GraphRegistry::materialize(GraphNode *node) {
     if (node->is_materialized_)
         return;
 
+#ifdef AXIOM_METAL_SUPPORT
+    // GPU nodes use the GPU full-graph compiler which builds a single
+    // MPSGraph for the entire lazy DAG — much faster than the CPU
+    // compile-and-execute path.
+    if (node->target_device == Device::GPU) {
+        materialize_gpu_graph(node);
+        // Clean up pending nodes that are now materialized
+        pending_nodes_.erase(
+            std::remove_if(pending_nodes_.begin(), pending_nodes_.end(),
+                           [](const std::weak_ptr<GraphNode> &wp) {
+                               auto sp = wp.lock();
+                               return !sp || sp->is_materialized_;
+                           }),
+            pending_nodes_.end());
+        return;
+    }
+#endif
+
+    // CPU path: walk subgraph, compile, execute
     // Walk the subgraph and materialize shared nodes (ref_count > 1)
     // first so their results are preserved for other consumers.
     // Single-consumer intermediates are left unmaterialized so the

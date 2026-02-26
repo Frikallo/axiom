@@ -131,6 +131,16 @@ inline constexpr OpTraits OP_TRAITS[] = {
     /*ConvTranspose2D*/   {0,0,0,0,0,0},
     // Fused attention
     /*ScaledDotProductAttention*/ {0,0,0,0,0,0},
+    // Shape operations
+    /*Reshape*/           {0,0,0,0,0,0},
+    /*Transpose*/         {0,0,0,0,0,0},
+    /*Pad*/               {0,0,0,0,0,0},
+    /*Slice*/             {0,0,0,0,0,0},
+    /*Unsqueeze*/         {0,0,0,0,0,0},
+    /*Concat*/            {0,0,0,0,0,0},
+    // Additional ops
+    /*GLU*/               {0,0,0,0,0,0},
+    /*BatchNorm1D*/       {0,0,0,0,0,0},
 };
 // clang-format on
 

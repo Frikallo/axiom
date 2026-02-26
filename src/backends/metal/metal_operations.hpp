@@ -57,6 +57,16 @@ Tensor gpu_pad(const Tensor &input,
 // GPU fill (creates constant tensor on GPU)
 Tensor gpu_fill_constant(const Shape &shape, DType dtype, double value);
 
+// GPU contiguous copy: copies a non-contiguous GPU tensor to a new contiguous
+// tensor using a GPU gather kernel. Correctly handles strides, offsets, and
+// flipped axes. Returns the input unchanged if already contiguous.
+Tensor gpu_make_contiguous(const Tensor &tensor);
+
+// Direct MPS linear: matmul with fused bias and zero-copy weight transpose.
+// Uses MPSNDArrayMatrixMultiplication (no MPSGraph overhead).
+Tensor gpu_linear(const Tensor &input, const Tensor &weight, const Tensor &bias,
+                  bool has_bias);
+
 } // namespace metal
 } // namespace backends
 } // namespace axiom
