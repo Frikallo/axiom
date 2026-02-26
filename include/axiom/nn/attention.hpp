@@ -18,6 +18,13 @@ class MultiHeadAttention : public Module {
     Tensor forward(const Tensor &query, const Tensor &key, const Tensor &value,
                    const Tensor &mask = Tensor(), bool is_causal = false) const;
 
+    // Accessors for submodules (used by custom attention implementations)
+    const Linear &q_proj() const { return q_proj_; }
+    const Linear &k_proj() const { return k_proj_; }
+    const Linear &v_proj() const { return v_proj_; }
+    const Linear &out_proj() const { return out_proj_; }
+    int num_heads() const { return num_heads_; }
+
   private:
     Linear q_proj_;
     Linear k_proj_;

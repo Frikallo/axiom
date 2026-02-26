@@ -788,20 +788,32 @@ template <typename T>
 HWY_NOINLINE void ActivationSigmoidImplT(const T *HWY_RESTRICT input,
                                          T *HWY_RESTRICT output, size_t n) {
     // sigmoid(x) = 1 / (1 + exp(-x))
+    // Numerically stable: compute exp(-|x|) to avoid overflow in hn::Exp.
+    // For x >= 0: sigmoid(x) = 1 / (1 + exp(-x)) = 1 / (1 + exp(-|x|))
+    // For x <  0: sigmoid(x) = exp(x) / (1 + exp(x)) = exp(-|x|) / (1 +
+    // exp(-|x|))
     const hn::ScalableTag<T> d;
     const size_t N = hn::Lanes(d);
+    const auto zero = hn::Zero(d);
     const auto one = hn::Set(d, T{1});
     size_t i = 0;
 
     for (; i + N <= n; i += N) {
         const auto v = hn::LoadU(d, input + i);
-        const auto neg_v = hn::Neg(v);
-        const auto exp_neg = hn::Exp(d, neg_v);
-        const auto denom = hn::Add(one, exp_neg);
-        hn::StoreU(hn::Div(one, denom), d, output + i);
+        const auto neg_abs = hn::Neg(hn::Abs(v));
+        const auto e = hn::Exp(d, neg_abs);
+        const auto denom = hn::Add(one, e);
+        const auto pos_result = hn::Div(one, denom);
+        const auto neg_result = hn::Div(e, denom);
+        const auto mask = hn::Ge(v, zero);
+        hn::StoreU(hn::IfThenElse(mask, pos_result, neg_result), d, output + i);
     }
     for (; i < n; ++i) {
-        output[i] = T{1} / (T{1} + std::exp(-input[i]));
+        T x = input[i];
+        T neg_abs = -std::abs(x);
+        T e = std::exp(neg_abs);
+        T denom = T{1} + e;
+        output[i] = x >= T{0} ? T{1} / denom : e / denom;
     }
 }
 
@@ -832,21 +844,34 @@ HWY_NOINLINE void ActivationGELUImplT(const T *HWY_RESTRICT input,
 template <typename T>
 HWY_NOINLINE void ActivationSiLUImplT(const T *HWY_RESTRICT input,
                                       T *HWY_RESTRICT output, size_t n) {
-    // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
+    // SiLU(x) = x * sigmoid(x)
+    // Numerically stable: compute exp(-|x|) which is always in (0,1],
+    // then select formula branch based on sign of x.
+    // For x >= 0: SiLU(x) = x / (1 + exp(-x))    = x / (1 + exp(-|x|))
+    // For x <  0: SiLU(x) = x * exp(x) / (1+exp(x)) = x*exp(-|x|) /
+    // (1+exp(-|x|))
     const hn::ScalableTag<T> d;
     const size_t N = hn::Lanes(d);
+    const auto zero = hn::Zero(d);
     const auto one = hn::Set(d, T{1});
     size_t i = 0;
 
     for (; i + N <= n; i += N) {
         const auto v = hn::LoadU(d, input + i);
-        const auto neg_v = hn::Neg(v);
-        const auto exp_neg = hn::Exp(d, neg_v);
-        const auto denom = hn::Add(one, exp_neg);
-        hn::StoreU(hn::Div(v, denom), d, output + i);
+        const auto neg_abs = hn::Neg(hn::Abs(v)); // -|x|, always <= 0
+        const auto e = hn::Exp(d, neg_abs);       // exp(-|x|) in (0, 1]
+        const auto denom = hn::Add(one, e);
+        const auto pos_result = hn::Div(v, denom);
+        const auto neg_result = hn::Div(hn::Mul(v, e), denom);
+        const auto mask = hn::Ge(v, zero);
+        hn::StoreU(hn::IfThenElse(mask, pos_result, neg_result), d, output + i);
     }
     for (; i < n; ++i) {
-        output[i] = input[i] / (T{1} + std::exp(-input[i]));
+        T x = input[i];
+        T neg_abs = -std::abs(x);
+        T e = std::exp(neg_abs);
+        T denom = T{1} + e;
+        output[i] = x >= T{0} ? x / denom : (x * e) / denom;
     }
 }
 

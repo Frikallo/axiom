@@ -661,11 +661,19 @@ struct LeakyReLUFunc {
 
 struct SigmoidFunc {
     template <typename T> T operator()(const T &a) const {
+        // Numerically stable: compute exp(-|x|) to avoid overflow.
         if constexpr (std::is_floating_point_v<T>) {
-            return static_cast<T>(1) / (static_cast<T>(1) + std::exp(-a));
+            T neg_abs = -std::abs(a);
+            T e = std::exp(neg_abs);
+            T denom = static_cast<T>(1) + e;
+            return a >= static_cast<T>(0) ? static_cast<T>(1) / denom
+                                          : e / denom;
         } else {
             double da = static_cast<double>(a);
-            return static_cast<T>(1.0 / (1.0 + std::exp(-da)));
+            double neg_abs = -std::abs(da);
+            double e = std::exp(neg_abs);
+            double denom = 1.0 + e;
+            return static_cast<T>(da >= 0.0 ? 1.0 / denom : e / denom);
         }
     }
 };
@@ -682,12 +690,21 @@ struct TanhFunc {
 
 struct SiLUFunc {
     template <typename T> T operator()(const T &a) const {
-        // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
+        // SiLU(x) = x * sigmoid(x)
+        // Numerically stable: compute exp(-|x|) which is always in (0,1],
+        // avoiding overflow in exp() for large |x|.
         if constexpr (std::is_floating_point_v<T>) {
-            return a / (static_cast<T>(1) + std::exp(-a));
+            T neg_abs = -std::abs(a);
+            T e = std::exp(neg_abs); // exp(-|x|), always in (0, 1]
+            T denom = static_cast<T>(1) + e;
+            return a >= static_cast<T>(0) ? a / denom : (a * e) / denom;
         } else {
             double da = static_cast<double>(a);
-            return static_cast<T>(da / (1.0 + std::exp(-da)));
+            double neg_abs = -std::abs(da);
+            double e = std::exp(neg_abs);
+            double denom = 1.0 + e;
+            double result = da >= 0.0 ? da / denom : (da * e) / denom;
+            return static_cast<T>(result);
         }
     }
 };
