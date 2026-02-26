@@ -318,3 +318,157 @@ TEST(FFT, WindowSize1) {
     ASSERT_TRUE(std::abs(w2.item<float>({0}) - 0.08f) < 0.01f)
         << "Hamming window size 1 should be ~0.08";
 }
+
+TEST(FFT, CosineWindow) {
+    auto w = axiom::fft::cosine_window(10);
+    ASSERT_TRUE(w.shape() == axiom::Shape({10})) << "Cosine window shape wrong";
+    ASSERT_TRUE(w.dtype() == axiom::DType::Float32)
+        << "Cosine window dtype wrong";
+
+    // Cosine window: sin(pi*0/N) = 0 at start
+    const float *data = w.typed_data<float>();
+    ASSERT_TRUE(std::abs(data[0]) < 1e-6) << "Cosine window should start at 0";
+
+    // Peak near middle
+    ASSERT_TRUE(data[5] > 0.9f) << "Cosine window middle should be near 1";
+}
+
+TEST(FFT, CosineWindowSymmetric) {
+    auto w = axiom::fft::cosine_window(10, false);
+    const float *data = w.typed_data<float>();
+
+    // Symmetric: first and last should be near 0
+    ASSERT_TRUE(std::abs(data[0]) < 1e-6)
+        << "Cosine symmetric should start near 0";
+    ASSERT_TRUE(std::abs(data[9]) < 1e-6)
+        << "Cosine symmetric should end near 0";
+}
+
+TEST(FFT, ExponentialWindow) {
+    auto w = axiom::fft::exponential_window(10, 2.0);
+    ASSERT_TRUE(w.shape() == axiom::Shape({10}))
+        << "Exponential window shape wrong";
+    ASSERT_TRUE(w.dtype() == axiom::DType::Float32)
+        << "Exponential window dtype wrong";
+
+    // All values should be positive
+    const float *data = w.typed_data<float>();
+    for (size_t i = 0; i < 10; ++i) {
+        ASSERT_TRUE(data[i] > 0.0f)
+            << "Exponential window values should be positive";
+    }
+
+    // Center should be the maximum (value = 1.0)
+    ASSERT_TRUE(data[5] > data[0])
+        << "Exponential window should peak in middle";
+}
+
+TEST(FFT, GaussianWindow) {
+    auto w = axiom::fft::gaussian_window(10, 2.0);
+    ASSERT_TRUE(w.shape() == axiom::Shape({10}))
+        << "Gaussian window shape wrong";
+    ASSERT_TRUE(w.dtype() == axiom::DType::Float32)
+        << "Gaussian window dtype wrong";
+
+    // All values should be positive
+    const float *data = w.typed_data<float>();
+    for (size_t i = 0; i < 10; ++i) {
+        ASSERT_TRUE(data[i] > 0.0f)
+            << "Gaussian window values should be positive";
+    }
+
+    // Peak should be at center
+    ASSERT_TRUE(data[5] > data[0]) << "Gaussian window should peak in middle";
+    ASSERT_TRUE(data[5] > data[9]) << "Gaussian window should peak in middle";
+}
+
+TEST(FFT, NuttallWindow) {
+    auto w = axiom::fft::nuttall_window(10);
+    ASSERT_TRUE(w.shape() == axiom::Shape({10}))
+        << "Nuttall window shape wrong";
+    ASSERT_TRUE(w.dtype() == axiom::DType::Float32)
+        << "Nuttall window dtype wrong";
+
+    // Nuttall window starts near 0
+    const float *data = w.typed_data<float>();
+    ASSERT_TRUE(std::abs(data[0]) < 0.01f)
+        << "Nuttall window should start near 0";
+
+    // Peak should be in the middle region
+    ASSERT_TRUE(data[5] > data[0]) << "Nuttall window should peak in middle";
+}
+
+TEST(FFT, NuttallWindowSymmetric) {
+    auto w = axiom::fft::nuttall_window(10, false);
+    const float *data = w.typed_data<float>();
+
+    // Symmetric: first and last should be near 0
+    ASSERT_TRUE(std::abs(data[0]) < 0.01f)
+        << "Nuttall symmetric should start near 0";
+    ASSERT_TRUE(std::abs(data[9]) < 0.01f)
+        << "Nuttall symmetric should end near 0";
+}
+
+TEST(FFT, GeneralCosineWindow) {
+    // Hann window coefficients: should reproduce hann_window
+    std::vector<double> hann_coeffs = {0.5, 0.5};
+    auto w = axiom::fft::general_cosine_window(10, hann_coeffs);
+    auto hann = axiom::fft::hann_window(10);
+
+    ASSERT_TRUE(w.shape() == axiom::Shape({10}))
+        << "General cosine window shape wrong";
+
+    const float *wdata = w.typed_data<float>();
+    const float *hdata = hann.typed_data<float>();
+    for (size_t i = 0; i < 10; ++i) {
+        ASSERT_TRUE(std::abs(wdata[i] - hdata[i]) < 1e-5)
+            << "General cosine with Hann coeffs should match hann_window at "
+            << i;
+    }
+}
+
+TEST(FFT, GeneralCosineWindowNuttallCoeffs) {
+    // Nuttall coefficients: should reproduce nuttall_window
+    std::vector<double> nuttall_coeffs = {0.3635819, 0.4891775, 0.1365995,
+                                          0.0106411};
+    auto w = axiom::fft::general_cosine_window(10, nuttall_coeffs);
+    auto nuttall = axiom::fft::nuttall_window(10);
+
+    const float *wdata = w.typed_data<float>();
+    const float *ndata = nuttall.typed_data<float>();
+    for (size_t i = 0; i < 10; ++i) {
+        ASSERT_TRUE(std::abs(wdata[i] - ndata[i]) < 1e-5)
+            << "General cosine with Nuttall coeffs should match nuttall_window "
+               "at "
+            << i;
+    }
+}
+
+TEST(FFT, GeneralHammingWindow) {
+    // Default alpha=0.54 should match hamming_window
+    auto w = axiom::fft::general_hamming_window(10, 0.54);
+    auto hamming = axiom::fft::hamming_window(10);
+
+    ASSERT_TRUE(w.shape() == axiom::Shape({10}))
+        << "General Hamming window shape wrong";
+
+    const float *wdata = w.typed_data<float>();
+    const float *hdata = hamming.typed_data<float>();
+    for (size_t i = 0; i < 10; ++i) {
+        ASSERT_TRUE(std::abs(wdata[i] - hdata[i]) < 1e-4)
+            << "General Hamming (0.54) should match hamming_window at " << i;
+    }
+}
+
+TEST(FFT, GeneralHammingWindowHann) {
+    // alpha=0.5 should produce Hann window
+    auto w = axiom::fft::general_hamming_window(10, 0.5);
+    auto hann = axiom::fft::hann_window(10);
+
+    const float *wdata = w.typed_data<float>();
+    const float *hdata = hann.typed_data<float>();
+    for (size_t i = 0; i < 10; ++i) {
+        ASSERT_TRUE(std::abs(wdata[i] - hdata[i]) < 1e-5)
+            << "General Hamming (0.5) should match hann_window at " << i;
+    }
+}

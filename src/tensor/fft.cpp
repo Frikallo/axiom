@@ -1287,6 +1287,190 @@ Tensor kaiser_window(int64_t M, double beta, bool periodic, DType dtype,
     return result;
 }
 
+Tensor cosine_window(int64_t M, bool periodic, DType dtype, Device device) {
+    if (M <= 0) {
+        throw ValueError("cosine_window: M must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    dispatch_float(dtype, "cosine_window", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        T *data = result.typed_data<T>();
+        for (int64_t i = 0; i < M; ++i) {
+            data[i] = static_cast<T>(std::sin(M_PI * i / N));
+        }
+    });
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+Tensor exponential_window(int64_t M, double tau, bool periodic, DType dtype,
+                          Device device) {
+    if (M <= 0) {
+        throw ValueError("exponential_window: M must be positive");
+    }
+    if (tau <= 0.0) {
+        throw ValueError("exponential_window: tau must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    double center = static_cast<double>(N) / 2.0;
+
+    dispatch_float(dtype, "exponential_window", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        T *data = result.typed_data<T>();
+        for (int64_t i = 0; i < M; ++i) {
+            data[i] = static_cast<T>(std::exp(-std::abs(i - center) / tau));
+        }
+    });
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+Tensor gaussian_window(int64_t M, double std, bool periodic, DType dtype,
+                       Device device) {
+    if (M <= 0) {
+        throw ValueError("gaussian_window: M must be positive");
+    }
+    if (std <= 0.0) {
+        throw ValueError("gaussian_window: std must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    double center = static_cast<double>(N) / 2.0;
+
+    dispatch_float(dtype, "gaussian_window", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        T *data = result.typed_data<T>();
+        for (int64_t i = 0; i < M; ++i) {
+            double ratio = (i - center) / std;
+            data[i] = static_cast<T>(std::exp(-0.5 * ratio * ratio));
+        }
+    });
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+Tensor nuttall_window(int64_t M, bool periodic, DType dtype, Device device) {
+    if (M <= 0) {
+        throw ValueError("nuttall_window: M must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    constexpr double a0 = 0.3635819;
+    constexpr double a1 = 0.4891775;
+    constexpr double a2 = 0.1365995;
+    constexpr double a3 = 0.0106411;
+
+    dispatch_float(dtype, "nuttall_window", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        T *data = result.typed_data<T>();
+        for (int64_t i = 0; i < M; ++i) {
+            double x = 2.0 * M_PI * i / N;
+            data[i] =
+                static_cast<T>(a0 - a1 * std::cos(x) + a2 * std::cos(2.0 * x) -
+                               a3 * std::cos(3.0 * x));
+        }
+    });
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+Tensor general_cosine_window(int64_t M, const std::vector<double> &a,
+                             bool periodic, DType dtype, Device device) {
+    if (M <= 0) {
+        throw ValueError("general_cosine_window: M must be positive");
+    }
+    if (a.empty()) {
+        throw ValueError(
+            "general_cosine_window: coefficients must not be empty");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    dispatch_float(dtype, "general_cosine_window", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        T *data = result.typed_data<T>();
+        for (int64_t i = 0; i < M; ++i) {
+            double val = 0.0;
+            double sign = 1.0;
+            for (size_t k = 0; k < a.size(); ++k) {
+                val += sign * a[k] * std::cos(2.0 * M_PI * k * i / N);
+                sign = -sign;
+            }
+            data[i] = static_cast<T>(val);
+        }
+    });
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
+Tensor general_hamming_window(int64_t M, double alpha, bool periodic,
+                              DType dtype, Device device) {
+    if (M <= 0) {
+        throw ValueError("general_hamming_window: M must be positive");
+    }
+
+    Tensor result({static_cast<size_t>(M)}, dtype, Device::CPU);
+
+    int64_t N = periodic ? M : M - 1;
+    if (N == 0)
+        N = 1;
+
+    dispatch_float(dtype, "general_hamming_window", [&]<typename DT>(DT) {
+        using T = typename DT::value_type;
+        T *data = result.typed_data<T>();
+        for (int64_t i = 0; i < M; ++i) {
+            data[i] = static_cast<T>(alpha - (1.0 - alpha) *
+                                                 std::cos(2.0 * M_PI * i / N));
+        }
+    });
+
+    if (device == Device::GPU) {
+        return result.gpu();
+    }
+    return result;
+}
+
 // ============================================================================
 // Short-Time Fourier Transform
 // ============================================================================
