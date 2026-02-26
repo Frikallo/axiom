@@ -25,6 +25,9 @@
 #include "backends/metal/metal_common.hpp"
 #include "backends/metal/metal_operations.hpp"
 #include "backends/metal/unified_storage.hpp"
+#elif defined(AXIOM_CUDA_SUPPORT)
+#include "backends/cuda/cuda_context.hpp"
+#include "backends/cuda/cuda_unified_storage.hpp"
 #endif
 
 namespace axiom {
@@ -1616,6 +1619,29 @@ Tensor Tensor::to(Device target_device, MemoryOrder order) const {
             return result;
         }
     }
+#elif defined(AXIOM_CUDA_SUPPORT)
+    // Zero-copy path for CUDA managed memory: just switch the device tag
+    if (order == memory_order_) {
+        auto *unified =
+            dynamic_cast<backends::cuda::CudaUnifiedStorage *>(storage_.get());
+        if (unified) {
+            // Synchronize GPU before CPU reads
+            if (device() == Device::GPU && target_device == Device::CPU)
+                backends::cuda::CudaExecutionStream::instance().synchronize();
+
+            auto new_storage = unified->with_device_tag(target_device);
+            Tensor result;
+            result.shape_ = shape_;
+            result.strides_ = strides_;
+            result.dtype_ = dtype_;
+            result.memory_order_ = memory_order_;
+            result.offset_ = offset_;
+            result.flags_ = flags_;
+            result.storage_ = std::move(new_storage);
+            result.update_contiguity_flags();
+            return result;
+        }
+    }
 #endif
 
     // If non-contiguous (e.g., a view from slice/chunk), make a contiguous
@@ -1642,6 +1668,14 @@ Tensor Tensor::cpu() const {
         dynamic_cast<backends::metal::UnifiedStorage *>(storage_.get()) ==
             nullptr) {
         backends::metal::MetalExecutionStream::instance().synchronize();
+    }
+#elif defined(AXIOM_CUDA_SUPPORT)
+    // For non-unified storage, synchronize before the copy.
+    // Unified storage synchronization is handled inside to().
+    if (device() == Device::GPU &&
+        dynamic_cast<backends::cuda::CudaUnifiedStorage *>(storage_.get()) ==
+            nullptr) {
+        backends::cuda::CudaExecutionStream::instance().synchronize();
     }
 #endif
     return to(Device::CPU, memory_order_);

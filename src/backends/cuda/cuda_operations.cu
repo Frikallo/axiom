@@ -1,0 +1,1642 @@
+#include "cuda_operations.hpp"
+#include "cublas_operations.hpp"
+#include "cuda_buffer_provider.hpp"
+#include "cuda_context.hpp"
+#include "cuda_kernels.hpp"
+
+#include "axiom/dtype.hpp"
+#include "axiom/error.hpp"
+#include "axiom/operations.hpp"
+#include "axiom/shape.hpp"
+#include "axiom/tensor.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+namespace axiom {
+namespace backends {
+namespace cuda {
+
+// ============================================================================
+// ensure_gpu_contiguous — every CUDA op should call this on its inputs
+// ============================================================================
+
+Tensor ensure_gpu_contiguous(const Tensor &t) {
+    if (t.is_contiguous()) return t;
+
+#ifdef AXIOM_CUDA_SUPPORT
+    Tensor result(t.shape(), t.dtype(), Device::GPU);
+
+    auto *src_provider = as_cuda_buffer_provider(t.storage().get());
+    auto *dst_provider = as_cuda_buffer_provider(result.storage().get());
+    if (!src_provider || !dst_provider) {
+        throw DeviceError("ensure_gpu_contiguous: storage is not CUDA-backed");
+    }
+
+    const auto *src_ptr =
+        static_cast<const uint8_t *>(src_provider->device_ptr()) +
+        src_provider->offset() + t.offset();
+    auto *dst_ptr =
+        static_cast<uint8_t *>(dst_provider->device_ptr()) +
+        dst_provider->offset();
+
+    GatherStridedParams params{};
+    params.ndim = static_cast<unsigned int>(t.ndim());
+    params.numel = static_cast<unsigned int>(t.size());
+    params.offset = 0;
+    params.itemsize = static_cast<unsigned int>(t.itemsize());
+    params.flip_mask = 0;
+
+    for (size_t i = 0; i < t.ndim(); ++i) {
+        params.shape[i] = static_cast<unsigned int>(t.shape()[i]);
+        int64_t stride = t.strides()[i];
+        if (stride < 0) {
+            params.flip_mask |= (1u << i);
+        }
+        params.src_strides[i] =
+            static_cast<unsigned int>(std::abs(stride) /
+                                      static_cast<int64_t>(t.itemsize()));
+    }
+
+    auto stream =
+        static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+    launch_gather_strided(src_ptr, dst_ptr, params, t.itemsize(), stream);
+
+    CudaExecutionStream::instance().increment_batch();
+    return result;
+#else
+    throw DeviceError("CUDA support not compiled");
+#endif
+}
+
+// ============================================================================
+// Supported-dtype check — CUDA kernels dispatch by element_size (1/2/4/8)
+// and assume specific C types at each size.  Dtypes whose bit-pattern
+// doesn't match those C types would silently produce wrong results.
+// ============================================================================
+
+static bool is_cuda_supported_dtype(DType dtype) {
+    switch (dtype) {
+    case DType::Bool:
+    case DType::Int8:
+    case DType::Int16:
+    case DType::Int32:
+    case DType::Int64:
+    case DType::UInt8:
+    case DType::Float32:
+    case DType::Float64:
+        return true;
+    // Float16, BFloat16: 2-byte but not int16_t — kernel reinterprets bits
+    // UInt16: signed/unsigned mismatch for arithmetic ops
+    // UInt32, UInt64: dispatched as float/double — bit-reinterpretation
+    // Complex64, Complex128: no complex kernel instantiations
+    default:
+        return false;
+    }
+}
+
+// ============================================================================
+// OpType → BinaryOpKind mapping
+// ============================================================================
+
+static bool is_bitwise_op(ops::OpType op) {
+    switch (op) {
+    case ops::OpType::BitwiseAnd:
+    case ops::OpType::BitwiseOr:
+    case ops::OpType::BitwiseXor:
+    case ops::OpType::LeftShift:
+    case ops::OpType::RightShift:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool is_comparison_or_logical(ops::OpType op) {
+    switch (op) {
+    case ops::OpType::Equal:
+    case ops::OpType::NotEqual:
+    case ops::OpType::Less:
+    case ops::OpType::LessEqual:
+    case ops::OpType::Greater:
+    case ops::OpType::GreaterEqual:
+    case ops::OpType::LogicalAnd:
+    case ops::OpType::LogicalOr:
+    case ops::OpType::LogicalXor:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static BinaryOpKind to_binary_op_kind(ops::OpType op) {
+    switch (op) {
+    case ops::OpType::Add:          return BinaryOpKind::Add;
+    case ops::OpType::Subtract:     return BinaryOpKind::Sub;
+    case ops::OpType::Multiply:     return BinaryOpKind::Mul;
+    case ops::OpType::Divide:       return BinaryOpKind::Div;
+    case ops::OpType::Power:        return BinaryOpKind::Pow;
+    case ops::OpType::Modulo:       return BinaryOpKind::Mod;
+    case ops::OpType::Maximum:      return BinaryOpKind::Max;
+    case ops::OpType::Minimum:      return BinaryOpKind::Min;
+    case ops::OpType::Atan2:        return BinaryOpKind::Atan2;
+    case ops::OpType::Hypot:        return BinaryOpKind::Hypot;
+    case ops::OpType::Equal:        return BinaryOpKind::Equal;
+    case ops::OpType::NotEqual:     return BinaryOpKind::NotEqual;
+    case ops::OpType::Less:         return BinaryOpKind::Less;
+    case ops::OpType::LessEqual:    return BinaryOpKind::LessEqual;
+    case ops::OpType::Greater:      return BinaryOpKind::Greater;
+    case ops::OpType::GreaterEqual: return BinaryOpKind::GreaterEqual;
+    case ops::OpType::LogicalAnd:   return BinaryOpKind::LogicalAnd;
+    case ops::OpType::LogicalOr:    return BinaryOpKind::LogicalOr;
+    case ops::OpType::LogicalXor:   return BinaryOpKind::LogicalXor;
+    case ops::OpType::BitwiseAnd:   return BinaryOpKind::BitwiseAnd;
+    case ops::OpType::BitwiseOr:    return BinaryOpKind::BitwiseOr;
+    case ops::OpType::BitwiseXor:   return BinaryOpKind::BitwiseXor;
+    case ops::OpType::LeftShift:    return BinaryOpKind::LeftShift;
+    case ops::OpType::RightShift:   return BinaryOpKind::RightShift;
+    default:
+        throw DeviceError("Unsupported binary OpType for CUDA");
+    }
+}
+
+// ============================================================================
+// CudaBinaryOperation
+// ============================================================================
+
+class CudaBinaryOperation : public ops::Operation {
+  private:
+    ops::OpType op_type_;
+    std::string op_name_;
+
+  public:
+    CudaBinaryOperation(ops::OpType op_type, std::string op_name)
+        : op_type_(op_type), op_name_(std::move(op_name)) {}
+
+    ops::OpType type() const override { return op_type_; }
+    std::string name() const override { return op_name_; }
+    Device device() const override { return Device::GPU; }
+
+    bool supports_binary(const Tensor &lhs,
+                         const Tensor &rhs) const override {
+        DType promoted = ops::promote_types(lhs.dtype(), rhs.dtype());
+        if (!is_cuda_supported_dtype(promoted))
+            return false;
+        return ops::are_broadcastable(lhs.shape(), rhs.shape());
+    }
+
+    Tensor execute_binary(const Tensor &lhs,
+                          const Tensor &rhs) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        // Type promotion
+        DType result_dtype = ops::result_type(lhs, rhs);
+        if (is_comparison_or_logical(op_type_)) {
+            result_dtype = DType::Bool;
+        }
+
+        // Bitwise ops: force integer result type
+        if (is_bitwise_op(op_type_)) {
+            if (result_dtype == DType::Float16 ||
+                result_dtype == DType::BFloat16 ||
+                result_dtype == DType::Float32 ||
+                result_dtype == DType::Float64) {
+                result_dtype = DType::Int64;
+            }
+        }
+
+        // Promote inputs if needed
+        Tensor lhs_p = (lhs.dtype() == result_dtype ||
+                         is_comparison_or_logical(op_type_))
+                            ? lhs : lhs.astype(result_dtype);
+        Tensor rhs_p = (rhs.dtype() == result_dtype ||
+                         is_comparison_or_logical(op_type_))
+                            ? rhs : rhs.astype(result_dtype);
+
+        // For comparison/logical, promote both inputs to the same type
+        if (is_comparison_or_logical(op_type_) && lhs_p.dtype() != rhs_p.dtype()) {
+            DType common = ops::promote_types(lhs_p.dtype(), rhs_p.dtype());
+            if (lhs_p.dtype() != common) lhs_p = lhs_p.astype(common);
+            if (rhs_p.dtype() != common) rhs_p = rhs_p.astype(common);
+        }
+
+        // Ensure contiguous
+        Tensor lhs_c = ensure_gpu_contiguous(lhs_p);
+        Tensor rhs_c = ensure_gpu_contiguous(rhs_p);
+
+        // Compute broadcast info
+        auto bcast = ops::compute_broadcast_info(lhs_c.shape(), rhs_c.shape());
+
+        // Allocate output
+        Tensor result(bcast.result_shape, result_dtype, Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        // Extract device pointers
+        auto *lhs_buf = as_cuda_buffer_provider(lhs_c.storage().get());
+        auto *rhs_buf = as_cuda_buffer_provider(rhs_c.storage().get());
+        auto *out_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!lhs_buf || !rhs_buf || !out_buf) {
+            throw DeviceError("CudaBinaryOperation: storage is not CUDA-backed");
+        }
+
+        const void *lhs_ptr = lhs_buf->device_ptr();
+        const void *rhs_ptr = rhs_buf->device_ptr();
+        void *out_ptr = out_buf->device_ptr();
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+        BinaryOpKind kind = to_binary_op_kind(op_type_);
+
+        // Input element size (for comparison/logical, inputs may differ
+        // from output size which is always 1 byte / Bool).
+        DType input_dtype = is_comparison_or_logical(op_type_)
+                                ? lhs_c.dtype()
+                                : result_dtype;
+        size_t input_elem = dtype_size(input_dtype);
+
+        if (bcast.needs_broadcast) {
+            // Build broadcast params
+            BroadcastParams bp{};
+            bp.ndim = static_cast<int>(bcast.result_shape.size());
+
+            Strides a_strides = ShapeUtils::broadcast_strides(
+                lhs_c.shape(), lhs_c.strides(), bcast.result_shape);
+            Strides b_strides = ShapeUtils::broadcast_strides(
+                rhs_c.shape(), rhs_c.strides(), bcast.result_shape);
+
+            for (int i = 0; i < bp.ndim; ++i) {
+                bp.out_shape[i] =
+                    static_cast<int64_t>(bcast.result_shape[i]);
+                // Convert byte strides to element strides
+                bp.a_strides[i] = a_strides[i] /
+                    static_cast<int64_t>(input_elem);
+                bp.b_strides[i] = b_strides[i] /
+                    static_cast<int64_t>(input_elem);
+            }
+
+            launch_binary_broadcast(kind, lhs_ptr, rhs_ptr, out_ptr,
+                                    numel, bp, input_elem, stream);
+        } else {
+            launch_binary_elementwise(kind, lhs_ptr, rhs_ptr, out_ptr,
+                                      numel, input_elem, stream);
+        }
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)lhs;
+        (void)rhs;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// OpType → UnaryOpKind mapping
+// ============================================================================
+
+static bool is_unary_test_op(ops::OpType op) {
+    switch (op) {
+    case ops::OpType::IsNaN:
+    case ops::OpType::IsInf:
+    case ops::OpType::IsFinite:
+    case ops::OpType::LogicalNot:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static UnaryOpKind to_unary_op_kind(ops::OpType op) {
+    switch (op) {
+    case ops::OpType::Negate:     return UnaryOpKind::Negate;
+    case ops::OpType::Abs:        return UnaryOpKind::Abs;
+    case ops::OpType::Sqrt:       return UnaryOpKind::Sqrt;
+    case ops::OpType::Exp:        return UnaryOpKind::Exp;
+    case ops::OpType::Log:        return UnaryOpKind::Log;
+    case ops::OpType::Sin:        return UnaryOpKind::Sin;
+    case ops::OpType::Cos:        return UnaryOpKind::Cos;
+    case ops::OpType::Tan:        return UnaryOpKind::Tan;
+    case ops::OpType::Tanh:       return UnaryOpKind::Tanh;
+    case ops::OpType::Sign:       return UnaryOpKind::Sign;
+    case ops::OpType::Floor:      return UnaryOpKind::Floor;
+    case ops::OpType::Ceil:       return UnaryOpKind::Ceil;
+    case ops::OpType::Trunc:      return UnaryOpKind::Trunc;
+    case ops::OpType::Round:      return UnaryOpKind::Round;
+    case ops::OpType::Reciprocal: return UnaryOpKind::Reciprocal;
+    case ops::OpType::Square:     return UnaryOpKind::Square;
+    case ops::OpType::Cbrt:       return UnaryOpKind::Cbrt;
+    case ops::OpType::Erf:        return UnaryOpKind::Erf;
+    case ops::OpType::IsNaN:      return UnaryOpKind::IsNaN;
+    case ops::OpType::IsInf:      return UnaryOpKind::IsInf;
+    case ops::OpType::IsFinite:   return UnaryOpKind::IsFinite;
+    case ops::OpType::ReLU:       return UnaryOpKind::ReLU;
+    case ops::OpType::LeakyReLU:  return UnaryOpKind::LeakyReLU;
+    case ops::OpType::Sigmoid:    return UnaryOpKind::Sigmoid;
+    case ops::OpType::SiLU:       return UnaryOpKind::SiLU;
+    case ops::OpType::GELU:       return UnaryOpKind::GELU;
+    case ops::OpType::LogicalNot: return UnaryOpKind::LogicalNot;
+    default:
+        throw DeviceError("Unsupported unary OpType for CUDA");
+    }
+}
+
+// ============================================================================
+// CudaUnaryOperation
+// ============================================================================
+
+class CudaUnaryOperation : public ops::Operation {
+  private:
+    ops::OpType op_type_;
+    std::string op_name_;
+
+  public:
+    CudaUnaryOperation(ops::OpType op_type, std::string op_name)
+        : op_type_(op_type), op_name_(std::move(op_name)) {}
+
+    ops::OpType type() const override { return op_type_; }
+    std::string name() const override { return op_name_; }
+    Device device() const override { return Device::GPU; }
+
+    bool supports_binary(const Tensor & /*lhs*/,
+                         const Tensor & /*rhs*/) const override {
+        return false;
+    }
+
+    bool supports_unary(const Tensor &input) const override {
+        return is_cuda_supported_dtype(input.dtype());
+    }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on unary operation");
+    }
+
+    Tensor execute_unary(const Tensor &input) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        Tensor in_c = ensure_gpu_contiguous(input);
+
+        // Output dtype: Bool for test ops, same as input otherwise
+        DType out_dtype = is_unary_test_op(op_type_) ? DType::Bool
+                                                     : in_c.dtype();
+
+        Tensor result(in_c.shape(), out_dtype, Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *src_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!src_buf || !dst_buf) {
+            throw DeviceError(
+                "CudaUnaryOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        launch_unary_elementwise(to_unary_op_kind(op_type_),
+                                 src_buf->device_ptr(),
+                                 dst_buf->device_ptr(), numel,
+                                 dtype_size(in_c.dtype()), stream);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// OpType → ReduceOpKind mapping
+// ============================================================================
+
+static ReduceOpKind to_reduce_op_kind(ops::OpType op) {
+    switch (op) {
+    case ops::OpType::Sum:  return ReduceOpKind::Sum;
+    case ops::OpType::Mean: return ReduceOpKind::Sum; // Mean = Sum / count
+    case ops::OpType::Max:  return ReduceOpKind::Max;
+    case ops::OpType::Min:  return ReduceOpKind::Min;
+    case ops::OpType::Prod: return ReduceOpKind::Prod;
+    case ops::OpType::Any:  return ReduceOpKind::Any;
+    case ops::OpType::All:  return ReduceOpKind::All;
+    default:
+        throw DeviceError("Unsupported reduction OpType for CUDA");
+    }
+}
+
+// ============================================================================
+// CudaReductionOperation
+// ============================================================================
+
+class CudaReductionOperation : public ops::Operation {
+  private:
+    ops::OpType op_type_;
+    std::string op_name_;
+
+  public:
+    CudaReductionOperation(ops::OpType op_type, std::string op_name)
+        : op_type_(op_type), op_name_(std::move(op_name)) {}
+
+    ops::OpType type() const override { return op_type_; }
+    std::string name() const override { return op_name_; }
+    Device device() const override { return Device::GPU; }
+
+    bool supports_binary(const Tensor & /*lhs*/,
+                         const Tensor & /*rhs*/) const override {
+        return false;
+    }
+
+    bool supports_reduction(const Tensor &input) const override {
+        return is_cuda_supported_dtype(input.dtype());
+    }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on reduction operation");
+    }
+
+    Tensor execute_unary(const Tensor &input) const override {
+        (void)input;
+        throw RuntimeError::internal(
+            "execute_unary called on reduction operation");
+    }
+
+    Tensor execute_reduction(const Tensor &input,
+                             const std::vector<int> &axes,
+                             bool keep_dims) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        Tensor in_c = ensure_gpu_contiguous(input);
+
+        // Normalize axes: empty means reduce all
+        std::vector<int> norm_axes = axes;
+        if (norm_axes.empty()) {
+            for (size_t i = 0; i < in_c.ndim(); ++i)
+                norm_axes.push_back(static_cast<int>(i));
+        }
+
+        bool is_full_reduction = (norm_axes.size() == in_c.ndim());
+
+        // Compute output shape
+        Shape output_shape;
+        if (is_full_reduction) {
+            output_shape = keep_dims ? Shape(in_c.ndim(), 1) : Shape{1};
+        } else {
+            std::vector<bool> is_reduced(in_c.ndim(), false);
+            for (int ax : norm_axes)
+                is_reduced[ax] = true;
+            for (size_t i = 0; i < in_c.ndim(); ++i) {
+                if (is_reduced[i]) {
+                    if (keep_dims) output_shape.push_back(1);
+                } else {
+                    output_shape.push_back(in_c.shape()[i]);
+                }
+            }
+        }
+
+        DType out_dtype = in_c.dtype();
+        Tensor result(output_shape, out_dtype, Device::GPU);
+        if (result.size() == 0) return result;
+
+        auto *src_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!src_buf || !dst_buf) {
+            throw DeviceError(
+                "CudaReductionOperation: storage is not CUDA-backed");
+        }
+
+        const void *src_ptr = src_buf->device_ptr();
+        void *dst_ptr = dst_buf->device_ptr();
+        size_t elem_size = dtype_size(in_c.dtype());
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        ReduceOpKind kind = to_reduce_op_kind(op_type_);
+
+        if (is_full_reduction) {
+            // Full reduction via CUB — two-pass: query temp size, then execute
+            size_t temp_bytes = 0;
+            launch_full_reduce(kind, src_ptr, dst_ptr, in_c.size(),
+                               elem_size, nullptr, temp_bytes, stream);
+
+            void *temp = nullptr;
+            cudaMalloc(&temp, temp_bytes);
+            launch_full_reduce(kind, src_ptr, dst_ptr, in_c.size(),
+                               elem_size, temp, temp_bytes, stream);
+            cudaFree(temp);
+        } else {
+            // Axis reduction — decompose into (outer, axis_len, inner).
+            // Currently supports single-axis reduction.  Multi-axis is
+            // handled by reducing one axis at a time.
+            if (norm_axes.size() == 1) {
+                int ax = norm_axes[0];
+                size_t outer = 1;
+                for (int i = 0; i < ax; ++i)
+                    outer *= in_c.shape()[i];
+                size_t axis_len = in_c.shape()[ax];
+                size_t inner = 1;
+                for (size_t i = ax + 1; i < in_c.ndim(); ++i)
+                    inner *= in_c.shape()[i];
+
+                launch_axis_reduce(kind, src_ptr, dst_ptr, outer, axis_len,
+                                   inner, elem_size, stream);
+            } else {
+                // Multi-axis: reduce axes one at a time (highest first
+                // to keep earlier axis indices valid)
+                std::vector<int> sorted_axes = norm_axes;
+                std::sort(sorted_axes.rbegin(), sorted_axes.rend());
+
+                Tensor current = in_c;
+                for (int ax : sorted_axes) {
+                    Tensor cur_c = ensure_gpu_contiguous(current);
+                    size_t outer = 1;
+                    for (int i = 0; i < ax; ++i)
+                        outer *= cur_c.shape()[i];
+                    size_t axis_len = cur_c.shape()[ax];
+                    size_t inner = 1;
+                    for (size_t i = ax + 1; i < cur_c.ndim(); ++i)
+                        inner *= cur_c.shape()[i];
+
+                    // Intermediate shape: remove the reduced axis
+                    Shape inter_shape;
+                    for (size_t i = 0; i < cur_c.ndim(); ++i) {
+                        if (static_cast<int>(i) != ax)
+                            inter_shape.push_back(cur_c.shape()[i]);
+                    }
+                    if (inter_shape.empty()) inter_shape.push_back(1);
+
+                    Tensor inter(inter_shape, out_dtype, Device::GPU);
+                    auto *inter_buf =
+                        as_cuda_buffer_provider(inter.storage().get());
+                    auto *cur_buf =
+                        as_cuda_buffer_provider(cur_c.storage().get());
+
+                    launch_axis_reduce(kind, cur_buf->device_ptr(),
+                                       inter_buf->device_ptr(), outer,
+                                       axis_len, inner, elem_size, stream);
+                    current = inter;
+                }
+
+                // If keep_dims, reshape to insert 1s at reduced positions
+                if (keep_dims) {
+                    current = current.reshape(output_shape);
+                }
+
+                // For Mean, divide by total reduced element count
+                if (op_type_ == ops::OpType::Mean) {
+                    size_t count = 1;
+                    for (int ax : norm_axes)
+                        count *= in_c.shape()[ax];
+                    // Use binary division: current / count
+                    Tensor divisor =
+                        Tensor::full(current.shape(),
+                                     static_cast<float>(count), Device::GPU)
+                            .astype(out_dtype);
+                    Tensor cur_contig = ensure_gpu_contiguous(current);
+                    Tensor div_contig = ensure_gpu_contiguous(divisor);
+
+                    Tensor mean_result(current.shape(), out_dtype, Device::GPU);
+                    auto *mean_src =
+                        as_cuda_buffer_provider(cur_contig.storage().get());
+                    auto *mean_div =
+                        as_cuda_buffer_provider(div_contig.storage().get());
+                    auto *mean_dst =
+                        as_cuda_buffer_provider(mean_result.storage().get());
+
+                    launch_binary_elementwise(BinaryOpKind::Div,
+                                              mean_src->device_ptr(),
+                                              mean_div->device_ptr(),
+                                              mean_dst->device_ptr(),
+                                              current.size(), elem_size,
+                                              stream);
+                    CudaExecutionStream::instance().increment_batch();
+                    return mean_result;
+                }
+
+                CudaExecutionStream::instance().increment_batch();
+                return current;
+            }
+        }
+
+        // Handle Mean: divide result by total reduced element count
+        if (op_type_ == ops::OpType::Mean) {
+            size_t count = 1;
+            for (int ax : norm_axes)
+                count *= in_c.shape()[ax];
+            Tensor divisor =
+                Tensor::full(result.shape(), static_cast<float>(count),
+                             Device::GPU)
+                    .astype(out_dtype);
+            Tensor res_contig = ensure_gpu_contiguous(result);
+            Tensor div_contig = ensure_gpu_contiguous(divisor);
+
+            Tensor mean_result(result.shape(), out_dtype, Device::GPU);
+            auto *mean_src =
+                as_cuda_buffer_provider(res_contig.storage().get());
+            auto *mean_div =
+                as_cuda_buffer_provider(div_contig.storage().get());
+            auto *mean_dst =
+                as_cuda_buffer_provider(mean_result.storage().get());
+
+            launch_binary_elementwise(BinaryOpKind::Div,
+                                      mean_src->device_ptr(),
+                                      mean_div->device_ptr(),
+                                      mean_dst->device_ptr(),
+                                      result.size(), elem_size, stream);
+            CudaExecutionStream::instance().increment_batch();
+            return mean_result;
+        }
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)axes;
+        (void)keep_dims;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaArgReduceOperation (ArgMax / ArgMin)
+// ============================================================================
+
+class CudaArgReduceOperation : public ops::Operation {
+  private:
+    ops::OpType op_type_;
+    std::string op_name_;
+    bool is_max_;
+
+  public:
+    CudaArgReduceOperation(ops::OpType op_type, std::string op_name,
+                           bool is_max)
+        : op_type_(op_type), op_name_(std::move(op_name)), is_max_(is_max) {}
+
+    ops::OpType type() const override { return op_type_; }
+    std::string name() const override { return op_name_; }
+    Device device() const override { return Device::GPU; }
+
+    bool supports_binary(const Tensor & /*lhs*/,
+                         const Tensor & /*rhs*/) const override {
+        return false;
+    }
+
+    bool supports_reduction(const Tensor &input) const override {
+        return is_cuda_supported_dtype(input.dtype());
+    }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on argreduce operation");
+    }
+
+    Tensor execute_unary(const Tensor &input) const override {
+        (void)input;
+        throw RuntimeError::internal(
+            "execute_unary called on argreduce operation");
+    }
+
+    Tensor execute_reduction(const Tensor &input,
+                             const std::vector<int> &axes,
+                             bool keep_dims) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        Tensor in_c = ensure_gpu_contiguous(input);
+
+        // ArgMax/ArgMin operates on a single axis
+        int ax = axes.empty() ? -1 : axes[0];
+
+        // Full reduction (all elements)
+        if (ax == -1 || axes.size() > 1) {
+            Tensor flat = in_c.flatten();
+            flat = ensure_gpu_contiguous(flat);
+
+            Shape output_shape = keep_dims ? Shape(in_c.ndim(), 1) : Shape{1};
+            Tensor result(output_shape, DType::Int64, Device::GPU);
+
+            auto *src_buf = as_cuda_buffer_provider(flat.storage().get());
+            auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+            if (!src_buf || !dst_buf) {
+                throw DeviceError(
+                    "CudaArgReduceOperation: storage is not CUDA-backed");
+            }
+
+            auto stream =
+                static_cast<cudaStream_t>(CudaContext::instance().stream());
+            size_t elem_size = dtype_size(flat.dtype());
+
+            // Two-pass CUB: query temp, then execute
+            size_t temp_bytes = 0;
+            launch_full_argreduce(is_max_, src_buf->device_ptr(),
+                                  dst_buf->device_ptr(), flat.size(),
+                                  elem_size, nullptr, temp_bytes, stream);
+
+            void *temp = nullptr;
+            cudaMalloc(&temp, temp_bytes);
+            launch_full_argreduce(is_max_, src_buf->device_ptr(),
+                                  dst_buf->device_ptr(), flat.size(),
+                                  elem_size, temp, temp_bytes, stream);
+            cudaFree(temp);
+
+            CudaExecutionStream::instance().increment_batch();
+            return result;
+        }
+
+        // Single-axis argreduce
+        if (ax < 0) ax += static_cast<int>(in_c.ndim());
+
+        Shape output_shape;
+        for (size_t i = 0; i < in_c.ndim(); ++i) {
+            if (static_cast<int>(i) == ax) {
+                if (keep_dims) output_shape.push_back(1);
+            } else {
+                output_shape.push_back(in_c.shape()[i]);
+            }
+        }
+        if (output_shape.empty()) output_shape.push_back(1);
+
+        Tensor result(output_shape, DType::Int64, Device::GPU);
+        if (result.size() == 0) return result;
+
+        size_t outer = 1;
+        for (int i = 0; i < ax; ++i)
+            outer *= in_c.shape()[i];
+        size_t axis_len = in_c.shape()[ax];
+        size_t inner = 1;
+        for (size_t i = ax + 1; i < in_c.ndim(); ++i)
+            inner *= in_c.shape()[i];
+
+        auto *src_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!src_buf || !dst_buf) {
+            throw DeviceError(
+                "CudaArgReduceOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        launch_axis_argreduce(is_max_, src_buf->device_ptr(),
+                              dst_buf->device_ptr(), outer, axis_len, inner,
+                              dtype_size(in_c.dtype()), stream);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)axes;
+        (void)keep_dims;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaWhereOperation
+// ============================================================================
+
+class CudaWhereOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::Where; }
+    std::string name() const override { return "where"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_where for Where operations");
+    }
+
+    Tensor execute_where(const Tensor &condition, const Tensor &a,
+                         const Tensor &b) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        // Type promotion for a and b
+        DType result_dtype = ops::promote_types(a.dtype(), b.dtype());
+
+        Tensor a_p = (a.dtype() == result_dtype) ? a : a.astype(result_dtype);
+        Tensor b_p = (b.dtype() == result_dtype) ? b : b.astype(result_dtype);
+
+        // Broadcast all three to common shape
+        auto bcast_ab = ops::compute_broadcast_info(a_p.shape(), b_p.shape());
+        auto bcast_all = ops::compute_broadcast_info(
+            condition.shape(), bcast_ab.result_shape);
+        const Shape &out_shape = bcast_all.result_shape;
+
+        Tensor cond_bc = condition.broadcast_to(out_shape);
+        Tensor a_bc = a_p.broadcast_to(out_shape);
+        Tensor b_bc = b_p.broadcast_to(out_shape);
+
+        Tensor cond_c = ensure_gpu_contiguous(cond_bc);
+        Tensor a_c = ensure_gpu_contiguous(a_bc);
+        Tensor b_c = ensure_gpu_contiguous(b_bc);
+
+        Tensor result(out_shape, result_dtype, Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *cond_buf = as_cuda_buffer_provider(cond_c.storage().get());
+        auto *a_buf = as_cuda_buffer_provider(a_c.storage().get());
+        auto *b_buf = as_cuda_buffer_provider(b_c.storage().get());
+        auto *out_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!cond_buf || !a_buf || !b_buf || !out_buf) {
+            throw DeviceError("CudaWhereOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        launch_where(cond_buf->device_ptr(), a_buf->device_ptr(),
+                     b_buf->device_ptr(), out_buf->device_ptr(),
+                     numel, dtype_size(result_dtype), stream);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)condition;
+        (void)a;
+        (void)b;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaMaskedFillOperation
+// ============================================================================
+
+class CudaMaskedFillOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::MaskedFill; }
+    std::string name() const override { return "masked_fill"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_masked_fill for MaskedFill operations");
+    }
+
+    Tensor execute_masked_fill(const Tensor &input, const Tensor &mask,
+                               const Tensor &value) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        // Broadcast mask to input shape
+        Tensor mask_bc = mask.broadcast_to(input.shape());
+
+        Tensor in_c = ensure_gpu_contiguous(input);
+        Tensor mask_c = ensure_gpu_contiguous(mask_bc);
+
+        // Value must be a scalar tensor of matching dtype
+        Tensor val = (value.dtype() == input.dtype())
+                         ? value
+                         : value.astype(input.dtype());
+        Tensor val_c = ensure_gpu_contiguous(val);
+
+        Tensor result(input.shape(), input.dtype(), Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *in_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *mask_buf = as_cuda_buffer_provider(mask_c.storage().get());
+        auto *val_buf = as_cuda_buffer_provider(val_c.storage().get());
+        auto *out_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!in_buf || !mask_buf || !val_buf || !out_buf) {
+            throw DeviceError(
+                "CudaMaskedFillOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        launch_masked_fill(in_buf->device_ptr(), mask_buf->device_ptr(),
+                           val_buf->device_ptr(), out_buf->device_ptr(),
+                           numel, dtype_size(input.dtype()), stream);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)mask;
+        (void)value;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaMaskedSelectOperation
+// ============================================================================
+
+class CudaMaskedSelectOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::MaskedSelect; }
+    std::string name() const override { return "masked_select"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_masked_select for MaskedSelect operations");
+    }
+
+    Tensor execute_masked_select(const Tensor &input,
+                                 const Tensor &mask) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        // Broadcast mask to input shape
+        auto bcast = ops::compute_broadcast_info(input.shape(), mask.shape());
+        Tensor input_bc = input.broadcast_to(bcast.result_shape);
+        Tensor mask_bc = mask.broadcast_to(bcast.result_shape);
+
+        Tensor in_c = ensure_gpu_contiguous(input_bc);
+        Tensor mask_c = ensure_gpu_contiguous(mask_bc);
+
+        size_t numel = in_c.size();
+        size_t elem_size = dtype_size(in_c.dtype());
+
+        auto *in_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *mask_buf = as_cuda_buffer_provider(mask_c.storage().get());
+        if (!in_buf || !mask_buf) {
+            throw DeviceError(
+                "CudaMaskedSelectOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        // Allocate output conservatively (worst case: all selected)
+        Tensor result({numel}, in_c.dtype(), Device::GPU);
+        auto *out_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!out_buf) {
+            throw DeviceError(
+                "CudaMaskedSelectOperation: output storage is not CUDA-backed");
+        }
+
+        // Allocate device counter for CUB
+        int *d_num_selected = nullptr;
+        cudaMalloc(&d_num_selected, sizeof(int));
+
+        // Two-pass CUB: query temp size, then execute
+        size_t temp_bytes = 0;
+        launch_masked_select(in_buf->device_ptr(), mask_buf->device_ptr(),
+                             out_buf->device_ptr(), numel, elem_size,
+                             d_num_selected, nullptr, temp_bytes, stream);
+
+        void *temp = nullptr;
+        cudaMalloc(&temp, temp_bytes);
+        launch_masked_select(in_buf->device_ptr(), mask_buf->device_ptr(),
+                             out_buf->device_ptr(), numel, elem_size,
+                             d_num_selected, temp, temp_bytes, stream);
+        cudaFree(temp);
+
+        // Copy selected count to host
+        int h_count = 0;
+        cudaMemcpyAsync(&h_count, d_num_selected, sizeof(int),
+                         cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream);
+        cudaFree(d_num_selected);
+
+        // Slice result to actual count
+        if (static_cast<size_t>(h_count) < numel) {
+            result = result.slice({Slice(0, h_count)});
+            result = ensure_gpu_contiguous(result);
+        }
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)mask;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// Helper: upload small host arrays to device (for kernel shape/stride params)
+// ============================================================================
+
+#ifdef AXIOM_CUDA_SUPPORT
+static int64_t *upload_to_device(const int64_t *host, size_t count,
+                                 cudaStream_t stream) {
+    int64_t *d_ptr = nullptr;
+    cudaMalloc(&d_ptr, count * sizeof(int64_t));
+    cudaMemcpyAsync(d_ptr, host, count * sizeof(int64_t),
+                     cudaMemcpyHostToDevice, stream);
+    return d_ptr;
+}
+#endif
+
+// ============================================================================
+// CudaGatherOperation
+// ============================================================================
+
+class CudaGatherOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::Gather; }
+    std::string name() const override { return "gather"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_gather for Gather operations");
+    }
+
+    Tensor execute_gather(const Tensor &input, int dim,
+                          const Tensor &indices) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        int norm_dim = dim;
+        if (norm_dim < 0)
+            norm_dim += static_cast<int>(input.ndim());
+
+        Tensor in_c = ensure_gpu_contiguous(input);
+        Tensor idx_i64 = (indices.dtype() == DType::Int64)
+                             ? indices
+                             : indices.astype(DType::Int64);
+        Tensor idx_c = ensure_gpu_contiguous(idx_i64);
+
+        // Output has same shape as indices
+        Tensor result(indices.shape(), input.dtype(), Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *in_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *idx_buf = as_cuda_buffer_provider(idx_c.storage().get());
+        auto *out_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!in_buf || !idx_buf || !out_buf) {
+            throw DeviceError("CudaGatherOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        int ndim = static_cast<int>(input.ndim());
+        size_t elem_size = dtype_size(input.dtype());
+        int64_t dim_size = static_cast<int64_t>(input.shape()[norm_dim]);
+
+        // Build element-count strides for src
+        std::vector<int64_t> src_elem_strides(ndim);
+        for (int i = 0; i < ndim; ++i) {
+            src_elem_strides[i] =
+                in_c.strides()[i] / static_cast<int64_t>(elem_size);
+        }
+
+        // Build output shape as int64
+        std::vector<int64_t> out_shape_i64(ndim);
+        for (int i = 0; i < ndim; ++i) {
+            out_shape_i64[i] = static_cast<int64_t>(indices.shape()[i]);
+        }
+
+        // Upload to device
+        int64_t *d_out_shape =
+            upload_to_device(out_shape_i64.data(), ndim, stream);
+        int64_t *d_src_strides =
+            upload_to_device(src_elem_strides.data(), ndim, stream);
+
+        launch_gather(in_buf->device_ptr(),
+                      static_cast<const int64_t *>(idx_buf->device_ptr()),
+                      out_buf->device_ptr(), numel, ndim, norm_dim,
+                      d_out_shape, d_src_strides, dim_size, elem_size,
+                      stream);
+
+        // Free device arrays after kernel completes
+        cudaStreamSynchronize(stream);
+        cudaFree(d_out_shape);
+        cudaFree(d_src_strides);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)dim;
+        (void)indices;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaScatterOperation
+// ============================================================================
+
+class CudaScatterOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::Scatter; }
+    std::string name() const override { return "scatter"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_scatter for Scatter operations");
+    }
+
+    Tensor execute_scatter(const Tensor &input, int dim,
+                           const Tensor &indices,
+                           const Tensor &src) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        int norm_dim = dim;
+        if (norm_dim < 0)
+            norm_dim += static_cast<int>(input.ndim());
+
+        // Output starts as copy of input
+        Tensor result = input.copy();
+        result = ensure_gpu_contiguous(result);
+
+        Tensor idx_i64 = (indices.dtype() == DType::Int64)
+                             ? indices
+                             : indices.astype(DType::Int64);
+        Tensor idx_c = ensure_gpu_contiguous(idx_i64);
+
+        Tensor src_cast = (src.dtype() == input.dtype())
+                              ? src
+                              : src.astype(input.dtype());
+        Tensor src_c = ensure_gpu_contiguous(src_cast);
+
+        size_t numel = indices.size();
+        if (numel == 0) return result;
+
+        auto *src_buf = as_cuda_buffer_provider(src_c.storage().get());
+        auto *idx_buf = as_cuda_buffer_provider(idx_c.storage().get());
+        auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!src_buf || !idx_buf || !dst_buf) {
+            throw DeviceError(
+                "CudaScatterOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        int ndim = static_cast<int>(input.ndim());
+        size_t elem_size = dtype_size(input.dtype());
+        int64_t dim_size = static_cast<int64_t>(input.shape()[norm_dim]);
+
+        // Build element-count strides for dst (contiguous)
+        std::vector<int64_t> dst_elem_strides(ndim);
+        for (int i = 0; i < ndim; ++i) {
+            dst_elem_strides[i] =
+                result.strides()[i] / static_cast<int64_t>(elem_size);
+        }
+
+        // Build indices shape as int64
+        std::vector<int64_t> idx_shape_i64(ndim);
+        for (int i = 0; i < ndim; ++i) {
+            idx_shape_i64[i] = static_cast<int64_t>(indices.shape()[i]);
+        }
+
+        int64_t *d_idx_shape =
+            upload_to_device(idx_shape_i64.data(), ndim, stream);
+        int64_t *d_dst_strides =
+            upload_to_device(dst_elem_strides.data(), ndim, stream);
+
+        launch_scatter(src_buf->device_ptr(),
+                       static_cast<const int64_t *>(idx_buf->device_ptr()),
+                       dst_buf->device_ptr(), numel, ndim, norm_dim,
+                       d_idx_shape, d_dst_strides, dim_size, elem_size,
+                       stream);
+
+        cudaStreamSynchronize(stream);
+        cudaFree(d_idx_shape);
+        cudaFree(d_dst_strides);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)dim;
+        (void)indices;
+        (void)src;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaIndexSelectOperation
+// ============================================================================
+
+class CudaIndexSelectOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::IndexSelect; }
+    std::string name() const override { return "index_select"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_index_select for IndexSelect operations");
+    }
+
+    Tensor execute_index_select(const Tensor &input, int dim,
+                                const Tensor &indices) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        if (indices.ndim() != 1) {
+            throw ShapeError("index_select requires 1D indices tensor");
+        }
+
+        int norm_dim = dim;
+        if (norm_dim < 0)
+            norm_dim += static_cast<int>(input.ndim());
+
+        Tensor in_c = ensure_gpu_contiguous(input);
+        Tensor idx_i64 = (indices.dtype() == DType::Int64)
+                             ? indices
+                             : indices.astype(DType::Int64);
+        Tensor idx_c = ensure_gpu_contiguous(idx_i64);
+
+        // Output shape: same as input but dim is replaced by num_indices
+        Shape out_shape = input.shape();
+        out_shape[norm_dim] = indices.size();
+
+        Tensor result(out_shape, input.dtype(), Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *in_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *idx_buf = as_cuda_buffer_provider(idx_c.storage().get());
+        auto *out_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!in_buf || !idx_buf || !out_buf) {
+            throw DeviceError(
+                "CudaIndexSelectOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        int ndim = static_cast<int>(input.ndim());
+        size_t elem_size = dtype_size(input.dtype());
+        int64_t dim_size = static_cast<int64_t>(input.shape()[norm_dim]);
+
+        // Build element-count strides for src
+        std::vector<int64_t> src_elem_strides(ndim);
+        for (int i = 0; i < ndim; ++i) {
+            src_elem_strides[i] =
+                in_c.strides()[i] / static_cast<int64_t>(elem_size);
+        }
+
+        // Output shape as int64
+        std::vector<int64_t> out_shape_i64(ndim);
+        for (int i = 0; i < ndim; ++i) {
+            out_shape_i64[i] = static_cast<int64_t>(out_shape[i]);
+        }
+
+        int64_t *d_out_shape =
+            upload_to_device(out_shape_i64.data(), ndim, stream);
+        int64_t *d_src_strides =
+            upload_to_device(src_elem_strides.data(), ndim, stream);
+
+        launch_index_select(
+            in_buf->device_ptr(),
+            static_cast<const int64_t *>(idx_buf->device_ptr()),
+            out_buf->device_ptr(), numel, ndim, norm_dim,
+            d_out_shape, d_src_strides, dim_size, elem_size, stream);
+
+        cudaStreamSynchronize(stream);
+        cudaFree(d_out_shape);
+        cudaFree(d_src_strides);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)dim;
+        (void)indices;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaSoftmaxOperation
+// ============================================================================
+
+class CudaSoftmaxOperation : public ops::Operation {
+  private:
+    bool is_log_;
+
+  public:
+    explicit CudaSoftmaxOperation(bool is_log) : is_log_(is_log) {}
+
+    ops::OpType type() const override {
+        return is_log_ ? ops::OpType::LogSoftmax : ops::OpType::Softmax;
+    }
+    std::string name() const override {
+        return is_log_ ? "log_softmax" : "softmax";
+    }
+    Device device() const override { return Device::GPU; }
+
+    bool supports_binary(const Tensor & /*lhs*/,
+                         const Tensor & /*rhs*/) const override {
+        return false;
+    }
+
+    bool supports_reduction(const Tensor &input) const override {
+        return is_cuda_supported_dtype(input.dtype());
+    }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on Softmax operation");
+    }
+
+    Tensor execute_unary(const Tensor & /*input*/) const override {
+        throw RuntimeError::internal(
+            "Use execute_reduction for Softmax operations");
+    }
+
+    Tensor execute_reduction(const Tensor &input,
+                             const std::vector<int> &axes,
+                             bool keep_dims) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        (void)keep_dims; // Softmax preserves shape
+
+        int axis = axes.empty() ? -1 : axes[0];
+        int norm_axis = axis;
+        if (norm_axis < 0)
+            norm_axis += static_cast<int>(input.ndim());
+
+        // Softmax only supports float types
+        DType in_dtype = input.dtype();
+        Tensor in_f;
+        if (in_dtype != DType::Float32 && in_dtype != DType::Float64) {
+            in_f = input.astype(DType::Float32);
+        } else {
+            in_f = input;
+        }
+
+        Tensor in_c = ensure_gpu_contiguous(in_f);
+
+        // Decompose into (outer, axis_len, inner)
+        size_t outer = 1;
+        for (int i = 0; i < norm_axis; ++i)
+            outer *= in_c.shape()[i];
+        size_t axis_len = in_c.shape()[norm_axis];
+        size_t inner = 1;
+        for (size_t i = norm_axis + 1; i < in_c.ndim(); ++i)
+            inner *= in_c.shape()[i];
+
+        Tensor result(in_c.shape(), in_c.dtype(), Device::GPU);
+
+        auto *src_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!src_buf || !dst_buf) {
+            throw DeviceError(
+                "CudaSoftmaxOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        launch_softmax(src_buf->device_ptr(), dst_buf->device_ptr(),
+                       outer, axis_len, inner, is_log_,
+                       dtype_size(in_c.dtype()), stream);
+
+        // Convert back if we promoted to float32
+        if (in_dtype != in_c.dtype()) {
+            result = result.astype(in_dtype);
+        }
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)axes;
+        (void)keep_dims;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// CudaCastOperation
+// ============================================================================
+
+static CastDType to_cast_dtype(DType dt) {
+    switch (dt) {
+    case DType::Float16:  return CastDType::Float16;
+    case DType::Float32:  return CastDType::Float32;
+    case DType::Float64:  return CastDType::Float64;
+    case DType::Int8:     return CastDType::Int8;
+    case DType::Int16:    return CastDType::Int16;
+    case DType::Int32:    return CastDType::Int32;
+    case DType::Int64:    return CastDType::Int64;
+    case DType::UInt8:    return CastDType::UInt8;
+    case DType::Bool:     return CastDType::Bool;
+    default:
+        throw DeviceError("CudaCastOperation: unsupported dtype for CUDA cast");
+    }
+}
+
+class CudaCastOperation : public ops::Operation {
+  public:
+    ops::OpType type() const override { return ops::OpType::Cast; }
+    std::string name() const override { return "cast"; }
+    Device device() const override { return Device::GPU; }
+
+    Tensor execute_binary(const Tensor & /*lhs*/,
+                          const Tensor & /*rhs*/) const override {
+        throw RuntimeError::internal(
+            "execute_binary called on Cast operation");
+    }
+
+    Tensor execute_cast(const Tensor &input,
+                        DType target_dtype) const override {
+#ifdef AXIOM_CUDA_SUPPORT
+        if (input.dtype() == target_dtype) return input;
+
+        Tensor in_c = ensure_gpu_contiguous(input);
+
+        Tensor result(in_c.shape(), target_dtype, Device::GPU);
+        size_t numel = result.size();
+        if (numel == 0) return result;
+
+        auto *src_buf = as_cuda_buffer_provider(in_c.storage().get());
+        auto *dst_buf = as_cuda_buffer_provider(result.storage().get());
+        if (!src_buf || !dst_buf) {
+            throw DeviceError(
+                "CudaCastOperation: storage is not CUDA-backed");
+        }
+
+        auto stream =
+            static_cast<cudaStream_t>(CudaContext::instance().stream());
+
+        CastDType src_cast = to_cast_dtype(input.dtype());
+        CastDType dst_cast = to_cast_dtype(target_dtype);
+
+        launch_cast(src_cast, dst_cast, src_buf->device_ptr(),
+                    dst_buf->device_ptr(), numel, stream);
+
+        CudaExecutionStream::instance().increment_batch();
+        return result;
+#else
+        (void)input;
+        (void)target_dtype;
+        throw DeviceError("CUDA support not compiled");
+#endif
+    }
+};
+
+// ============================================================================
+// Operation registration
+// ============================================================================
+
+static void register_binary_op(ops::OpType op_type,
+                                const std::string &name) {
+    ops::OperationRegistry::register_operation(
+        op_type, Device::GPU,
+        std::make_unique<CudaBinaryOperation>(op_type, name));
+}
+
+static void register_unary_op(ops::OpType op_type,
+                               const std::string &name) {
+    ops::OperationRegistry::register_operation(
+        op_type, Device::GPU,
+        std::make_unique<CudaUnaryOperation>(op_type, name));
+}
+
+void register_cuda_operations() {
+    if (!is_cuda_available()) return;
+
+    // Arithmetic
+    register_binary_op(ops::OpType::Add, "add");
+    register_binary_op(ops::OpType::Subtract, "subtract");
+    register_binary_op(ops::OpType::Multiply, "multiply");
+    register_binary_op(ops::OpType::Divide, "divide");
+    register_binary_op(ops::OpType::Power, "power");
+    register_binary_op(ops::OpType::Modulo, "modulo");
+
+    // Math
+    register_binary_op(ops::OpType::Maximum, "maximum");
+    register_binary_op(ops::OpType::Minimum, "minimum");
+    register_binary_op(ops::OpType::Atan2, "atan2");
+    register_binary_op(ops::OpType::Hypot, "hypot");
+
+    // Comparison
+    register_binary_op(ops::OpType::Equal, "equal");
+    register_binary_op(ops::OpType::NotEqual, "not_equal");
+    register_binary_op(ops::OpType::Less, "less");
+    register_binary_op(ops::OpType::LessEqual, "less_equal");
+    register_binary_op(ops::OpType::Greater, "greater");
+    register_binary_op(ops::OpType::GreaterEqual, "greater_equal");
+
+    // Logical
+    register_binary_op(ops::OpType::LogicalAnd, "logical_and");
+    register_binary_op(ops::OpType::LogicalOr, "logical_or");
+    register_binary_op(ops::OpType::LogicalXor, "logical_xor");
+
+    // Bitwise
+    register_binary_op(ops::OpType::BitwiseAnd, "bitwise_and");
+    register_binary_op(ops::OpType::BitwiseOr, "bitwise_or");
+    register_binary_op(ops::OpType::BitwiseXor, "bitwise_xor");
+    register_binary_op(ops::OpType::LeftShift, "left_shift");
+    register_binary_op(ops::OpType::RightShift, "right_shift");
+
+    // Unary math
+    register_unary_op(ops::OpType::Negate, "negate");
+    register_unary_op(ops::OpType::Abs, "abs");
+    register_unary_op(ops::OpType::Sqrt, "sqrt");
+    register_unary_op(ops::OpType::Exp, "exp");
+    register_unary_op(ops::OpType::Log, "log");
+    register_unary_op(ops::OpType::Sin, "sin");
+    register_unary_op(ops::OpType::Cos, "cos");
+    register_unary_op(ops::OpType::Tan, "tan");
+    register_unary_op(ops::OpType::Tanh, "tanh");
+    register_unary_op(ops::OpType::Erf, "erf");
+
+    // Rounding / algebraic
+    register_unary_op(ops::OpType::Sign, "sign");
+    register_unary_op(ops::OpType::Floor, "floor");
+    register_unary_op(ops::OpType::Ceil, "ceil");
+    register_unary_op(ops::OpType::Trunc, "trunc");
+    register_unary_op(ops::OpType::Round, "round");
+    register_unary_op(ops::OpType::Reciprocal, "reciprocal");
+    register_unary_op(ops::OpType::Square, "square");
+    register_unary_op(ops::OpType::Cbrt, "cbrt");
+
+    // Testing
+    register_unary_op(ops::OpType::IsNaN, "isnan");
+    register_unary_op(ops::OpType::IsInf, "isinf");
+    register_unary_op(ops::OpType::IsFinite, "isfinite");
+
+    // Logical (unary)
+    register_unary_op(ops::OpType::LogicalNot, "logical_not");
+
+    // Activations
+    register_unary_op(ops::OpType::ReLU, "relu");
+    register_unary_op(ops::OpType::LeakyReLU, "leaky_relu");
+    register_unary_op(ops::OpType::Sigmoid, "sigmoid");
+    register_unary_op(ops::OpType::SiLU, "silu");
+    register_unary_op(ops::OpType::GELU, "gelu");
+
+    // Reductions
+    auto register_reduce_op = [](ops::OpType op_type, const std::string &name) {
+        ops::OperationRegistry::register_operation(
+            op_type, Device::GPU,
+            std::make_unique<CudaReductionOperation>(op_type, name));
+    };
+
+    register_reduce_op(ops::OpType::Sum, "sum");
+    register_reduce_op(ops::OpType::Mean, "mean");
+    register_reduce_op(ops::OpType::Max, "max");
+    register_reduce_op(ops::OpType::Min, "min");
+    register_reduce_op(ops::OpType::Prod, "prod");
+    register_reduce_op(ops::OpType::Any, "any");
+    register_reduce_op(ops::OpType::All, "all");
+
+    // ArgMax / ArgMin
+    ops::OperationRegistry::register_operation(
+        ops::OpType::ArgMax, Device::GPU,
+        std::make_unique<CudaArgReduceOperation>(ops::OpType::ArgMax,
+                                                  "argmax", true));
+    ops::OperationRegistry::register_operation(
+        ops::OpType::ArgMin, Device::GPU,
+        std::make_unique<CudaArgReduceOperation>(ops::OpType::ArgMin,
+                                                  "argmin", false));
+
+    // Softmax / LogSoftmax
+    ops::OperationRegistry::register_operation(
+        ops::OpType::Softmax, Device::GPU,
+        std::make_unique<CudaSoftmaxOperation>(false));
+    ops::OperationRegistry::register_operation(
+        ops::OpType::LogSoftmax, Device::GPU,
+        std::make_unique<CudaSoftmaxOperation>(true));
+
+    // Gather / Scatter / IndexSelect
+    ops::OperationRegistry::register_operation(
+        ops::OpType::Gather, Device::GPU,
+        std::make_unique<CudaGatherOperation>());
+    ops::OperationRegistry::register_operation(
+        ops::OpType::Scatter, Device::GPU,
+        std::make_unique<CudaScatterOperation>());
+    ops::OperationRegistry::register_operation(
+        ops::OpType::IndexSelect, Device::GPU,
+        std::make_unique<CudaIndexSelectOperation>());
+
+    // Where / MaskedFill / MaskedSelect
+    ops::OperationRegistry::register_operation(
+        ops::OpType::Where, Device::GPU,
+        std::make_unique<CudaWhereOperation>());
+    ops::OperationRegistry::register_operation(
+        ops::OpType::MaskedFill, Device::GPU,
+        std::make_unique<CudaMaskedFillOperation>());
+    ops::OperationRegistry::register_operation(
+        ops::OpType::MaskedSelect, Device::GPU,
+        std::make_unique<CudaMaskedSelectOperation>());
+
+    // Cast
+    ops::OperationRegistry::register_operation(
+        ops::OpType::Cast, Device::GPU,
+        std::make_unique<CudaCastOperation>());
+
+    register_cublas_operations();
+}
+
+} // namespace cuda
+} // namespace backends
+} // namespace axiom

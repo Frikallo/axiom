@@ -484,7 +484,10 @@ void memory_plan(CompiledGraph &plan) {
 void compute_loop_params(CompiledGraph &plan) {
     for (auto &step : plan.steps) {
         auto &base = step_base(step);
-        base.total_elements = ShapeUtils::size(base.output_shape);
+        // FusedReductionStep already has total_elements set to the
+        // pre-reduction (elementwise chain) size — don't overwrite it.
+        if (!std::holds_alternative<FusedReductionStep>(step))
+            base.total_elements = ShapeUtils::size(base.output_shape);
 
         // Target ~64KB per tile buffer to fit in L1 cache
         // (Apple M-series L1 = 192KB; 2 tile buffers = 128KB with headroom)
@@ -671,10 +674,15 @@ std::shared_ptr<CompiledGraph> compile(const GraphSignature &sig,
             }
             step.chain_dtype = group.nodes[0]->output_dtype;
             if (group.nodes.size() >= 2) {
-                const auto *first = group.nodes[0];
-                step.total_elements = ShapeUtils::size(first->output_shape);
+                // The elementwise chain operates on the pre-reduction shape.
+                const auto *chain_last = group.nodes[group.nodes.size() - 2];
+                step.total_elements =
+                    ShapeUtils::size(chain_last->output_shape);
+                step.chain_shape = chain_last->output_shape;
             }
-            build_input_indices(step);
+            // Only build input indices for the elementwise ops (not the
+            // reduction node at the end).
+            build_input_indices(step, group.nodes.size() - 1);
             step_var = std::move(step);
         } else if (group.is_fused && group.nodes.size() == 2 &&
                    (group.nodes[0]->op_type == ops::OpType::MatMul ||

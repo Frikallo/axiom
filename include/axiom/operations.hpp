@@ -216,6 +216,19 @@ class Operation {
         return lhs.shape() == rhs.shape();
     }
 
+    // Check if this backend supports the given unary input.
+    // Returns false to trigger CPU fallback for unsupported dtypes.
+    virtual bool supports_unary(const Tensor &input) const {
+        (void)input;
+        return true;
+    }
+
+    // Check if this backend supports the given reduction input.
+    virtual bool supports_reduction(const Tensor &input) const {
+        (void)input;
+        return true;
+    }
+
     // For binary operations
     virtual Tensor execute_binary(const Tensor &lhs,
                                   const Tensor &rhs) const = 0;
