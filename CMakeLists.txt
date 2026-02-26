@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Axiom
-    VERSION 0.3.1
+    VERSION 0.4.0
     DESCRIPTION "High-Performance Cross-Platform Tensor Library"
     LANGUAGES CXX
 )
