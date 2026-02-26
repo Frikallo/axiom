@@ -23,6 +23,7 @@
 // Include Metal execution stream and unified storage for Apple platforms
 #ifdef AXIOM_METAL_SUPPORT
 #include "backends/metal/metal_common.hpp"
+#include "backends/metal/metal_operations.hpp"
 #include "backends/metal/unified_storage.hpp"
 #endif
 
@@ -305,6 +306,47 @@ const void *Tensor::data() const {
 }
 
 Tensor Tensor::slice(const std::vector<Slice> &slice_args) const {
+    // GPU lazy tensors: create a lazy slice node to keep the graph intact
+    if (is_lazy() && device() == Device::GPU) {
+        // Normalize slice args and compute output shape
+        std::vector<int64_t> starts, ends, steps;
+        Shape out_shape;
+        for (size_t i = 0; i < slice_args.size(); ++i) {
+            int64_t dim_size = static_cast<int64_t>(shape_[i]);
+            int64_t start = slice_args[i].start.value_or(0);
+            if (start < 0)
+                start += dim_size;
+            start = std::max(int64_t(0), std::min(start, dim_size));
+
+            int64_t stop = slice_args[i].stop.value_or(dim_size);
+            if (slice_args[i].stop && stop < 0)
+                stop += dim_size;
+            stop = std::max(int64_t(0), std::min(stop, dim_size));
+
+            int64_t step = slice_args[i].step.value_or(1);
+
+            starts.push_back(start);
+            ends.push_back(stop);
+            steps.push_back(step);
+
+            if ((step > 0 && start >= stop) || (step < 0 && start <= stop))
+                out_shape.push_back(0);
+            else
+                out_shape.push_back(
+                    (stop - start + (step > 0 ? step : -step) - 1) /
+                    std::abs(step));
+        }
+        // Fill remaining dimensions
+        for (size_t i = slice_args.size(); i < ndim(); ++i) {
+            starts.push_back(0);
+            ends.push_back(static_cast<int64_t>(shape_[i]));
+            steps.push_back(1);
+            out_shape.push_back(shape_[i]);
+        }
+        return graph::GraphRegistry::create_lazy_slice(*this, starts, ends,
+                                                       steps, out_shape);
+    }
+
     // Materialize lazy tensors before slicing
     materialize_if_needed();
 
@@ -456,6 +498,12 @@ void recursive_copy(uint8_t *dst, const uint8_t *src, const Shape &shape,
 }
 
 Tensor Tensor::ascontiguousarray() const {
+    // GPU lazy tensors: MPSGraph manages layout, so contiguity is implicit.
+    // Return self to keep the lazy graph intact.
+    if (is_lazy() && device() == Device::GPU) {
+        return *this;
+    }
+
     // Materialize lazy tensors before making contiguous
     materialize_if_needed();
 
@@ -532,7 +580,11 @@ Tensor Tensor::ascontiguousarray() const {
                            0);
         }
     } else {
+#ifdef AXIOM_METAL_SUPPORT
+        return backends::metal::gpu_make_contiguous(*this);
+#else
         new_tensor.storage_->copy_from(*storage_);
+#endif
     }
 
     return new_tensor;
@@ -553,13 +605,26 @@ Tensor Tensor::asfortranarray() const {
                        static_cast<const uint8_t *>(this->data()), shape_,
                        new_tensor.strides(), this->strides(), itemsize(), 0);
     } else {
+#ifdef AXIOM_METAL_SUPPORT
+        // gpu_make_contiguous produces row-major output; transpose to col-major
+        auto contiguous = backends::metal::gpu_make_contiguous(*this);
+        new_tensor.storage_->copy_from(*contiguous.storage_);
+#else
         new_tensor.storage_->copy_from(*storage_);
+#endif
     }
 
     return new_tensor;
 }
 
 Tensor Tensor::reshape(const Shape &new_shape, MemoryOrder order) const {
+    // GPU lazy tensors: create a lazy reshape node to keep the graph intact
+    if (is_lazy() && device() == Device::GPU) {
+        Shape validated_shape = reshape_shape(shape_, new_shape);
+        return graph::GraphRegistry::create_lazy_reshape(*this,
+                                                         validated_shape);
+    }
+
     // Materialize lazy tensors before reshape
     materialize_if_needed();
 
@@ -646,6 +711,21 @@ Tensor Tensor::transpose() const {
 }
 
 Tensor Tensor::transpose(const std::vector<int> &axes) const {
+    // GPU lazy tensors: create a lazy transpose node to keep the graph intact
+    if (is_lazy() && device() == Device::GPU) {
+        // Compute output shape for the transpose
+        Shape out_shape(ndim());
+        Strides out_strides(ndim()); // placeholder, GPU doesn't use strides
+        for (size_t i = 0; i < axes.size(); ++i) {
+            int axis = axes[i];
+            if (axis < 0)
+                axis += static_cast<int>(ndim());
+            out_shape[i] = shape_[axis];
+        }
+        return graph::GraphRegistry::create_lazy_transpose(*this, axes,
+                                                           out_shape, {});
+    }
+
     // Materialize lazy tensors before transpose
     materialize_if_needed();
 
@@ -709,6 +789,12 @@ Tensor Tensor::squeeze(int axis) const {
 }
 
 Tensor Tensor::unsqueeze(int axis) const {
+    // GPU lazy tensors: unsqueeze is just reshape with extra dim
+    if (is_lazy() && device() == Device::GPU) {
+        Shape new_shape = unsqueeze_shape(shape_, axis);
+        return graph::GraphRegistry::create_lazy_reshape(*this, new_shape);
+    }
+
     // Materialize lazy tensors before unsqueeze
     materialize_if_needed();
 

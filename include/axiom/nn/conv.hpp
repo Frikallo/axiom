@@ -31,6 +31,12 @@ class Conv1d : public Module {
     Tensor forward(const Tensor &input) const override;
     Tensor operator()(const Tensor &input) const { return forward(input); }
 
+    // Accessors for fused GPU operations
+    const Tensor &weight() const { return weight_; }
+    const Tensor &bias() const { return bias_; }
+    int padding() const { return padding_; }
+    int groups() const { return groups_; }
+
   private:
     Tensor weight_;
     Tensor bias_;

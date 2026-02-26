@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Axiom
-    VERSION 0.3.1
+    VERSION 0.4.0
     DESCRIPTION "High-Performance Cross-Platform Tensor Library"
     LANGUAGES CXX
 )
@@ -363,6 +363,7 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/mpsgraph_fused.mm
+        src/backends/metal/mpsgraph_graph_compiler.mm
         src/backends/metal/graph_cache.mm
         src/backends/metal/flash_attention_dispatch.mm
         src/backends/metal/kernels.metal
@@ -376,6 +377,7 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/mpsgraph_fused.mm
+        src/backends/metal/mpsgraph_graph_compiler.mm
         src/backends/metal/graph_cache.mm
         src/backends/metal/flash_attention_dispatch.mm
         src/backends/metal/kernels.metal

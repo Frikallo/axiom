@@ -17,6 +17,8 @@ Tensor Linear::forward(const Tensor &input) const {
         throw RuntimeError("Linear: weight not initialized (call "
                            "load_state_dict first)");
     }
+    // Standard matmul + bias path — goes through lazy eval for GPU graph
+    // compilation (no GPU fast path needed; the graph compiler handles this)
     auto out = ops::matmul(input, weight_, false, true);
     if (has_bias_ && bias_.storage()) {
         out = ops::add(out, bias_);

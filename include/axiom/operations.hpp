@@ -187,6 +187,18 @@ enum class OpType {
     // Fused attention
     ScaledDotProductAttention,
 
+    // Shape operations (for lazy graph compilation)
+    Reshape,
+    Transpose,
+    Pad,
+    Slice,
+    Unsqueeze,
+    Concat,
+
+    // Additional ops (for lazy graph compilation)
+    GLU,
+    BatchNorm1D,
+
     _Count // Must be last — used for traits table sizing
 };
 

@@ -11,6 +11,11 @@ class LayerNorm : public Module {
     Tensor forward(const Tensor &input) const override;
     Tensor operator()(const Tensor &input) const { return forward(input); }
 
+    // Accessors for fused GPU operations
+    const Tensor &weight() const { return weight_; }
+    const Tensor &bias() const { return bias_; }
+    float eps() const { return eps_; }
+
   private:
     Tensor weight_;
     Tensor bias_;
@@ -35,6 +40,13 @@ class BatchNorm1d : public Module {
 
     Tensor forward(const Tensor &input) const override;
     Tensor operator()(const Tensor &input) const { return forward(input); }
+
+    // Accessors for fused GPU operations
+    const Tensor &weight() const { return weight_; }
+    const Tensor &bias() const { return bias_; }
+    const Tensor &running_mean() const { return running_mean_; }
+    const Tensor &running_var() const { return running_var_; }
+    float eps() const { return eps_; }
 
   private:
     Tensor weight_;
