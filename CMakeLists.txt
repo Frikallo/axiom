@@ -363,7 +363,6 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/mpsgraph_fused.mm
-        src/backends/metal/mpsgraph_conformer.mm
         src/backends/metal/mpsgraph_graph_compiler.mm
         src/backends/metal/graph_cache.mm
         src/backends/metal/flash_attention_dispatch.mm
@@ -378,7 +377,6 @@ if(APPLE AND AXIOM_HAS_METAL)
         src/backends/metal/metal_common.mm
         src/backends/metal/mpsgraph_operations.mm
         src/backends/metal/mpsgraph_fused.mm
-        src/backends/metal/mpsgraph_conformer.mm
         src/backends/metal/mpsgraph_graph_compiler.mm
         src/backends/metal/graph_cache.mm
         src/backends/metal/flash_attention_dispatch.mm
