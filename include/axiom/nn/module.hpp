@@ -26,6 +26,9 @@ class Module {
     // Move all parameters and submodules to device
     virtual Module &to(Device device);
 
+    // Cast all parameters and submodules to dtype
+    virtual Module &to(DType dtype);
+
     // Load weights from flat name->Tensor map with hierarchical prefix
     // resolution
     virtual void

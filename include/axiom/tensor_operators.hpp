@@ -188,44 +188,53 @@ inline Tensor operator!(const Tensor &tensor) {
 // Scalar arithmetic operations (convenience overloads)
 // ============================================================================
 
+namespace detail {
+// Create a scalar tensor matching the target tensor's dtype and device.
+// All casting is done on CPU to avoid eager GPU operations that would
+// fragment the lazy evaluation graph.
+template <typename T>
+inline Tensor make_scalar(const Tensor &target, T scalar) {
+    Tensor s = Tensor::full({1}, scalar); // CPU, native dtype
+    if (s.dtype() != target.dtype()) {
+        s = s.astype(target.dtype()); // CPU cast — trivial for 1 element
+    }
+    if (target.device() != Device::CPU) {
+        s = s.to(target.device());
+    }
+    return s;
+}
+} // namespace detail
+
 template <typename T> inline Tensor operator+(const Tensor &tensor, T scalar) {
-    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
-    return ops::add(tensor, scalar_tensor);
+    return ops::add(tensor, detail::make_scalar(tensor, scalar));
 }
 
 template <typename T> inline Tensor operator+(T scalar, const Tensor &tensor) {
-    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
-    return ops::add(scalar_tensor, tensor);
+    return ops::add(detail::make_scalar(tensor, scalar), tensor);
 }
 
 template <typename T> inline Tensor operator-(const Tensor &tensor, T scalar) {
-    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
-    return ops::subtract(tensor, scalar_tensor);
+    return ops::subtract(tensor, detail::make_scalar(tensor, scalar));
 }
 
 template <typename T> inline Tensor operator-(T scalar, const Tensor &tensor) {
-    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
-    return ops::subtract(scalar_tensor, tensor);
+    return ops::subtract(detail::make_scalar(tensor, scalar), tensor);
 }
 
 template <typename T> inline Tensor operator*(const Tensor &tensor, T scalar) {
-    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
-    return ops::multiply(tensor, scalar_tensor);
+    return ops::multiply(tensor, detail::make_scalar(tensor, scalar));
 }
 
 template <typename T> inline Tensor operator*(T scalar, const Tensor &tensor) {
-    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
-    return ops::multiply(scalar_tensor, tensor);
+    return ops::multiply(detail::make_scalar(tensor, scalar), tensor);
 }
 
 template <typename T> inline Tensor operator/(const Tensor &tensor, T scalar) {
-    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
-    return ops::divide(tensor, scalar_tensor);
+    return ops::divide(tensor, detail::make_scalar(tensor, scalar));
 }
 
 template <typename T> inline Tensor operator/(T scalar, const Tensor &tensor) {
-    Tensor scalar_tensor = Tensor::full({1}, scalar, tensor.device());
-    return ops::divide(scalar_tensor, tensor);
+    return ops::divide(detail::make_scalar(tensor, scalar), tensor);
 }
 
 // ============================================================================

@@ -325,19 +325,35 @@ static MPSGraphTensor *build_layernorm(MPSGraph *g, MPSGraphTensor *input,
 }
 
 // BatchNorm1D: (input - running_mean) / sqrt(running_var + eps) * weight + bias
+// Upcasts to f32 for numerical stability (matching PyTorch), casts back to
+// input dtype. All within a single fused MPSGraph — no eager materialization.
 static MPSGraphTensor *build_batchnorm(MPSGraph *g, MPSGraphTensor *input,
                                        MPSGraphTensor *weight,
                                        MPSGraphTensor *bias,
                                        MPSGraphTensor *running_mean,
                                        MPSGraphTensor *running_var,
                                        float eps) {
-    auto *eps_t = [g constantWithScalar:eps dataType:input.dataType];
+    MPSDataType orig_dtype = input.dataType;
+    // Upcast to f32 for numerical stability
+    if (orig_dtype != MPSDataTypeFloat32) {
+        input = [g castTensor:input toType:MPSDataTypeFloat32 name:nil];
+        running_mean = [g castTensor:running_mean toType:MPSDataTypeFloat32 name:nil];
+        running_var = [g castTensor:running_var toType:MPSDataTypeFloat32 name:nil];
+        if (weight) weight = [g castTensor:weight toType:MPSDataTypeFloat32 name:nil];
+        if (bias) bias = [g castTensor:bias toType:MPSDataTypeFloat32 name:nil];
+    }
+    auto *eps_t = [g constantWithScalar:eps dataType:MPSDataTypeFloat32];
     auto *var_eps = [g additionWithPrimaryTensor:running_var secondaryTensor:eps_t name:nil];
     auto *inv_std = [g reciprocalWithTensor:[g squareRootWithTensor:var_eps name:nil] name:nil];
     auto *centered = [g subtractionWithPrimaryTensor:input secondaryTensor:running_mean name:nil];
-    auto *normalized = [g multiplicationWithPrimaryTensor:centered secondaryTensor:inv_std name:nil];
-    auto *scaled = [g multiplicationWithPrimaryTensor:normalized secondaryTensor:weight name:nil];
-    return [g additionWithPrimaryTensor:scaled secondaryTensor:bias name:nil];
+    auto *result = [g multiplicationWithPrimaryTensor:centered secondaryTensor:inv_std name:nil];
+    if (weight) result = [g multiplicationWithPrimaryTensor:result secondaryTensor:weight name:nil];
+    if (bias) result = [g additionWithPrimaryTensor:result secondaryTensor:bias name:nil];
+    // Cast back to input dtype
+    if (orig_dtype != MPSDataTypeFloat32) {
+        result = [g castTensor:result toType:orig_dtype name:nil];
+    }
+    return result;
 }
 
 // Conv1D via Conv2D (MPSGraph only has 2D convolution)

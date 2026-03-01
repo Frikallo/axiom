@@ -21,6 +21,18 @@ Module &Module::to(Device device) {
     return *this;
 }
 
+Module &Module::to(DType dtype) {
+    for (auto &[name, param] : params_) {
+        if (param->storage()) {
+            *param = param->astype(dtype);
+        }
+    }
+    for (auto &[name, submodule] : submodules_) {
+        submodule->to(dtype);
+    }
+    return *this;
+}
+
 void Module::load_state_dict(const std::map<std::string, Tensor> &state_dict,
                              const std::string &prefix, bool strict) {
     for (auto &[name, param] : params_) {

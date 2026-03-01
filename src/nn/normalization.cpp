@@ -1,6 +1,7 @@
 #include "axiom/nn/normalization.hpp"
 
 #include "axiom/error.hpp"
+#include "axiom/graph/graph_registry.hpp"
 #include "axiom/operations.hpp"
 
 namespace axiom::nn {
@@ -50,8 +51,32 @@ static Tensor batch_norm_forward(const Tensor &input,
                                  const Tensor &running_var,
                                  const Tensor &weight, const Tensor &bias,
                                  float eps, const Shape &stat_shape) {
-    DType input_dtype = input.dtype();
     Device device = input.device();
+
+    // GPU fast-path: route through lazy graph compiler (handles dtype
+    // internally) to avoid eager astype calls that fragment the lazy graph.
+    if (device == Device::GPU) {
+        // Reshape stats to (1, C, 1, ...) on CPU for broadcast, then transfer
+        auto mean_r = running_mean.reshape(stat_shape);
+        auto var_r = running_var.reshape(stat_shape);
+        if (mean_r.device() != device)
+            mean_r = mean_r.to(device);
+        if (var_r.device() != device)
+            var_r = var_r.to(device);
+        auto w = weight.storage()
+                     ? ((weight.device() == device)
+                            ? weight.reshape(stat_shape)
+                            : weight.reshape(stat_shape).to(device))
+                     : Tensor();
+        auto b = bias.storage() ? ((bias.device() == device)
+                                       ? bias.reshape(stat_shape)
+                                       : bias.reshape(stat_shape).to(device))
+                                : Tensor();
+        return graph::GraphRegistry::create_lazy_batchnorm(input, w, b, mean_r,
+                                                           var_r, eps);
+    }
+
+    DType input_dtype = input.dtype();
 
     // Upcast to at least Float32 for numerical stability (matches PyTorch)
     DType compute_dtype =
