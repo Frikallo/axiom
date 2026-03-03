@@ -306,8 +306,11 @@ const void *Tensor::data() const {
 }
 
 Tensor Tensor::slice(const std::vector<Slice> &slice_args) const {
-    // GPU lazy tensors: create a lazy slice node to keep the graph intact
-    if (is_lazy() && device() == Device::GPU) {
+    // GPU lazy tensors: create a lazy slice node to keep the graph intact.
+    // Skip if input is already materialized — eagerly compute the slice
+    // to avoid encoding absolute indices into the graph (prevents caching).
+    if (is_lazy() && device() == Device::GPU &&
+        !(lazy_node_ && lazy_node_->is_materialized_)) {
         // Normalize slice args and compute output shape
         std::vector<int64_t> starts, ends, steps;
         Shape out_shape;

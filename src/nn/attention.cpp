@@ -5,7 +5,9 @@
 
 namespace axiom::nn {
 
-MultiHeadAttention::MultiHeadAttention(int num_heads) : num_heads_(num_heads) {
+MultiHeadAttention::MultiHeadAttention(int num_heads, bool bias)
+    : q_proj_(bias), k_proj_(bias), v_proj_(bias), out_proj_(bias),
+      num_heads_(num_heads) {
     register_module("q_proj", q_proj_);
     register_module("k_proj", k_proj_);
     register_module("v_proj", v_proj_);

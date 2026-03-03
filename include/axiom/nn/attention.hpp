@@ -9,7 +9,7 @@ class MultiHeadAttention : public Module {
   public:
     using Module::forward; // multi-arg forward hides base; re-expose
 
-    explicit MultiHeadAttention(int num_heads);
+    explicit MultiHeadAttention(int num_heads, bool bias = true);
 
     // query, key, value: (batch, seq, d_model)
     // mask: optional attention mask, or empty Tensor() to skip

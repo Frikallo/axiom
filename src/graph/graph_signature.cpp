@@ -52,6 +52,8 @@ static inline uint64_t fnv_hash_bool(uint64_t h, bool val) {
 }
 
 // Topological sort (non-recursive to avoid stack overflow on deep graphs)
+// Must match the compiler's topo_sort in mpsgraph_graph_compiler.mm:
+// constant and materialized nodes are leaves — don't recurse into them.
 static std::vector<const GraphNode *> topo_sort(const GraphNode *root) {
     std::vector<const GraphNode *> result;
     std::unordered_set<const GraphNode *> visited;
@@ -63,6 +65,14 @@ static std::vector<const GraphNode *> topo_sort(const GraphNode *root) {
         auto &[node, idx] = stack.back();
 
         if (visited.count(node)) {
+            stack.pop_back();
+            continue;
+        }
+
+        // Constant/materialized nodes are leaves — don't recurse
+        if (node != root && (node->is_constant || node->is_materialized_)) {
+            visited.insert(node);
+            result.push_back(node);
             stack.pop_back();
             continue;
         }
@@ -123,6 +133,10 @@ GraphSignature compute_signature(const GraphNode *root) {
                 h = fnv_hash_u64(h, static_cast<uint64_t>(s));
             }
         }
+
+        // Note: materialized nodes are leaves (topo_sort stops at them).
+        // We do NOT hash cached_strides_ because the compiled MPSGraph
+        // depends only on shapes/dtypes/ops, not input memory layout.
 
         // Hash input connectivity (structural edges)
         h = fnv_hash_u64(h, node->inputs.size());
@@ -191,6 +205,7 @@ GraphSignature compute_signature(const GraphNode *root) {
                 // NoParams: nothing to hash
             },
             node->params);
+
     }
 
     return GraphSignature{h};

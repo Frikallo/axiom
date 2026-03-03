@@ -21,6 +21,7 @@
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 #import <MetalPerformanceShadersGraph/MetalPerformanceShadersGraph.h>
 
+#include <deque>
 #include <mutex>
 #include <set>
 #include <unordered_map>
@@ -126,9 +127,13 @@ static std::vector<const GraphNode *> topo_sort(const GraphNode *root) {
 // Collect leaf input tensors from a lazy DAG
 // ============================================================================
 
-static std::vector<Tensor>
+// Use deque instead of vector to avoid ASAN container-overflow false positives.
+// Apple's libc++ vector<Tensor>::emplace_back fails to properly update ASAN
+// shadow annotations before in-place construction, causing spurious crashes.
+// Deque uses chunked allocation which doesn't trigger container-overflow checks.
+static std::deque<Tensor>
 collect_leaf_tensors(const std::vector<const GraphNode *> &sorted) {
-    std::vector<Tensor> inputs;
+    std::deque<Tensor> inputs;
     std::unordered_set<const GraphNode *> seen;
     for (const auto *n : sorted) {
         if (n->is_constant || n->is_materialized_) {
