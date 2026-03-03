@@ -205,7 +205,6 @@ GraphSignature compute_signature(const GraphNode *root) {
                 // NoParams: nothing to hash
             },
             node->params);
-
     }
 
     return GraphSignature{h};
