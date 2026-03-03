@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Axiom
-    VERSION 0.4.0
+    VERSION 0.5.0
     DESCRIPTION "High-Performance Cross-Platform Tensor Library"
     LANGUAGES CXX
 )
@@ -330,6 +330,8 @@ set(AXIOM_SOURCES
     src/nn/attention.cpp
     src/nn/activation.cpp
     src/nn/pooling.cpp
+    src/nn/rnn.cpp
+    src/nn/positional.cpp
 )
 
 # Add platform-specific BLAS backends

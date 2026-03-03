@@ -141,6 +141,10 @@ inline constexpr OpTraits OP_TRAITS[] = {
     // Additional ops
     /*GLU*/               {0,0,0,0,0,0},
     /*BatchNorm1D*/       {0,0,0,0,0,0},
+    // Sorting operations
+    /*Sort*/              {0,0,0,0,0,0},
+    /*Argsort*/           {0,0,0,0,0,0},
+    /*TopK*/              {0,0,0,0,0,0},
 };
 // clang-format on
 

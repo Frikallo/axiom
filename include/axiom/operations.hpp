@@ -199,6 +199,11 @@ enum class OpType {
     GLU,
     BatchNorm1D,
 
+    // Sorting operations
+    Sort,
+    Argsort,
+    TopK,
+
     _Count // Must be last — used for traits table sizing
 };
 
@@ -651,6 +656,22 @@ Tensor scaled_dot_product_attention(const Tensor &query, const Tensor &key,
                                     const Tensor &mask = Tensor(),
                                     float scale = -1.0f,
                                     bool is_causal = false);
+
+// ============================================================================
+// Sorting operations
+// ============================================================================
+
+// sort: Sort elements along an axis
+// Returns sorted tensor (values only)
+Tensor sort(const Tensor &input, int axis = -1, bool descending = false);
+
+// argsort: Returns indices that would sort the tensor along an axis
+Tensor argsort(const Tensor &input, int axis = -1, bool descending = false);
+
+// topk: Returns the k largest (or smallest) elements and their indices
+// Returns (values, indices) pair
+std::pair<Tensor, Tensor> topk(const Tensor &input, int k, int axis = -1,
+                               bool largest = true, bool sorted = true);
 
 } // namespace ops
 } // namespace axiom

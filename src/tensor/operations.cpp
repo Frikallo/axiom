@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <set>
 #include <sstream>
 
@@ -1573,26 +1574,32 @@ Tensor where(const Tensor &condition, const Tensor &a, const Tensor &b) {
 // ============================================================================
 
 Tensor masked_fill(const Tensor &input, const Tensor &mask, float value) {
+    // Auto-cast mask to Bool — float masks silently produce garbage
+    // when read as uint8_t*.
+    Tensor bool_mask = (mask.dtype() == DType::Bool) ? mask : mask.to_bool();
     // GPU: route through lazy eval for graph compilation
     if (input.device() == Device::GPU) {
-        return graph::GraphRegistry::create_lazy_masked_fill(input, mask,
+        return graph::GraphRegistry::create_lazy_masked_fill(input, bool_mask,
                                                              value);
     }
     auto value_tensor = Tensor::full({1}, value, input.device());
-    return masked_fill(input, mask, value_tensor);
+    return masked_fill(input, bool_mask, value_tensor);
 }
 
 Tensor masked_fill(const Tensor &input, const Tensor &mask, double value) {
+    Tensor bool_mask = (mask.dtype() == DType::Bool) ? mask : mask.to_bool();
     auto value_tensor =
         Tensor::full({1}, static_cast<float>(value), input.device());
-    return masked_fill(input, mask, value_tensor);
+    return masked_fill(input, bool_mask, value_tensor);
 }
 
 Tensor masked_fill(const Tensor &input, const Tensor &mask,
                    const Tensor &value) {
+    // Auto-cast mask to Bool
+    Tensor bool_mask = (mask.dtype() == DType::Bool) ? mask : mask.to_bool();
     // Determine device - prefer GPU if any input is on GPU
     Device device = Device::CPU;
-    if (input.device() == Device::GPU || mask.device() == Device::GPU ||
+    if (input.device() == Device::GPU || bool_mask.device() == Device::GPU ||
         value.device() == Device::GPU) {
         device = Device::GPU;
     }
@@ -1612,7 +1619,8 @@ Tensor masked_fill(const Tensor &input, const Tensor &mask,
     // Move tensors to target device if needed
     Tensor input_on_device =
         (input.device() == device) ? input : input.to(device);
-    Tensor mask_on_device = (mask.device() == device) ? mask : mask.to(device);
+    Tensor mask_on_device =
+        (bool_mask.device() == device) ? bool_mask : bool_mask.to(device);
     Tensor value_on_device =
         (value.device() == device) ? value : value.to(device);
 
@@ -4033,6 +4041,217 @@ Tensor scaled_dot_product_attention(const Tensor &query, const Tensor &key,
                                       const Tensor &value, const Tensor &mask,
                                       float scale, bool is_causal);
     return cpu_flash_attention(q, k, v, m, scale, is_causal);
+}
+
+// ============================================================================
+// Sorting operations
+// ============================================================================
+
+namespace {
+
+template <typename T>
+Tensor sort_typed(const Tensor &src, int axis, bool descending) {
+    auto shape = src.shape();
+    int ndim = static_cast<int>(shape.size());
+    if (axis < 0)
+        axis += ndim;
+
+    Tensor result = src.clone();
+    T *data = result.typed_data<T>();
+
+    auto axis_info = ShapeUtils::axis_outer_inner(shape, axis);
+    size_t outer = axis_info.outer;
+    size_t axis_size = axis_info.axis;
+    size_t inner = axis_info.inner;
+
+    for (size_t o = 0; o < outer; ++o) {
+        for (size_t in = 0; in < inner; ++in) {
+            // Gather slice along axis
+            std::vector<T> slice(axis_size);
+            for (size_t k = 0; k < axis_size; ++k) {
+                slice[k] = data[(o * axis_size + k) * inner + in];
+            }
+            if (descending) {
+                std::sort(slice.begin(), slice.end(), std::greater<T>());
+            } else {
+                std::sort(slice.begin(), slice.end());
+            }
+            for (size_t k = 0; k < axis_size; ++k) {
+                data[(o * axis_size + k) * inner + in] = slice[k];
+            }
+        }
+    }
+    return result;
+}
+
+template <typename T>
+Tensor argsort_typed(const Tensor &src, int axis, bool descending) {
+    auto shape = src.shape();
+    int ndim = static_cast<int>(shape.size());
+    if (axis < 0)
+        axis += ndim;
+
+    Tensor result(shape, DType::Int64, Device::CPU);
+    const T *data = src.typed_data<T>();
+    int64_t *out = result.typed_data<int64_t>();
+
+    auto axis_info = ShapeUtils::axis_outer_inner(shape, axis);
+    size_t outer = axis_info.outer;
+    size_t axis_size = axis_info.axis;
+    size_t inner = axis_info.inner;
+
+    for (size_t o = 0; o < outer; ++o) {
+        for (size_t in = 0; in < inner; ++in) {
+            std::vector<int64_t> indices(axis_size);
+            std::iota(indices.begin(), indices.end(), 0);
+            if (descending) {
+                std::sort(indices.begin(), indices.end(),
+                          [&](int64_t a, int64_t b) {
+                              return data[(o * axis_size + a) * inner + in] >
+                                     data[(o * axis_size + b) * inner + in];
+                          });
+            } else {
+                std::sort(indices.begin(), indices.end(),
+                          [&](int64_t a, int64_t b) {
+                              return data[(o * axis_size + a) * inner + in] <
+                                     data[(o * axis_size + b) * inner + in];
+                          });
+            }
+            for (size_t k = 0; k < axis_size; ++k) {
+                out[(o * axis_size + k) * inner + in] = indices[k];
+            }
+        }
+    }
+    return result;
+}
+
+template <typename T>
+std::pair<Tensor, Tensor> topk_typed(const Tensor &src, int k, int axis,
+                                     bool largest, bool sorted) {
+    auto shape = src.shape();
+    int ndim = static_cast<int>(shape.size());
+    if (axis < 0)
+        axis += ndim;
+
+    Shape out_shape = shape;
+    out_shape[axis] = static_cast<size_t>(k);
+
+    Tensor values(out_shape, src.dtype(), Device::CPU);
+    Tensor indices(out_shape, DType::Int64, Device::CPU);
+
+    const T *data = src.typed_data<T>();
+    T *val_data = values.typed_data<T>();
+    int64_t *idx_data = indices.typed_data<int64_t>();
+
+    auto axis_info = ShapeUtils::axis_outer_inner(shape, axis);
+    size_t outer = axis_info.outer;
+    size_t axis_size = axis_info.axis;
+    size_t inner = axis_info.inner;
+
+    for (size_t o = 0; o < outer; ++o) {
+        for (size_t in = 0; in < inner; ++in) {
+            std::vector<int64_t> idx(axis_size);
+            std::iota(idx.begin(), idx.end(), 0);
+            if (largest) {
+                std::partial_sort(
+                    idx.begin(), idx.begin() + k, idx.end(),
+                    [&](int64_t a, int64_t b) {
+                        return data[(o * axis_size + a) * inner + in] >
+                               data[(o * axis_size + b) * inner + in];
+                    });
+            } else {
+                std::partial_sort(
+                    idx.begin(), idx.begin() + k, idx.end(),
+                    [&](int64_t a, int64_t b) {
+                        return data[(o * axis_size + a) * inner + in] <
+                               data[(o * axis_size + b) * inner + in];
+                    });
+            }
+            if (sorted && k > 1) {
+                if (largest) {
+                    std::sort(
+                        idx.begin(), idx.begin() + k,
+                        [&](int64_t a, int64_t b) {
+                            return data[(o * axis_size + a) * inner + in] >
+                                   data[(o * axis_size + b) * inner + in];
+                        });
+                } else {
+                    std::sort(
+                        idx.begin(), idx.begin() + k,
+                        [&](int64_t a, int64_t b) {
+                            return data[(o * axis_size + a) * inner + in] <
+                                   data[(o * axis_size + b) * inner + in];
+                        });
+                }
+            }
+            for (int j = 0; j < k; ++j) {
+                val_data[(o * k + j) * inner + in] =
+                    data[(o * axis_size + idx[j]) * inner + in];
+                idx_data[(o * k + j) * inner + in] = idx[j];
+            }
+        }
+    }
+    return {values, indices};
+}
+
+} // anonymous namespace
+
+Tensor sort(const Tensor &input, int axis, bool descending) {
+    auto src = input.is_contiguous() ? input : input.ascontiguousarray();
+    if (src.device() != Device::CPU)
+        src = src.cpu();
+
+    switch (src.dtype()) {
+    case DType::Float32:
+        return sort_typed<float>(src, axis, descending);
+    case DType::Float64:
+        return sort_typed<double>(src, axis, descending);
+    case DType::Int32:
+        return sort_typed<int32_t>(src, axis, descending);
+    case DType::Int64:
+        return sort_typed<int64_t>(src, axis, descending);
+    default:
+        return sort_typed<float>(src.to_float(), axis, descending);
+    }
+}
+
+Tensor argsort(const Tensor &input, int axis, bool descending) {
+    auto src = input.is_contiguous() ? input : input.ascontiguousarray();
+    if (src.device() != Device::CPU)
+        src = src.cpu();
+
+    switch (src.dtype()) {
+    case DType::Float32:
+        return argsort_typed<float>(src, axis, descending);
+    case DType::Float64:
+        return argsort_typed<double>(src, axis, descending);
+    case DType::Int32:
+        return argsort_typed<int32_t>(src, axis, descending);
+    case DType::Int64:
+        return argsort_typed<int64_t>(src, axis, descending);
+    default:
+        return argsort_typed<float>(src.to_float(), axis, descending);
+    }
+}
+
+std::pair<Tensor, Tensor> topk(const Tensor &input, int k, int axis,
+                               bool largest, bool sorted) {
+    auto src = input.is_contiguous() ? input : input.ascontiguousarray();
+    if (src.device() != Device::CPU)
+        src = src.cpu();
+
+    switch (src.dtype()) {
+    case DType::Float32:
+        return topk_typed<float>(src, k, axis, largest, sorted);
+    case DType::Float64:
+        return topk_typed<double>(src, k, axis, largest, sorted);
+    case DType::Int32:
+        return topk_typed<int32_t>(src, k, axis, largest, sorted);
+    case DType::Int64:
+        return topk_typed<int64_t>(src, k, axis, largest, sorted);
+    default:
+        return topk_typed<float>(src.to_float(), k, axis, largest, sorted);
+    }
 }
 
 } // namespace ops

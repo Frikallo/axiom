@@ -9,3 +9,5 @@
 #include "axiom/nn/module.hpp"
 #include "axiom/nn/normalization.hpp"
 #include "axiom/nn/pooling.hpp"
+#include "axiom/nn/positional.hpp"
+#include "axiom/nn/rnn.hpp"

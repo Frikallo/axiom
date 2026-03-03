@@ -478,3 +478,40 @@ TEST(TensorActivations, AllWithZeroCpu) {
     const float *out = result_cpu.typed_data<float>();
     ASSERT_TRUE(out[0] == 0.0f) << "all([1,0,1,1]) should be false";
 }
+
+// ─── Non-contiguous softmax/log_softmax tests (Phase 1A) ───────────────────
+
+TEST(TensorActivations, SoftmaxNonContiguous) {
+    // Create (2,3,4), transpose to (2,4,3), softmax along last dim
+    auto t = Tensor::randn({2, 3, 4});
+    auto transposed = t.transpose({0, 2, 1}); // (2,4,3) non-contiguous
+    ASSERT_FALSE(transposed.is_contiguous());
+
+    auto result = ops::softmax(transposed, -1);
+    auto reference = ops::softmax(transposed.ascontiguousarray(), -1);
+
+    ASSERT_TRUE(result.allclose(reference, 1e-5, 1e-6))
+        << "Softmax on non-contiguous should match contiguous version";
+}
+
+TEST(TensorActivations, LogSoftmaxNonContiguous) {
+    auto t = Tensor::randn({2, 3, 4});
+    auto transposed = t.transpose({0, 2, 1});
+    ASSERT_FALSE(transposed.is_contiguous());
+
+    auto result = ops::log_softmax(transposed, -1);
+    auto reference = ops::log_softmax(transposed.ascontiguousarray(), -1);
+
+    ASSERT_TRUE(result.allclose(reference, 1e-5, 1e-6))
+        << "LogSoftmax on non-contiguous should match contiguous version";
+}
+
+TEST(TensorActivations, SoftmaxSlicedView) {
+    auto t = Tensor::randn({4, 6});
+    // Slice rows 1-3 — this creates a non-owning view
+    auto sliced = t.slice({Slice(1, 3)});
+    auto result = ops::softmax(sliced, -1);
+    auto reference = ops::softmax(sliced.ascontiguousarray(), -1);
+
+    ASSERT_TRUE(result.allclose(reference, 1e-5, 1e-6));
+}

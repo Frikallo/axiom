@@ -106,3 +106,44 @@ TEST(TensorArgmaxArgmin, Argmax3D) {
     std::vector<int64_t> expected(6, 3);
     axiom::testing::ExpectTensorEquals<int64_t>(result, expected);
 }
+
+// ─── Non-contiguous argmax/argmin tests (Phase 1B) ─────────────────────────
+
+TEST(TensorArgmaxArgmin, ArgmaxNonContiguous3D) {
+    // Create (3,4,5), transpose to (3,5,4), argmax along -1
+    auto t = axiom::Tensor::arange(60).reshape({3, 4, 5}).astype(
+        axiom::DType::Float32);
+    auto transposed = t.transpose({0, 2, 1}); // (3,5,4) non-contiguous
+    ASSERT_FALSE(transposed.is_contiguous());
+
+    auto result = axiom::ops::argmax(transposed, -1);
+    auto reference = axiom::ops::argmax(transposed.ascontiguousarray(), -1);
+
+    ASSERT_TRUE(result.shape() == reference.shape());
+    ASSERT_TRUE(result.array_equal(reference))
+        << "Argmax on non-contiguous should match contiguous version";
+}
+
+TEST(TensorArgmaxArgmin, ArgmaxPermuted) {
+    // Create (2,3,4), permute to (4,2,3), argmax along 0
+    auto t = axiom::Tensor::arange(24).reshape({2, 3, 4}).astype(
+        axiom::DType::Float32);
+    auto permuted = t.permute({2, 0, 1}); // (4,2,3)
+    ASSERT_FALSE(permuted.is_contiguous());
+
+    auto result = axiom::ops::argmax(permuted, 0);
+    auto reference = axiom::ops::argmax(permuted.ascontiguousarray(), 0);
+
+    ASSERT_TRUE(result.array_equal(reference));
+}
+
+TEST(TensorArgmaxArgmin, ArgminNonContiguous) {
+    auto t = axiom::Tensor::arange(60).reshape({3, 4, 5}).astype(
+        axiom::DType::Float32);
+    auto transposed = t.transpose({0, 2, 1});
+
+    auto result = axiom::ops::argmin(transposed, -1);
+    auto reference = axiom::ops::argmin(transposed.ascontiguousarray(), -1);
+
+    ASSERT_TRUE(result.array_equal(reference));
+}
