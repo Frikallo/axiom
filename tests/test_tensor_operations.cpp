@@ -360,3 +360,58 @@ TEST(TensorOperations, TypePromotionGrid) {
         }
     }
 }
+
+// ─── masked_fill tests (Phase 1C) ─────────────────────────────────────────
+
+TEST(TensorOperations, MaskedFillFloatMask) {
+    // Pass Float32 mask (0.0/1.0) — should auto-cast to Bool
+    float input_data[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    float mask_data[] = {0.0f, 1.0f, 0.0f, 1.0f};
+    auto input = Tensor::from_data(input_data, {4});
+    auto mask = Tensor::from_data(mask_data, {4}); // Float32, not Bool
+    auto result = ops::masked_fill(input, mask, -999.0f);
+
+    auto out = result.typed_data<float>();
+    ASSERT_FLOAT_EQ(out[0], 1.0f);
+    ASSERT_FLOAT_EQ(out[1], -999.0f);
+    ASSERT_FLOAT_EQ(out[2], 3.0f);
+    ASSERT_FLOAT_EQ(out[3], -999.0f);
+}
+
+TEST(TensorOperations, MaskedFillBroadcastMask) {
+    // (2,3,4) input with (1,1,4) Bool mask
+    auto input = Tensor::ones({2, 3, 4});
+    uint8_t mask_data[] = {1, 0, 1, 0};
+    auto mask = Tensor::from_data(mask_data, {1, 1, 4});
+    auto result = ops::masked_fill(input, mask, 0.0f);
+
+    auto out = result.typed_data<float>();
+    // Every (2,3) slice at positions 0 and 2 should be 0, at 1 and 3 should
+    // be 1
+    for (int i = 0; i < 2; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            int base = (i * 3 + j) * 4;
+            ASSERT_FLOAT_EQ(out[base + 0], 0.0f);
+            ASSERT_FLOAT_EQ(out[base + 1], 1.0f);
+            ASSERT_FLOAT_EQ(out[base + 2], 0.0f);
+            ASSERT_FLOAT_EQ(out[base + 3], 1.0f);
+        }
+    }
+}
+
+TEST(TensorOperations, MaskedFillNonContiguousInput) {
+    // masked_fill on transposed tensor
+    float data[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+    auto t = Tensor::from_data(data, {2, 3});
+    auto transposed = t.transpose(); // (3, 2)
+    ASSERT_FALSE(transposed.is_contiguous());
+
+    uint8_t mask_data[] = {1, 0, 0, 1, 1, 0};
+    auto mask = Tensor::from_data(mask_data, {3, 2});
+    auto result = ops::masked_fill(transposed, mask, -1.0f);
+
+    auto ref_input = transposed.ascontiguousarray();
+    auto ref_result = ops::masked_fill(ref_input, mask, -1.0f);
+
+    ASSERT_TRUE(result.allclose(ref_result));
+}

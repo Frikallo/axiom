@@ -115,6 +115,9 @@ class Tensor {
     bool is_lazy() const { return lazy_node_ != nullptr; }
     std::shared_ptr<graph::GraphNode> lazy_node() const { return lazy_node_; }
 
+    // Force materialization of lazy tensors (public API for sync points)
+    void sync() const { materialize_if_needed(); }
+
     // View/materialization introspection
     bool is_view() const { return !flags_.owndata || offset_ > 0; }
     bool owns_data() const { return flags_.owndata && offset_ == 0; }
@@ -228,6 +231,7 @@ class Tensor {
 
     // Memory layout operations
     Tensor ascontiguousarray() const;
+    Tensor contiguous() const { return ascontiguousarray(); }
     Tensor as_c_contiguous() const { return ascontiguousarray(); }
     Tensor asfortranarray() const;
     Tensor as_f_contiguous() const { return asfortranarray(); }
@@ -454,6 +458,17 @@ class Tensor {
     Tensor to_int() const { return astype(DType::Int32); }
     Tensor to_int64() const { return astype(DType::Int64); }
     Tensor to_bool() const { return astype(DType::Bool); }
+
+    // Convenience: move to CPU, cast to float32, make contiguous in one call.
+    // Common pattern for extracting data before typed_data<float>() access.
+    Tensor to_contiguous_cpu() const {
+        auto t = (device() != Device::CPU) ? cpu() : *this;
+        if (t.dtype() != DType::Float32)
+            t = t.to_float();
+        if (!t.is_contiguous())
+            t = t.ascontiguousarray();
+        return t;
+    }
     Tensor to_complex() const { return astype(DType::Complex64); }
     Tensor to_complex128() const { return astype(DType::Complex128); }
     Tensor half() const { return astype(DType::Float16); }
@@ -596,6 +611,18 @@ class Tensor {
     static Tensor full_like(const Tensor &prototype, const T &value) {
         return full(prototype.shape(), value, prototype.device(),
                     prototype.memory_order());
+    }
+
+    // PyTorch-style new_* methods — create tensors matching this tensor's
+    // dtype and device, with the given shape.
+    Tensor new_zeros(const Shape &shape) const {
+        return Tensor::zeros(shape, dtype(), Device::CPU).to(device());
+    }
+    Tensor new_ones(const Shape &shape) const {
+        return Tensor::ones(shape, dtype(), Device::CPU).to(device());
+    }
+    template <typename T> Tensor new_full(const Shape &shape, T value) const {
+        return Tensor::full(shape, value).astype(dtype()).to(device());
     }
 
     // Matrix building

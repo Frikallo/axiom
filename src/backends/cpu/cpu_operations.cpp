@@ -2156,7 +2156,10 @@ Tensor CPUMatMulOperation::execute_matmul(const Tensor &a, const Tensor &b,
 template <typename T>
 Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor &input, int axis,
                                                 bool keep_dims) const {
-    size_t ndim = input.ndim();
+    // Ensure contiguous layout — coordinate recovery via modular arithmetic
+    // is fragile on irregular stride patterns from transpose/permute.
+    auto src = input.is_contiguous() ? input : input.ascontiguousarray();
+    size_t ndim = src.ndim();
 
     // Normalize axis
     if (axis < 0)
@@ -2172,7 +2175,7 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor &input, int axis,
             if (keep_dims)
                 output_shape.push_back(1);
         } else {
-            output_shape.push_back(input.shape()[i]);
+            output_shape.push_back(src.shape()[i]);
         }
     }
     // Scalar result (rank-0 tensor) is handled naturally with empty shape
@@ -2180,65 +2183,45 @@ Tensor CPUArgMaxOperation::execute_argmax_typed(const Tensor &input, int axis,
     // Create output tensor with Int64 dtype for indices
     Tensor result = Tensor::zeros(output_shape, DType::Int64, Device::CPU);
     int64_t *result_data = result.typed_data<int64_t>();
-    const T *input_data = input.typed_data<T>();
+    const T *input_data = src.typed_data<T>();
 
 #ifdef AXIOM_USE_ACCELERATE
     // Fast path: Use Accelerate for full reduction on contiguous
     // float32/float64
-    if (ndim == 1 && axis == 0 && input.is_contiguous()) {
+    if (ndim == 1 && axis == 0 && src.is_contiguous()) {
         if constexpr (std::is_same_v<T, float>) {
-            size_t idx = accelerate::vargmax_f32(input_data, input.size());
+            size_t idx = accelerate::vargmax_f32(input_data, src.size());
             result_data[0] = static_cast<int64_t>(idx);
             return result;
         } else if constexpr (std::is_same_v<T, double>) {
-            size_t idx = accelerate::vargmax_f64(input_data, input.size());
+            size_t idx = accelerate::vargmax_f64(input_data, src.size());
             result_data[0] = static_cast<int64_t>(idx);
             return result;
         }
     }
 #endif
 
-    auto axis_sizes = ShapeUtils::axis_outer_inner(input.shape(), axis);
+    auto axis_sizes = ShapeUtils::axis_outer_inner(src.shape(), axis);
     size_t outer_size = axis_sizes.outer;
     size_t axis_size = axis_sizes.axis;
     size_t inner_size = axis_sizes.inner;
 
     // Iterate over all positions
+    // src is guaranteed contiguous, so flat indexing is safe
     for (size_t outer = 0; outer < outer_size; ++outer) {
         for (size_t inner = 0; inner < inner_size; ++inner) {
-            // Find max along axis
             size_t best_idx = 0;
             T best_val = std::numeric_limits<T>::lowest();
 
             for (size_t k = 0; k < axis_size; ++k) {
-                // Calculate input index
-                std::vector<size_t> coords(ndim);
-                size_t temp_outer = outer;
-                for (int i = axis - 1; i >= 0; --i) {
-                    coords[i] = temp_outer % input.shape()[i];
-                    temp_outer /= input.shape()[i];
-                }
-                coords[axis] = k;
-                size_t temp_inner = inner;
-                for (int i = static_cast<int>(ndim) - 1; i > axis; --i) {
-                    coords[i] = temp_inner % input.shape()[i];
-                    temp_inner /= input.shape()[i];
-                }
-
-                size_t input_offset = 0;
-                for (size_t i = 0; i < ndim; ++i) {
-                    input_offset +=
-                        coords[i] * (input.strides()[i] / input.itemsize());
-                }
-
-                T val = input_data[input_offset];
+                size_t idx = (outer * axis_size + k) * inner_size + inner;
+                T val = input_data[idx];
                 if (val > best_val) {
                     best_val = val;
                     best_idx = k;
                 }
             }
 
-            // Store result
             size_t result_idx = outer * inner_size + inner;
             result_data[result_idx] = static_cast<int64_t>(best_idx);
         }
@@ -2272,7 +2255,9 @@ Tensor CPUArgMaxOperation::execute_reduction(const Tensor &input,
 template <typename T>
 Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor &input, int axis,
                                                 bool keep_dims) const {
-    size_t ndim = input.ndim();
+    // Ensure contiguous layout — same fix as argmax.
+    auto src = input.is_contiguous() ? input : input.ascontiguousarray();
+    size_t ndim = src.ndim();
 
     // Normalize axis
     if (axis < 0)
@@ -2288,7 +2273,7 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor &input, int axis,
             if (keep_dims)
                 output_shape.push_back(1);
         } else {
-            output_shape.push_back(input.shape()[i]);
+            output_shape.push_back(src.shape()[i]);
         }
     }
     // Scalar result (rank-0 tensor) is handled naturally with empty shape
@@ -2296,65 +2281,44 @@ Tensor CPUArgMinOperation::execute_argmin_typed(const Tensor &input, int axis,
     // Create output tensor with Int64 dtype for indices
     Tensor result = Tensor::zeros(output_shape, DType::Int64, Device::CPU);
     int64_t *result_data = result.typed_data<int64_t>();
-    const T *input_data = input.typed_data<T>();
+    const T *input_data = src.typed_data<T>();
 
 #ifdef AXIOM_USE_ACCELERATE
     // Fast path: Use Accelerate for full reduction on contiguous
     // float32/float64
-    if (ndim == 1 && axis == 0 && input.is_contiguous()) {
+    if (ndim == 1 && axis == 0 && src.is_contiguous()) {
         if constexpr (std::is_same_v<T, float>) {
-            size_t idx = accelerate::vargmin_f32(input_data, input.size());
+            size_t idx = accelerate::vargmin_f32(input_data, src.size());
             result_data[0] = static_cast<int64_t>(idx);
             return result;
         } else if constexpr (std::is_same_v<T, double>) {
-            size_t idx = accelerate::vargmin_f64(input_data, input.size());
+            size_t idx = accelerate::vargmin_f64(input_data, src.size());
             result_data[0] = static_cast<int64_t>(idx);
             return result;
         }
     }
 #endif
 
-    auto axis_sizes = ShapeUtils::axis_outer_inner(input.shape(), axis);
+    auto axis_sizes = ShapeUtils::axis_outer_inner(src.shape(), axis);
     size_t outer_size = axis_sizes.outer;
     size_t axis_size = axis_sizes.axis;
     size_t inner_size = axis_sizes.inner;
 
-    // Iterate over all positions
+    // src is guaranteed contiguous, so flat indexing is safe
     for (size_t outer = 0; outer < outer_size; ++outer) {
         for (size_t inner = 0; inner < inner_size; ++inner) {
-            // Find min along axis
             size_t best_idx = 0;
             T best_val = std::numeric_limits<T>::max();
 
             for (size_t k = 0; k < axis_size; ++k) {
-                // Calculate input index
-                std::vector<size_t> coords(ndim);
-                size_t temp_outer = outer;
-                for (int i = axis - 1; i >= 0; --i) {
-                    coords[i] = temp_outer % input.shape()[i];
-                    temp_outer /= input.shape()[i];
-                }
-                coords[axis] = k;
-                size_t temp_inner = inner;
-                for (int i = static_cast<int>(ndim) - 1; i > axis; --i) {
-                    coords[i] = temp_inner % input.shape()[i];
-                    temp_inner /= input.shape()[i];
-                }
-
-                size_t input_offset = 0;
-                for (size_t i = 0; i < ndim; ++i) {
-                    input_offset +=
-                        coords[i] * (input.strides()[i] / input.itemsize());
-                }
-
-                T val = input_data[input_offset];
+                size_t idx = (outer * axis_size + k) * inner_size + inner;
+                T val = input_data[idx];
                 if (val < best_val) {
                     best_val = val;
                     best_idx = k;
                 }
             }
 
-            // Store result
             size_t result_idx = outer * inner_size + inner;
             result_data[result_idx] = static_cast<int64_t>(best_idx);
         }
@@ -2678,9 +2642,11 @@ Tensor CPUMaskedFillOperation::execute_masked_fill_typed(
         return result;
     }
 
-    // General case with broadcasting
-    Tensor input_expanded = input.broadcast_to(result_shape);
-    Tensor mask_expanded = mask.broadcast_to(result_shape);
+    // General case with broadcasting — make expanded tensors contiguous
+    // so that broadcast views with null storage don't crash.
+    Tensor input_expanded =
+        input.broadcast_to(result_shape).ascontiguousarray();
+    Tensor mask_expanded = mask.broadcast_to(result_shape).ascontiguousarray();
     result = Tensor(result_shape, input.dtype(), Device::CPU);
 
     T *result_data = result.typed_data<T>();
@@ -3100,26 +3066,31 @@ CPUIndexSelectOperation::execute_index_select(const Tensor &input, int dim,
 template <typename T>
 Tensor CPUSoftmaxOperation::execute_softmax_typed(const Tensor &input,
                                                   int axis) const {
+    // Ensure contiguous layout — the flat-index formula below assumes
+    // C-contiguous memory.  Non-contiguous tensors (e.g. after transpose)
+    // would read wrong elements without this guard.
+    auto src = input.is_contiguous() ? input : input.ascontiguousarray();
+
     // Normalize axis
     int norm_axis = axis;
     if (norm_axis < 0) {
-        norm_axis += static_cast<int>(input.ndim());
+        norm_axis += static_cast<int>(src.ndim());
     }
 
     // Create output tensor
-    Tensor result(input.shape(), input.dtype(), Device::CPU);
+    Tensor result(src.shape(), src.dtype(), Device::CPU);
 
-    auto axis_sizes = ShapeUtils::axis_outer_inner(input.shape(), norm_axis);
+    auto axis_sizes = ShapeUtils::axis_outer_inner(src.shape(), norm_axis);
     size_t outer_size = axis_sizes.outer;
     size_t axis_size = axis_sizes.axis;
     size_t inner_size = axis_sizes.inner;
 
-    const T *input_data = input.typed_data<T>();
+    const T *input_data = src.typed_data<T>();
     T *result_data = result.typed_data<T>();
 
 #ifdef AXIOM_USE_ACCELERATE
     // Use Accelerate for contiguous softmax along the last axis (common case)
-    if (input.is_contiguous() && inner_size == 1) {
+    if (src.is_contiguous() && inner_size == 1) {
         for (size_t outer = 0; outer < outer_size; ++outer) {
             const T *slice_in = input_data + outer * axis_size;
             T *slice_out = result_data + outer * axis_size;

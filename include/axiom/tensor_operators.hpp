@@ -261,28 +261,25 @@ inline Tensor &operator/=(Tensor &lhs, const Tensor &rhs) {
     return lhs;
 }
 
-// Convenience overloads for scalars
+// Convenience overloads for scalars — use detail::make_scalar to match
+// lhs dtype on GPU fp16 tensors without fragmenting the lazy graph.
 template <typename T> inline Tensor &operator+=(Tensor &lhs, T scalar) {
-    Tensor scalar_tensor = Tensor::full({}, scalar, lhs.device());
-    ops::add_inplace(lhs, scalar_tensor);
+    ops::add_inplace(lhs, detail::make_scalar(lhs, scalar));
     return lhs;
 }
 
 template <typename T> inline Tensor &operator-=(Tensor &lhs, T scalar) {
-    Tensor scalar_tensor = Tensor::full({}, scalar, lhs.device());
-    ops::subtract_inplace(lhs, scalar_tensor);
+    ops::subtract_inplace(lhs, detail::make_scalar(lhs, scalar));
     return lhs;
 }
 
 template <typename T> inline Tensor &operator*=(Tensor &lhs, T scalar) {
-    Tensor scalar_tensor = Tensor::full({}, scalar, lhs.device());
-    ops::multiply_inplace(lhs, scalar_tensor);
+    ops::multiply_inplace(lhs, detail::make_scalar(lhs, scalar));
     return lhs;
 }
 
 template <typename T> inline Tensor &operator/=(Tensor &lhs, T scalar) {
-    Tensor scalar_tensor = Tensor::full({}, scalar, lhs.device());
-    ops::divide_inplace(lhs, scalar_tensor);
+    ops::divide_inplace(lhs, detail::make_scalar(lhs, scalar));
     return lhs;
 }
 
