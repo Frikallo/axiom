@@ -1578,6 +1578,7 @@ Tensor Tensor::log_softmax(int axis) const {
 Tensor Tensor::glu(int dim) const { return ops::glu(*this, dim); }
 
 Tensor Tensor::copy(MemoryOrder order) const {
+    materialize_if_needed();
     auto new_tensor = Tensor(shape_, dtype_, device(), order);
 
     if (device() == Device::CPU && order != memory_order_) {
