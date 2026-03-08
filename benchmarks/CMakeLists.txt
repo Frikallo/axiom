@@ -104,6 +104,17 @@ if(APPLE AND AXIOM_HAS_METAL)
     )
 endif()
 
+# Axiom comparison benchmark (CUDA GPU)
+if(AXIOM_HAS_CUDA)
+    add_executable(matmul_axiom_cuda compare/matmul_axiom_cuda.cpp)
+    target_link_libraries(matmul_axiom_cuda PRIVATE axiom)
+    set_target_properties(matmul_axiom_cuda PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${COMPARE_OUTPUT_DIR}
+    )
+endif()
+
 # Eigen benchmark (optional)
 find_package(Eigen3 QUIET)
 if(Eigen3_FOUND)

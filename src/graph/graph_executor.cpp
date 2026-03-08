@@ -10,6 +10,10 @@
 #include "axiom/graph/gpu_fusion.hpp"
 #endif
 
+#ifdef AXIOM_CUDA_SUPPORT
+#include "axiom/graph/cuda_fusion.hpp"
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -442,6 +446,11 @@ void execute_fused_known(const FusedKnownStep &step, const CompiledGraph &plan,
             execute_gpu_fused_chain(step, step.op_chain, buffers))
             return;
 #endif
+#ifdef AXIOM_CUDA_SUPPORT
+        if (step.device == Device::GPU &&
+            execute_cuda_fused_chain(step, step.op_chain, buffers))
+            return;
+#endif
         // Fallback to generic
         if (debug_fusion())
             std::fprintf(stderr, "[axiom:fusion] FusedKnown -> generic: "
@@ -638,6 +647,12 @@ void execute_fused_generic(const FusedGenericStep &step,
         return;
 #endif
 
+#ifdef AXIOM_CUDA_SUPPORT
+    if (step.device == Device::GPU &&
+        execute_cuda_fused_chain(step, step.op_chain, buffers))
+        return;
+#endif
+
     // Fallback: sequential op-by-op via OperationRegistry
     if (debug_fusion())
         std::fprintf(stderr, "[axiom:fusion] FusedGeneric -> op-by-op: "
@@ -831,6 +846,11 @@ void execute_fused_reduction(const FusedReductionStep &step,
         // Try GPU fused reduction (single MPSGraph for chain + reduction)
         if (step.device == Device::GPU &&
             execute_gpu_fused_reduction(step, buffers))
+            return;
+#endif
+#ifdef AXIOM_CUDA_SUPPORT
+        if (step.device == Device::GPU &&
+            execute_cuda_fused_reduction(step, buffers))
             return;
 #endif
         // Fallback: execute elementwise chain + reduction separately

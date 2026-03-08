@@ -63,6 +63,7 @@ struct FusedReductionStep : StepBase {
     DType chain_dtype{};
     OpParams params;
     std::vector<ops::OpType> op_chain;
+    Shape chain_shape; // pre-reduction shape (elementwise chain output)
 };
 
 using ExecutionStep =

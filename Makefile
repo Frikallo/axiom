@@ -43,6 +43,17 @@ else
     CMAKE_GENERATOR := $(shell command -v ninja >/dev/null 2>&1 && echo "-G Ninja" || echo "")
 endif
 
+# Build acceleration: ccache + lld (auto-detected)
+CCACHE_FLAGS := $(shell command -v ccache >/dev/null 2>&1 && \
+    echo "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache" || echo "")
+ifeq ($(UNAME_S),Darwin)
+    LLD_FLAGS :=
+else
+    LLD_FLAGS := $(shell command -v ld.lld >/dev/null 2>&1 && \
+        echo "-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld" || echo "")
+endif
+CMAKE_ACCEL_FLAGS := $(CCACHE_FLAGS) $(LLD_FLAGS)
+
 # Source files for formatting
 SOURCES := $(shell find include src -name '*.hpp' -o -name '*.cpp' -o -name '*.mm' -o -name '*.h' 2>/dev/null)
 TEST_SOURCES := $(shell find tests -name '*.cpp' 2>/dev/null)
@@ -88,22 +99,22 @@ lib: $(BUILD_DIR)/CMakeCache.txt  ## Build only the library (no tests/examples)
 # Build configuration marker file (works with both Make and Ninja generators)
 $(BUILD_DIR)/CMakeCache.txt:
 	@echo "$(CYAN)Configuring release build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Release
 
 $(BUILD_DIR_DEBUG)/CMakeCache.txt:
 	@echo "$(CYAN)Configuring debug build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Debug
+	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Debug
 
 .PHONY: configure
 configure:  ## Reconfigure CMake (release)
 	@echo "$(CYAN)Reconfiguring release build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Release
 	@echo "$(GREEN)✓ Configuration complete$(RESET)"
 
 .PHONY: configure-debug
 configure-debug:  ## Reconfigure CMake (debug)
 	@echo "$(CYAN)Reconfiguring debug build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Debug
+	@$(CMAKE) -B $(BUILD_DIR_DEBUG) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Debug
 	@echo "$(GREEN)✓ Configuration complete$(RESET)"
 
 .PHONY: rebuild
@@ -323,7 +334,7 @@ loc:  ## Count lines of code
 .PHONY: benchmarks
 benchmarks:  ## Build all benchmarks
 	@echo "$(CYAN)Configuring with benchmarks enabled...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) -DCMAKE_BUILD_TYPE=Release -DAXIOM_BUILD_BENCHMARKS=ON
+	@$(CMAKE) -B $(BUILD_DIR) $(CMAKE_GENERATOR) $(CMAKE_ACCEL_FLAGS) -DCMAKE_BUILD_TYPE=Release -DAXIOM_BUILD_BENCHMARKS=ON
 	@echo "$(CYAN)Building benchmarks...$(RESET)"
 	@$(CMAKE) --build $(BUILD_DIR) -j$(NPROC)
 	@echo "$(GREEN)✓ Benchmarks built$(RESET)"
@@ -456,12 +467,13 @@ run-benchmarks-json: benchmarks  ## Run benchmarks with JSON output
 BUILD_DIR_DIST := build-dist
 
 .PHONY: dist
-dist:  ## Build distribution package with bundled dependencies
+dist:  ## Build CPU-only distribution package with bundled dependencies
 	@echo "$(CYAN)Configuring distribution build...$(RESET)"
-	@$(CMAKE) -B $(BUILD_DIR_DIST) $(CMAKE_GENERATOR) \
+	@$(CMAKE) -B $(BUILD_DIR_DIST) $(CMAKE_GENERATOR) $(CCACHE_FLAGS) \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_INSTALL_PREFIX=$(BUILD_DIR_DIST)/install \
 		-DAXIOM_DIST_BUILD=ON \
+		-DAXIOM_CUDA_BACKEND=OFF \
 		-DAXIOM_BUILD_TESTS=OFF \
 		-DAXIOM_BUILD_EXAMPLES=OFF \
 		-DAXIOM_EMBED_METAL_LIBRARY=ON
@@ -471,7 +483,29 @@ dist:  ## Build distribution package with bundled dependencies
 	@$(CMAKE) --install $(BUILD_DIR_DIST)
 	@echo "$(CYAN)Creating distribution package...$(RESET)"
 	@cd $(BUILD_DIR_DIST) && $(CMAKE) --build . --target package
-	@echo "$(GREEN)✓ Distribution package created in $(BUILD_DIR_DIST)$(RESET)"
+	@cp $(BUILD_DIR_DIST)/axiom-*.tar.gz .
+	@echo "$(GREEN)✓ Distribution package:$(RESET)" axiom-*-linux-*.tar.gz
+
+BUILD_DIR_DIST_CUDA := build-dist-cuda
+
+.PHONY: dist-cuda
+dist-cuda:  ## Build CUDA distribution package with bundled CUDA libraries
+	@echo "$(CYAN)Configuring CUDA distribution build...$(RESET)"
+	@$(CMAKE) -B $(BUILD_DIR_DIST_CUDA) $(CMAKE_GENERATOR) $(CCACHE_FLAGS) \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=$(BUILD_DIR_DIST_CUDA)/install \
+		-DAXIOM_DIST_BUILD=ON \
+		-DAXIOM_CUDA_DIST=ON \
+		-DAXIOM_BUILD_TESTS=OFF \
+		-DAXIOM_BUILD_EXAMPLES=OFF
+	@echo "$(CYAN)Building CUDA distribution...$(RESET)"
+	@$(CMAKE) --build $(BUILD_DIR_DIST_CUDA) -j$(NPROC)
+	@echo "$(CYAN)Installing to CUDA distribution directory...$(RESET)"
+	@$(CMAKE) --install $(BUILD_DIR_DIST_CUDA)
+	@echo "$(CYAN)Creating CUDA distribution package...$(RESET)"
+	@cd $(BUILD_DIR_DIST_CUDA) && $(CMAKE) --build . --target package
+	@cp $(BUILD_DIR_DIST_CUDA)/axiom-*-cuda.tar.gz .
+	@echo "$(GREEN)✓ CUDA distribution package:$(RESET)" axiom-*-cuda.tar.gz
 
 .PHONY: dist-info
 dist-info:  ## Show distribution build configuration
@@ -493,7 +527,7 @@ endif
 .PHONY: clean-dist
 clean-dist:  ## Clean distribution build artifacts
 	@echo "$(CYAN)Cleaning distribution build...$(RESET)"
-	@rm -rf $(BUILD_DIR_DIST)
+	@rm -rf $(BUILD_DIR_DIST) $(BUILD_DIR_DIST_CUDA)
 	@echo "$(GREEN)✓ Distribution clean complete$(RESET)"
 
 # ============================================================================

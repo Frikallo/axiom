@@ -15,6 +15,18 @@ bool is_unified_memory_available();
 } // namespace metal
 } // namespace backends
 } // namespace axiom
+#elif defined(AXIOM_CUDA_SUPPORT)
+namespace axiom {
+namespace backends {
+namespace cuda {
+std::unique_ptr<Storage> make_cuda_storage(size_t size_bytes);
+std::unique_ptr<Storage> make_cuda_unified_storage(size_t size_bytes,
+                                                   Device device_tag);
+bool is_cuda_available();
+bool is_cuda_unified_memory_available();
+} // namespace cuda
+} // namespace backends
+} // namespace axiom
 #endif
 
 namespace axiom {
@@ -39,6 +51,16 @@ std::unique_ptr<Storage> make_storage(size_t size_bytes, Device device) {
             return backends::metal::make_metal_storage(size_bytes);
         } else {
             throw DeviceError::not_available("Metal GPU");
+        }
+#elif defined(AXIOM_CUDA_SUPPORT)
+        if (backends::cuda::is_cuda_available()) {
+            // Use device-only storage (cudaMalloc) with caching allocator for
+            // performance. Managed memory (cudaMallocManaged) has high
+            // alloc/free overhead and page-fault latency that hurts GPU
+            // compute-bound workloads like matmul.
+            return backends::cuda::make_cuda_storage(size_bytes);
+        } else {
+            throw DeviceError::not_available("CUDA GPU");
         }
 #else
         throw DeviceError::not_available("GPU storage on this platform");

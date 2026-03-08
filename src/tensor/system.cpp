@@ -2,16 +2,40 @@
 
 #include <cstdlib>
 
-// Forward-declare the internal function from the Metal backend.
-// The actual implementation is in an Objective-C++ file.
+#ifdef __APPLE__
 namespace axiom::backends::metal {
 bool is_metal_available();
-}
+class MetalExecutionStream {
+  public:
+    static MetalExecutionStream &instance();
+    void synchronize();
+};
+} // namespace axiom::backends::metal
+#elif defined(AXIOM_CUDA_SUPPORT)
+namespace axiom::backends::cuda {
+bool is_cuda_available();
+class CudaExecutionStream {
+  public:
+    static CudaExecutionStream &instance();
+    void synchronize();
+};
+} // namespace axiom::backends::cuda
+#endif
 
 namespace axiom::system {
 bool is_metal_available() {
 #ifdef __APPLE__
     return backends::metal::is_metal_available();
+#else
+    return false;
+#endif
+}
+
+bool is_gpu_available() {
+#ifdef __APPLE__
+    return backends::metal::is_metal_available();
+#elif defined(AXIOM_CUDA_SUPPORT)
+    return backends::cuda::is_cuda_available();
 #else
     return false;
 #endif
@@ -24,8 +48,7 @@ bool should_run_gpu_tests() {
         return false;
     }
 
-    // Then check if Metal is available
-    return is_metal_available();
+    return is_gpu_available();
 }
 
 std::string device_to_string(Device device) {
@@ -37,5 +60,16 @@ std::string device_to_string(Device device) {
     default:
         return "Unknown";
     }
+}
+void synchronize() {
+#ifdef __APPLE__
+    if (backends::metal::is_metal_available()) {
+        backends::metal::MetalExecutionStream::instance().synchronize();
+    }
+#elif defined(AXIOM_CUDA_SUPPORT)
+    if (backends::cuda::is_cuda_available()) {
+        backends::cuda::CudaExecutionStream::instance().synchronize();
+    }
+#endif
 }
 } // namespace axiom::system
