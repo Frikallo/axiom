@@ -135,6 +135,13 @@ ANEModelHandle *ane_compile_with_weights(const char *mil_text,
     }
 
     int count = g_compile_count.fetch_add(1) + 1;
+    if (count > ANE_COMPILE_BUDGET_LIMIT) {
+        NSLog(@"[Axiom ANE] Compile budget EXHAUSTED (%d/%d). "
+               "Refusing compilation to prevent resource leaks. "
+               "Falling back to CPU.",
+              count, ANE_COMPILE_BUDGET_LIMIT);
+        return nullptr; // Hard stop — do not attempt compilation
+    }
     if (count >= ANE_COMPILE_BUDGET_LIMIT) {
         NSLog(@"[Axiom ANE] Compile budget exhausted (%d/%d)", count,
               ANE_COMPILE_BUDGET_LIMIT);

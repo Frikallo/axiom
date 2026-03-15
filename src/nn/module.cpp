@@ -15,9 +15,21 @@ Tensor Module::forward(const Tensor & /*input*/) const {
 
 Tensor Module::operator()(const Tensor &input) const {
 #ifdef AXIOM_HAS_ANE
+    // Only compile at the top-level ANE module.
+    // Submodules keep device_==CPU (ANE is NOT propagated to children),
+    // so their operator() calls go straight to forward().
     if (device_ == Device::ANE) {
-        // Lazily compile on first call, or recompile if input shape changed
         if (!ane_model_ || ane_compiled_shape_ != input.shape()) {
+            // Only attempt compilation if this module is directly supported.
+            // Complex modules with custom forward() logic (residuals,
+            // inline ops, permutations) cannot be captured by walk_module
+            // and must fall back to CPU.
+            if (!backends::ane::ANECompiledModel::is_supported(*this)) {
+                // Not ANE-compilable — fall back to CPU permanently
+                ane_compiled_shape_ = input.shape();
+                ane_model_.reset();
+                return forward(input.cpu());
+            }
             try {
                 auto compiled = backends::ane::ANECompiledModel::compile(
                     *this, input.shape());
@@ -25,14 +37,11 @@ Tensor Module::operator()(const Tensor &input) const {
                     std::move(compiled));
                 ane_compiled_shape_ = input.shape();
             } catch (const std::exception &) {
-                // ANE compilation failed — fall back to CPU.
-                // Cache the shape so we don't retry on every call.
                 ane_model_.reset();
                 ane_compiled_shape_ = input.shape();
                 return forward(input.cpu());
             }
         }
-        // If model is null (cached failure), fall back to CPU
         if (!ane_model_) {
             return forward(input.cpu());
         }
@@ -45,16 +54,14 @@ Tensor Module::operator()(const Tensor &input) const {
 Module &Module::to(Device device) {
 #ifdef AXIOM_HAS_ANE
     if (device == Device::ANE) {
-        // Set device flag but keep parameters on CPU.
-        // ANE reads weights at compile time from CPU tensors.
-        // Invalidate cached compiled model (weights may have changed).
+        // Set device flag on THIS module only.
+        // Do NOT propagate to submodules — submodules must keep device_==CPU
+        // so their operator() calls execute forward() normally during the
+        // parent's forward() fallback path. ANE compilation happens at the
+        // top level only, via walk_module which reads child weights directly.
         device_ = Device::ANE;
         ane_model_.reset();
         ane_compiled_shape_ = {};
-        // Propagate to submodules
-        for (auto &[name, submodule] : submodules_) {
-            submodule->to(device);
-        }
         return *this;
     }
 
@@ -105,7 +112,6 @@ void Module::load_state_dict(const std::map<std::string, Tensor> &state_dict,
     }
 
 #ifdef AXIOM_HAS_ANE
-    // Invalidate ANE cache when weights change
     if (device_ == Device::ANE) {
         ane_model_.reset();
         ane_compiled_shape_ = {};

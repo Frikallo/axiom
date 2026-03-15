@@ -364,7 +364,7 @@ static std::string walk_module(MILGenerator &gen, const nn::Module &module,
     if (dynamic_cast<const nn::Dropout *>(&module))
         return input_var;
 
-    // Sequential / containers: chain children
+    // Sequential: chain children (safe — Sequential::forward() IS a chain)
     if (dynamic_cast<const nn::Sequential *>(&module)) {
         auto &kids = module.children();
         std::string var = input_var;
@@ -374,18 +374,17 @@ static std::string walk_module(MILGenerator &gen, const nn::Module &module,
         return var;
     }
 
-    // Generic: walk children in order
-    auto &kids = module.children();
-    if (!kids.empty()) {
-        std::string var = input_var;
-        for (size_t i = 0; i < kids.size(); i++)
-            var = walk_module(gen, *kids[i].second, var,
-                              prefix + "_" + kids[i].first);
-        return var;
-    }
-
+    // DO NOT silently chain children of unknown module types.
+    // Modules with custom forward() logic (residuals, inline ops like
+    // ops::silu(), permutations, masking) cannot be represented by
+    // chaining their registered submodules. This would produce a MIL
+    // graph that compiles but gives numerically wrong output.
     throw RuntimeError("Unsupported module type for ANE compilation: " +
-                       std::string(typeid(module).name()));
+                       std::string(typeid(module).name()) +
+                       ". Only Linear, Conv2d, MultiHeadAttention, "
+                       "Sequential, and stateless activations are supported. "
+                       "Modules with custom forward() logic (residuals, "
+                       "inline ops) must use CPU.");
 }
 
 // ============================================================================
@@ -445,18 +444,16 @@ bool ANECompiledModel::is_supported(const nn::Module &module) {
     if (dynamic_cast<const nn::RMSNorm *>(&module)) return true;
     if (dynamic_cast<const nn::Dropout *>(&module)) return true;
 
+    // Sequential is safe — its forward() IS a pure chain of children.
     if (dynamic_cast<const nn::Sequential *>(&module)) {
         for (auto &[name, child] : module.children())
             if (!is_supported(*child)) return false;
         return !module.children().empty();
     }
 
-    auto &kids = module.children();
-    if (!kids.empty()) {
-        for (auto &[name, child] : kids)
-            if (!is_supported(*child)) return false;
-        return true;
-    }
+    // DO NOT return true for unknown modules with children.
+    // Modules with custom forward() (residuals, inline ops, permutations)
+    // would produce wrong output if compiled as a child chain.
     return false;
 }
 
