@@ -29,13 +29,14 @@ class Conv1d : public Module {
     explicit Conv1d(const Conv1dConfig &config);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
-    // Accessors for fused GPU operations
     const Tensor &weight() const { return weight_; }
     const Tensor &bias() const { return bias_; }
+    int stride() const { return stride_; }
     int padding() const { return padding_; }
+    int dilation() const { return dilation_; }
     int groups() const { return groups_; }
+    bool has_bias() const { return has_bias_; }
 
   private:
     Tensor weight_;
@@ -56,7 +57,14 @@ class Conv2d : public Module {
     explicit Conv2d(const Conv2dConfig &config);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
+
+    const Tensor &weight() const { return weight_; }
+    const Tensor &bias() const { return bias_; }
+    const std::array<int, 2> &stride() const { return stride_; }
+    const std::array<int, 2> &padding() const { return padding_; }
+    const std::array<int, 2> &dilation() const { return dilation_; }
+    int groups() const { return groups_; }
+    bool has_bias() const { return has_bias_; }
 
   private:
     Tensor weight_;
@@ -93,7 +101,6 @@ class ConvTranspose1d : public Module {
     explicit ConvTranspose1d(const ConvTranspose1dConfig &config);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
   private:
     Tensor weight_;
@@ -116,7 +123,6 @@ class ConvTranspose2d : public Module {
     explicit ConvTranspose2d(const ConvTranspose2dConfig &config);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
   private:
     Tensor weight_;

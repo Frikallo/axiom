@@ -13,6 +13,10 @@
 #include "axiom/tensor.hpp"
 #include "backends/cpu/cpu_operations.hpp"
 #include "backends/metal/metal_operations.hpp"
+#ifdef AXIOM_HAS_ANE
+#include "backends/ane/ane_operations.hpp"
+#include "backends/ane/ane_tracer.hpp"
+#endif
 
 namespace axiom {
 namespace ops {
@@ -415,6 +419,9 @@ OperationRegistry::get_registry() {
 #ifdef __APPLE__
         backends::metal::register_metal_operations();
 #endif
+#ifdef AXIOM_HAS_ANE
+        backends::ane::initialize_ane_backend();
+#endif
     }
     return registry;
 }
@@ -456,6 +463,12 @@ void OperationRegistry::initialize_builtin_operations() {
 
 #ifdef __APPLE__
     backends::metal::register_metal_operations();
+#endif
+
+#ifdef AXIOM_HAS_ANE
+    // Initialize the ANE bridge (does NOT register per-op operations —
+    // ANE works at the graph level via ANECompiledModel).
+    backends::ane::initialize_ane_backend();
 #endif
 }
 
@@ -1110,10 +1123,12 @@ static Tensor execute_binary_operation(OpType op_type, const Tensor &lhs,
 static Tensor execute_binary_operation_eager(OpType op_type, const Tensor &lhs,
                                              const Tensor &rhs) {
     // Determine the target device (prefer GPU if available)
-    Device target_device =
-        (lhs.device() == Device::GPU || rhs.device() == Device::GPU)
-            ? Device::GPU
-            : Device::CPU;
+    // ANE tensors fall back to CPU for per-op execution
+    Device lhs_dev = lhs.device() == Device::ANE ? Device::CPU : lhs.device();
+    Device rhs_dev = rhs.device() == Device::ANE ? Device::CPU : rhs.device();
+    Device target_device = (lhs_dev == Device::GPU || rhs_dev == Device::GPU)
+                               ? Device::GPU
+                               : Device::CPU;
 
     // Get the operation implementation
     const Operation *op =
@@ -1419,7 +1434,11 @@ Tensor gelu(const Tensor &input) {
 
 Tensor softmax(const Tensor &input, int axis) {
     // GPU: route through lazy eval for graph compilation
-    if (input.device() == Device::GPU) {
+    bool use_lazy_softmax = (input.device() == Device::GPU);
+#ifdef AXIOM_HAS_ANE
+    use_lazy_softmax = use_lazy_softmax || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy_softmax) {
         return graph::GraphRegistry::create_lazy_softmax(OpType::Softmax, input,
                                                          axis);
     }
@@ -1465,7 +1484,11 @@ Tensor glu(const Tensor &input, int dim) {
     }
 
     // GPU: route through lazy eval for graph compilation
-    if (input.device() == Device::GPU) {
+    bool use_lazy_glu = (input.device() == Device::GPU);
+#ifdef AXIOM_HAS_ANE
+    use_lazy_glu = use_lazy_glu || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy_glu) {
         Shape out_shape = input.shape();
         out_shape[dim] /= 2;
         return graph::GraphRegistry::create_lazy_glu(input, dim, out_shape);
@@ -1578,7 +1601,12 @@ Tensor masked_fill(const Tensor &input, const Tensor &mask, float value) {
     // when read as uint8_t*.
     Tensor bool_mask = (mask.dtype() == DType::Bool) ? mask : mask.to_bool();
     // GPU: route through lazy eval for graph compilation
-    if (input.device() == Device::GPU) {
+    bool use_lazy_masked_fill = (input.device() == Device::GPU);
+#ifdef AXIOM_HAS_ANE
+    use_lazy_masked_fill =
+        use_lazy_masked_fill || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy_masked_fill) {
         return graph::GraphRegistry::create_lazy_masked_fill(input, bool_mask,
                                                              value);
     }
@@ -1789,7 +1817,11 @@ Tensor layer_norm(const Tensor &input, const Tensor &weight, const Tensor &bias,
     Tensor bias_on_device = (bias.device() == device) ? bias : bias.to(device);
 
     // GPU: route through lazy eval for graph compilation
-    if (device == Device::GPU) {
+    bool use_lazy_layernorm = (device == Device::GPU);
+#ifdef AXIOM_HAS_ANE
+    use_lazy_layernorm = use_lazy_layernorm || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy_layernorm) {
         return graph::GraphRegistry::create_lazy_layernorm(
             input_on_device, weight_on_device, bias_on_device, axis, eps);
     }
@@ -2192,7 +2224,12 @@ Tensor pad(const Tensor &input,
 
     // GPU: route through lazy eval for graph compilation
     // ("circular" mode has no MPSGraph equivalent — falls through to CPU path)
-    if (input.device() == Device::GPU && mode != "circular") {
+    bool use_lazy_pad = (input.device() == Device::GPU && mode != "circular");
+#ifdef AXIOM_HAS_ANE
+    use_lazy_pad =
+        use_lazy_pad || (backends::ane::is_ane_tracing() && mode != "circular");
+#endif
+    if (use_lazy_pad) {
         return graph::GraphRegistry::create_lazy_pad(input, pad_width, value,
                                                      output_shape);
     }
@@ -3031,7 +3068,11 @@ Tensor conv1d(const Tensor &input, const Tensor &weight, const Tensor &bias,
                                 : Shape{c_out, out_length};
 
     // GPU: route through lazy eval for graph compilation
-    if (input.device() == Device::GPU) {
+    bool use_lazy_conv = (input.device() == Device::GPU);
+#ifdef AXIOM_HAS_ANE
+    use_lazy_conv = use_lazy_conv || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy_conv) {
         graph::ConvParams cp;
         cp.stride = {stride};
         cp.padding = {padding};
@@ -3209,7 +3250,11 @@ Tensor conv2d(const Tensor &input, const Tensor &weight, const Tensor &bias,
                                 : Shape{c_out, h_out, w_out};
 
     // GPU: route through lazy eval for graph compilation
-    if (input.device() == Device::GPU) {
+    bool use_lazy_conv = (input.device() == Device::GPU);
+#ifdef AXIOM_HAS_ANE
+    use_lazy_conv = use_lazy_conv || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy_conv) {
         graph::ConvParams cp;
         cp.stride = {stride[0], stride[1]};
         cp.padding = {padding[0], padding[1]};

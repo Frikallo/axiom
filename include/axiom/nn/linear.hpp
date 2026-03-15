@@ -9,7 +9,6 @@ class Linear : public Module {
     explicit Linear(bool bias = true);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
     // Accessors for fused GPU operations
     const Tensor &weight() const { return weight_; }

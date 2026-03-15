@@ -146,7 +146,16 @@ inline void AssertTensorsClose(const Tensor &a, const Tensor &b,
 
 inline std::string DeviceName(
     const ::testing::TestParamInfo<Device> &info) {
-    return info.param == Device::CPU ? "CPU" : "GPU";
+    switch (info.param) {
+    case Device::CPU:
+        return "CPU";
+    case Device::GPU:
+        return "GPU";
+    case Device::ANE:
+        return "ANE";
+    default:
+        return "Unknown";
+    }
 }
 
 // ============================================================================

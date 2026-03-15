@@ -1,11 +1,18 @@
 #pragma once
 
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "axiom/tensor.hpp"
+
+#ifdef AXIOM_HAS_ANE
+namespace axiom::backends::ane {
+class ANECompiledModel;
+}
+#endif
 
 namespace axiom::nn {
 
@@ -23,11 +30,19 @@ class Module {
     // Modules with multi-arg forward (e.g. MHA) leave this as default.
     virtual Tensor forward(const Tensor &input) const;
 
-    // Move all parameters and submodules to device
+    // Callable interface: dispatches to ANE if device is ANE, else forward().
+    Tensor operator()(const Tensor &input) const;
+
+    // Move all parameters and submodules to device.
+    // Device::ANE is special: parameters stay on CPU, but forward() will
+    // compile and run on the Neural Engine.
     virtual Module &to(Device device);
 
     // Cast all parameters and submodules to dtype
     virtual Module &to(DType dtype);
+
+    // Get the device this module targets for inference
+    Device device() const { return device_; }
 
     // Load weights from flat name->Tensor map with hierarchical prefix
     // resolution
@@ -45,6 +60,11 @@ class Module {
     named_parameters(const std::string &prefix = "") const;
     std::vector<Tensor *> parameters() const;
 
+    // Submodule introspection
+    const std::vector<std::pair<std::string, Module *>> &children() const {
+        return submodules_;
+    }
+
   protected:
     void register_parameter(const std::string &name, Tensor &param);
     void register_module(const std::string &name, Module &submodule);
@@ -52,6 +72,14 @@ class Module {
   private:
     std::vector<std::pair<std::string, Tensor *>> params_;
     std::vector<std::pair<std::string, Module *>> submodules_;
+    Device device_ = Device::CPU;
+
+#ifdef AXIOM_HAS_ANE
+    // Cached ANE compiled model (lazily compiled on first forward() call)
+    mutable std::shared_ptr<backends::ane::ANECompiledModel> ane_model_;
+    mutable Shape ane_compiled_shape_; // Input shape the cached model was
+                                       // compiled for
+#endif
 };
 
 // Single-item registration

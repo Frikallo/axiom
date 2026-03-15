@@ -1,5 +1,8 @@
 #include "axiom/graph/graph_registry.hpp"
 #include "axiom/error.hpp"
+#ifdef AXIOM_HAS_ANE
+#include "backends/ane/ane_tracer.hpp"
+#endif
 #include "axiom/graph/compiled_graph.hpp"
 #include "axiom/graph/graph_cache.hpp"
 #include "axiom/graph/graph_executor.hpp"
@@ -38,6 +41,11 @@ static std::atomic<size_t> g_max_pending_nodes{10000};
 static thread_local bool tl_eager_mode = false;
 
 bool is_eager_mode_enabled() {
+    // During ANE tracing, force lazy mode to capture the computation graph
+#ifdef AXIOM_HAS_ANE
+    if (backends::ane::is_ane_tracing())
+        return false;
+#endif
     // Check environment variable once (thread-safe static init per C++11)
     static const bool env_eager = [] {
         const char *env = std::getenv("AXIOM_EAGER_MODE");
@@ -330,8 +338,17 @@ static Tensor create_materialized_tensor(GraphNode *node) {
     if (!node->is_materialized_) {
         throw RuntimeError("Cannot create tensor from non-materialized node");
     }
-    return Tensor(node->cached_result_, node->cached_shape_,
-                  node->cached_strides_, node->output_dtype);
+    // Compute contiguous strides if cached_strides_ is empty or mismatched.
+    // This happens for reshape/unsqueeze/squeeze nodes whose materializer
+    // populates cached_result_ and cached_shape_ but not cached_strides_.
+    auto &strides = node->cached_strides_;
+    if (strides.empty() || strides.size() != node->cached_shape_.size()) {
+        strides = ShapeUtils::calculate_strides(node->cached_shape_,
+                                                dtype_size(node->output_dtype),
+                                                MemoryOrder::RowMajor);
+    }
+    return Tensor(node->cached_result_, node->cached_shape_, strides,
+                  node->output_dtype);
 }
 
 Tensor GraphRegistry::create_lazy_unary(ops::OpType op, const Tensor &input,
@@ -818,6 +835,13 @@ collect_constant_inputs(const GraphNode *root, const CompiledGraph & /*plan*/) {
                                         n->constant_strides, n->output_dtype,
                                         n->constant_offset);
                 } else {
+                    auto &strides = n->cached_strides_;
+                    if (strides.empty() ||
+                        strides.size() != n->cached_shape_.size()) {
+                        strides = ShapeUtils::calculate_strides(
+                            n->cached_shape_, dtype_size(n->output_dtype),
+                            MemoryOrder::RowMajor);
+                    }
                     inputs.emplace_back(n->cached_result_, n->cached_shape_,
                                         n->cached_strides_, n->output_dtype);
                 }

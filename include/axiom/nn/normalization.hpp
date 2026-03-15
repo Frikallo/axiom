@@ -9,7 +9,6 @@ class LayerNorm : public Module {
     explicit LayerNorm(float eps = 1e-5f);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
     // Accessors for fused GPU operations
     const Tensor &weight() const { return weight_; }
@@ -27,7 +26,9 @@ class RMSNorm : public Module {
     explicit RMSNorm(float eps = 1e-5f);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
+
+    const Tensor &weight() const { return weight_; }
+    float eps() const { return eps_; }
 
   private:
     Tensor weight_;
@@ -39,7 +40,6 @@ class BatchNorm1d : public Module {
     explicit BatchNorm1d(float eps = 1e-5f);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
     // Accessors for fused GPU operations
     const Tensor &weight() const { return weight_; }
@@ -62,7 +62,6 @@ class BatchNorm2d : public Module {
     explicit BatchNorm2d(float eps = 1e-5f);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
   private:
     Tensor weight_;
@@ -78,7 +77,6 @@ class GroupNorm : public Module {
     explicit GroupNorm(int num_groups, float eps = 1e-5f);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
   private:
     int num_groups_;
@@ -92,7 +90,6 @@ class InstanceNorm1d : public Module {
     explicit InstanceNorm1d(float eps = 1e-5f, bool affine = true);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
   private:
     Tensor weight_;
@@ -106,7 +103,6 @@ class InstanceNorm2d : public Module {
     explicit InstanceNorm2d(float eps = 1e-5f, bool affine = true);
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
   private:
     Tensor weight_;
