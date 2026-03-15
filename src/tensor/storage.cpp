@@ -43,6 +43,16 @@ std::unique_ptr<Storage> make_storage(size_t size_bytes, Device device) {
 #else
         throw DeviceError::not_available("GPU storage on this platform");
 #endif
+
+    case Device::ANE:
+        // ANE storage requires channel-first dimensions, not raw byte size.
+        // Use make_ane_storage(channels, spatial_size) directly, or
+        // ANECompiledModel which manages its own IOSurface allocation.
+        // Falling through to CPU for generic tensor allocation on ANE device
+        // since ANE only accelerates at the graph level.
+        throw DeviceError(
+            "ANE tensors cannot be created via make_storage(). "
+            "Use ANECompiledModel for ANE inference, or keep tensors on CPU.");
     }
     throw DeviceError("Unknown device type");
 }

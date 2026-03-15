@@ -189,6 +189,23 @@ if(APPLE)
     endif()
 endif()
 
+# ============================================================================
+# ANE (Apple Neural Engine) Detection
+# ============================================================================
+set(AXIOM_HAS_ANE OFF)
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    # Check for the private ANE framework directory (Apple Silicon only).
+    # The framework binary is in a cryptex/hidden volume and appears as a
+    # broken symlink, but dlopen loads it at runtime. Check for the
+    # framework directory itself.
+    if(IS_DIRECTORY "/System/Library/PrivateFrameworks/AppleNeuralEngine.framework")
+        set(AXIOM_HAS_ANE ON)
+        message(STATUS "ANE: detected (Apple Neural Engine)")
+    else()
+        message(STATUS "ANE: not available (framework not found)")
+    endif()
+endif()
+
 # External dependencies
 include(FetchContent)
 
@@ -389,6 +406,23 @@ if(APPLE AND AXIOM_HAS_METAL)
     )
 endif()
 
+# Add ANE backend if available
+if(APPLE AND AXIOM_HAS_ANE)
+    list(APPEND AXIOM_SOURCES
+        src/backends/ane/ane_bridge.mm
+        src/backends/ane/ane_iosurface.mm
+        src/backends/ane/ane_storage.mm
+    )
+
+    set_source_files_properties(
+        src/backends/ane/ane_bridge.mm
+        src/backends/ane/ane_iosurface.mm
+        src/backends/ane/ane_storage.mm
+        PROPERTIES
+            COMPILE_FLAGS "-fobjc-arc"
+    )
+endif()
+
 # Build as shared library on all platforms
 # On Windows, auto-export all symbols to generate .lib import library
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
@@ -475,6 +509,7 @@ target_include_directories(axiom
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cpu
         ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/cpu/lapack
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/backends/ane
 )
 
 target_include_directories(axiom SYSTEM
@@ -502,6 +537,15 @@ if(APPLE AND AXIOM_HAS_METAL)
             ${MPSGRAPH_FRAMEWORK}
     )
     target_compile_definitions(axiom PUBLIC AXIOM_METAL_SUPPORT)
+endif()
+
+# ANE framework (macOS only, requires Apple Silicon with Neural Engine)
+if(APPLE AND AXIOM_HAS_ANE)
+    find_library(IOSURFACE_FRAMEWORK IOSurface)
+    if(IOSURFACE_FRAMEWORK)
+        target_link_libraries(axiom PRIVATE ${IOSURFACE_FRAMEWORK})
+    endif()
+    target_compile_definitions(axiom PUBLIC AXIOM_HAS_ANE)
 endif()
 
 # BLAS backend linking
@@ -805,6 +849,11 @@ if(APPLE)
     endif()
 else()
     message(STATUS "  Metal support: NO (not on Apple platform)")
+endif()
+if(APPLE AND AXIOM_HAS_ANE)
+    message(STATUS "  ANE support: YES")
+else()
+    message(STATUS "  ANE support: NO")
 endif()
 message(STATUS "  Target architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "  SIMD: Google Highway (runtime dispatch)")

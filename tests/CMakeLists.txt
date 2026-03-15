@@ -203,3 +203,14 @@ axiom_add_test(test_nn_groupnorm)
 axiom_add_test(test_conv_transpose)
 axiom_add_test(test_interpolate)
 axiom_add_test(test_flash_attention TIMEOUT 60)
+
+# ============================================================================
+# ANE (Apple Neural Engine) tests
+# ============================================================================
+
+if(AXIOM_HAS_ANE)
+    find_library(IOSURFACE_FRAMEWORK_TEST IOSurface)
+    axiom_add_test(test_ane_basic EXTRA_LIBS ${IOSURFACE_FRAMEWORK_TEST})
+else()
+    axiom_add_test(test_ane_basic)
+endif()

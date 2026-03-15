@@ -7,7 +7,8 @@ namespace axiom {
 
 enum class Device {
     CPU,
-    GPU // Metal on Apple Silicon, future: CUDA, OpenCL, etc.
+    GPU, // Metal on Apple Silicon, future: CUDA, OpenCL, etc.
+    ANE  // Apple Neural Engine (inference accelerator, macOS 15+)
 };
 
 class Storage {

@@ -34,6 +34,8 @@ std::string device_to_string(Device device) {
         return "CPU";
     case Device::GPU:
         return "GPU";
+    case Device::ANE:
+        return "ANE";
     default:
         return "Unknown";
     }

@@ -13,6 +13,9 @@
 #include "axiom/tensor.hpp"
 #include "backends/cpu/cpu_operations.hpp"
 #include "backends/metal/metal_operations.hpp"
+#ifdef AXIOM_HAS_ANE
+#include "backends/ane/ane_operations.hpp"
+#endif
 
 namespace axiom {
 namespace ops {
@@ -415,6 +418,9 @@ OperationRegistry::get_registry() {
 #ifdef __APPLE__
         backends::metal::register_metal_operations();
 #endif
+#ifdef AXIOM_HAS_ANE
+        backends::ane::initialize_ane_backend();
+#endif
     }
     return registry;
 }
@@ -456,6 +462,12 @@ void OperationRegistry::initialize_builtin_operations() {
 
 #ifdef __APPLE__
     backends::metal::register_metal_operations();
+#endif
+
+#ifdef AXIOM_HAS_ANE
+    // Initialize the ANE bridge (does NOT register per-op operations —
+    // ANE works at the graph level via ANECompiledModel).
+    backends::ane::initialize_ane_backend();
 #endif
 }
 
@@ -1110,10 +1122,14 @@ static Tensor execute_binary_operation(OpType op_type, const Tensor &lhs,
 static Tensor execute_binary_operation_eager(OpType op_type, const Tensor &lhs,
                                              const Tensor &rhs) {
     // Determine the target device (prefer GPU if available)
+    // ANE tensors fall back to CPU for per-op execution
+    Device lhs_dev =
+        lhs.device() == Device::ANE ? Device::CPU : lhs.device();
+    Device rhs_dev =
+        rhs.device() == Device::ANE ? Device::CPU : rhs.device();
     Device target_device =
-        (lhs.device() == Device::GPU || rhs.device() == Device::GPU)
-            ? Device::GPU
-            : Device::CPU;
+        (lhs_dev == Device::GPU || rhs_dev == Device::GPU) ? Device::GPU
+                                                           : Device::CPU;
 
     // Get the operation implementation
     const Operation *op =
