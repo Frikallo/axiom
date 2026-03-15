@@ -338,8 +338,17 @@ static Tensor create_materialized_tensor(GraphNode *node) {
     if (!node->is_materialized_) {
         throw RuntimeError("Cannot create tensor from non-materialized node");
     }
-    return Tensor(node->cached_result_, node->cached_shape_,
-                  node->cached_strides_, node->output_dtype);
+    // Compute contiguous strides if cached_strides_ is empty or mismatched.
+    // This happens for reshape/unsqueeze/squeeze nodes whose materializer
+    // populates cached_result_ and cached_shape_ but not cached_strides_.
+    auto &strides = node->cached_strides_;
+    if (strides.empty() || strides.size() != node->cached_shape_.size()) {
+        strides = ShapeUtils::calculate_strides(node->cached_shape_,
+                                                dtype_size(node->output_dtype),
+                                                MemoryOrder::RowMajor);
+    }
+    return Tensor(node->cached_result_, node->cached_shape_, strides,
+                  node->output_dtype);
 }
 
 Tensor GraphRegistry::create_lazy_unary(ops::OpType op, const Tensor &input,
