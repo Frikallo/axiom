@@ -269,18 +269,38 @@ static std::string walk_module(MILGenerator &gen, const nn::Module &module,
         return input_var; // No-op
     }
 
-    // Sequential: chain all children
-    if (auto *seq = dynamic_cast<const nn::Sequential *>(&module)) {
+    // Tanh
+    if (dynamic_cast<const nn::Tanh *>(&module)) {
+        // tanh via sigmoid approximation: tanh(x) ≈ 2*sigmoid(2x) - 1
+        // Use the MIL tanh op directly
+        auto &out_shape = gen.shape_of(input_var);
+        // Emit inline since MILGenerator doesn't have add_tanh
+        // For now, fall through to unsupported
+    }
+
+    // Sequential: chain all children into a single ANE mega-kernel
+    if (dynamic_cast<const nn::Sequential *>(&module)) {
+        auto &kids = module.children();
         std::string var = input_var;
-        int idx = 0;
-        // Walk via named_parameters isn't enough — we need to walk
-        // submodules in order. Use the forward pattern: each child
-        // processes the output of the previous.
-        // Since Sequential doesn't expose iteration, we compile it
-        // via its forward() on CPU instead.
-        // TODO: Add submodule iteration to Sequential for ANE compilation
-        throw RuntimeError("Sequential ANE compilation requires submodule "
-                           "iteration (not yet implemented)");
+        for (size_t i = 0; i < kids.size(); i++) {
+            var = walk_module(gen, *kids[i].second, var,
+                              prefix + "_" + std::to_string(i));
+        }
+        return var;
+    }
+
+    // Any module with children — try walking children in order
+    // (works for custom modules that register submodules)
+    {
+        auto &kids = module.children();
+        if (!kids.empty()) {
+            std::string var = input_var;
+            for (size_t i = 0; i < kids.size(); i++) {
+                var = walk_module(gen, *kids[i].second, var,
+                                  prefix + "_" + kids[i].first);
+            }
+            return var;
+        }
     }
 
     throw RuntimeError("Unsupported module type for ANE compilation: " +
@@ -310,6 +330,7 @@ ANECompiledModel &
 ANECompiledModel::operator=(ANECompiledModel &&) noexcept = default;
 
 bool ANECompiledModel::is_supported(const nn::Module &module) {
+    // Leaf modules
     if (dynamic_cast<const nn::Linear *>(&module))
         return true;
     if (dynamic_cast<const nn::ReLU *>(&module))
@@ -326,6 +347,26 @@ bool ANECompiledModel::is_supported(const nn::Module &module) {
         return true;
     if (dynamic_cast<const nn::Dropout *>(&module))
         return true;
+
+    // Container modules — supported if ALL children are supported
+    if (dynamic_cast<const nn::Sequential *>(&module)) {
+        for (auto &[name, child] : module.children()) {
+            if (!is_supported(*child))
+                return false;
+        }
+        return !module.children().empty();
+    }
+
+    // Any module with only supported children
+    auto &kids = module.children();
+    if (!kids.empty()) {
+        for (auto &[name, child] : kids) {
+            if (!is_supported(*child))
+                return false;
+        }
+        return true;
+    }
+
     return false;
 }
 

@@ -60,6 +60,11 @@ class Module {
     named_parameters(const std::string &prefix = "") const;
     std::vector<Tensor *> parameters() const;
 
+    // Submodule introspection
+    const std::vector<std::pair<std::string, Module *>> &children() const {
+        return submodules_;
+    }
+
   protected:
     void register_parameter(const std::string &name, Tensor &param);
     void register_module(const std::string &name, Module &submodule);

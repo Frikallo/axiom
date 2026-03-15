@@ -1,10 +1,13 @@
 #include "axiom_test_utils.hpp"
+#include <chrono>
 #include <gtest/gtest.h>
 #include <iostream>
 
+#include "axiom/nn/container.hpp"
 #include "axiom/nn/rnn.hpp"
 
 #ifdef AXIOM_HAS_ANE
+#include "axiom/nn/ane_compiled_model.hpp"
 #include "backends/ane/ane_bridge.h"
 #endif
 
@@ -257,6 +260,245 @@ TEST(ANEIntegration, MoveBackToCPU) {
     for (size_t i = 0; i < ane_output.size(); i++) {
         EXPECT_NEAR(ane[i], cpu[i], 0.01f);
     }
+}
+
+// ============================================================================
+// Sequential mega-kernel tests
+// ============================================================================
+
+TEST(ANEIntegration, SequentialMegaKernel) {
+    SKIP_IF_NO_ANE();
+
+    // Build a mini-FFN: Linear(4,8) → ReLU → Linear(8,4)
+    nn::Sequential ffn;
+    auto &fc1 = ffn.emplace_back<nn::Linear>();
+    ffn.emplace_back<nn::ReLU>();
+    auto &fc2 = ffn.emplace_back<nn::Linear>();
+
+    // Load weights
+    std::map<std::string, Tensor> state;
+    state["0.weight"] = Tensor({8, 4}, DType::Float32);
+    state["0.bias"] = Tensor({8}, DType::Float32);
+    state["2.weight"] = Tensor({4, 8}, DType::Float32);
+    state["2.bias"] = Tensor({4}, DType::Float32);
+
+    // Initialize to small values
+    for (auto &[k, v] : state) {
+        float *d = v.typed_data<float>();
+        for (size_t i = 0; i < v.size(); i++)
+            d[i] = static_cast<float>(i % 7) * 0.02f;
+    }
+    ffn.load_state_dict(state);
+
+    // CPU reference
+    auto input = Tensor({2, 4}, DType::Float32);
+    float *in_data = input.typed_data<float>();
+    for (int i = 0; i < 8; i++)
+        in_data[i] = static_cast<float>(i + 1) * 0.5f;
+
+    auto cpu_output = ffn(input);
+
+    // ANE
+    ffn.to(Device::ANE);
+    EXPECT_TRUE(backends::ane::ANECompiledModel::is_supported(ffn));
+
+    auto ane_output = ffn(input);
+
+    // Verify
+    ASSERT_EQ(ane_output.shape(), cpu_output.shape());
+    float *ane = ane_output.typed_data<float>();
+    float *cpu = cpu_output.typed_data<float>();
+
+    std::cout << "[INFO] Sequential CPU: ";
+    for (size_t i = 0; i < cpu_output.size(); i++)
+        std::cout << cpu[i] << " ";
+    std::cout << "\n[INFO] Sequential ANE: ";
+    for (size_t i = 0; i < ane_output.size(); i++)
+        std::cout << ane[i] << " ";
+    std::cout << "\n";
+
+    for (size_t i = 0; i < ane_output.size(); i++) {
+        EXPECT_NEAR(ane[i], cpu[i], 0.2f)
+            << "Mismatch at index " << i;
+    }
+}
+
+TEST(ANEIntegration, SequentialCompileCount) {
+    SKIP_IF_NO_ANE();
+
+    // A Sequential with 3 layers should compile as ONE ANE graph
+    nn::Sequential net;
+    net.emplace_back<nn::Linear>();
+    net.emplace_back<nn::SiLU>();
+    net.emplace_back<nn::Linear>();
+
+    std::map<std::string, Tensor> state;
+    state["0.weight"] = Tensor({8, 4}, DType::Float32);
+    state["0.bias"] = Tensor({8}, DType::Float32);
+    state["2.weight"] = Tensor({4, 8}, DType::Float32);
+    state["2.bias"] = Tensor({4}, DType::Float32);
+    for (auto &[k, v] : state) {
+        float *d = v.typed_data<float>();
+        for (size_t i = 0; i < v.size(); i++)
+            d[i] = 0.01f;
+    }
+    net.load_state_dict(state);
+
+    int count_before = ane_compile_count();
+    auto compiled =
+        backends::ane::ANECompiledModel::compile(net, {2, 4});
+    // Should be exactly 1 compilation (mega-kernel)
+    EXPECT_EQ(ane_compile_count(), count_before + 1);
+
+    auto info = compiled.plan_info();
+    EXPECT_EQ(info.ane_steps, 1);
+    std::cout << "[INFO] " << info.summary << "\n";
+}
+
+// ============================================================================
+// Benchmark: ANE vs CPU
+// ============================================================================
+
+TEST(ANEIntegration, BenchmarkLinear) {
+    SKIP_IF_NO_ANE();
+
+    // Linear(256, 512) — a realistic layer size
+    nn::Linear linear;
+    std::map<std::string, Tensor> state;
+    state["weight"] = Tensor::randn({512, 256});
+    state["bias"] = Tensor::randn({512});
+    linear.load_state_dict(state);
+
+    auto input = Tensor::randn({16, 256}); // batch=16
+
+    // Warm up CPU
+    auto cpu_out = linear(input);
+
+    // CPU benchmark
+    auto cpu_start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 100; i++) {
+        auto out = linear.forward(input);
+        (void)out.typed_data<float>(); // Force materialization
+    }
+    auto cpu_end = std::chrono::high_resolution_clock::now();
+    double cpu_us = std::chrono::duration<double, std::micro>(
+                        cpu_end - cpu_start).count() / 100.0;
+
+    // ANE benchmark
+    linear.to(Device::ANE);
+    auto ane_warmup = linear(input); // First call compiles
+
+    auto ane_start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 100; i++) {
+        auto out = linear(input);
+        (void)out.typed_data<float>();
+    }
+    auto ane_end = std::chrono::high_resolution_clock::now();
+    double ane_us = std::chrono::duration<double, std::micro>(
+                        ane_end - ane_start).count() / 100.0;
+
+    std::cout << "[BENCH] Linear(256→512) x16:\n"
+              << "  CPU: " << cpu_us << " µs/forward\n"
+              << "  ANE: " << ane_us << " µs/forward\n"
+              << "  Ratio: " << cpu_us / ane_us << "x\n";
+
+    // Verify correctness
+    linear.to(Device::CPU);
+    auto ref = linear(input);
+    linear.to(Device::ANE);
+    auto ane_check = linear(input);
+    for (size_t i = 0; i < ref.size(); i++) {
+        EXPECT_NEAR(ref.typed_data<float>()[i],
+                    ane_check.typed_data<float>()[i], 0.5f);
+    }
+}
+
+TEST(ANEIntegration, BenchmarkLargeLinear) {
+    SKIP_IF_NO_ANE();
+
+    // Linear(1024, 1024) — larger layer
+    nn::Linear linear;
+    std::map<std::string, Tensor> state;
+    state["weight"] = Tensor::randn({1024, 1024});
+    state["bias"] = Tensor::randn({1024});
+    linear.load_state_dict(state);
+
+    auto input = Tensor::randn({64, 1024}); // batch=64
+
+    auto cpu_warmup = linear(input);
+    auto cpu_start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 50; i++) {
+        auto out = linear.forward(input);
+        (void)out.typed_data<float>();
+    }
+    auto cpu_end = std::chrono::high_resolution_clock::now();
+    double cpu_us = std::chrono::duration<double, std::micro>(
+                        cpu_end - cpu_start).count() / 50.0;
+
+    linear.to(Device::ANE);
+    auto ane_warmup = linear(input);
+
+    auto ane_start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 50; i++) {
+        auto out = linear(input);
+        (void)out.typed_data<float>();
+    }
+    auto ane_end = std::chrono::high_resolution_clock::now();
+    double ane_us = std::chrono::duration<double, std::micro>(
+                        ane_end - ane_start).count() / 50.0;
+
+    std::cout << "[BENCH] Linear(1024→1024) x64:\n"
+              << "  CPU: " << cpu_us << " µs/forward\n"
+              << "  ANE: " << ane_us << " µs/forward\n"
+              << "  Ratio: " << cpu_us / ane_us << "x\n";
+}
+
+TEST(ANEIntegration, BenchmarkSequentialFFN) {
+    SKIP_IF_NO_ANE();
+
+    // FFN: Linear(256,1024) → SiLU → Linear(1024,256)
+    nn::Sequential ffn;
+    ffn.emplace_back<nn::Linear>();
+    ffn.emplace_back<nn::SiLU>();
+    ffn.emplace_back<nn::Linear>();
+
+    std::map<std::string, Tensor> state;
+    state["0.weight"] = Tensor::randn({1024, 256});
+    state["0.bias"] = Tensor::randn({1024});
+    state["2.weight"] = Tensor::randn({256, 1024});
+    state["2.bias"] = Tensor::randn({256});
+    ffn.load_state_dict(state);
+
+    auto input = Tensor::randn({16, 256});
+
+    // CPU benchmark
+    auto cpu_warmup = ffn(input);
+    auto cpu_start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 50; i++) {
+        auto out = ffn.forward(input);
+        (void)out.typed_data<float>();
+    }
+    auto cpu_end = std::chrono::high_resolution_clock::now();
+    double cpu_us = std::chrono::duration<double, std::micro>(
+                        cpu_end - cpu_start).count() / 50.0;
+
+    // ANE benchmark
+    ffn.to(Device::ANE);
+    auto ane_warmup = ffn(input);
+
+    auto ane_start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 50; i++) {
+        auto out = ffn(input);
+        (void)out.typed_data<float>();
+    }
+    auto ane_end = std::chrono::high_resolution_clock::now();
+    double ane_us = std::chrono::duration<double, std::micro>(
+                        ane_end - ane_start).count() / 50.0;
+
+    std::cout << "[BENCH] FFN(256→1024→256) x16:\n"
+              << "  CPU: " << cpu_us << " µs/forward\n"
+              << "  ANE: " << ane_us << " µs/forward\n"
+              << "  Ratio: " << cpu_us / ane_us << "x\n";
 }
 
 #else // !AXIOM_HAS_ANE
