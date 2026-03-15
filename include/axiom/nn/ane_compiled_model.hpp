@@ -62,6 +62,17 @@ class ANECompiledModel {
                                      const Shape &input_shape,
                                      bool quantize_weights = false);
 
+    // Compile with dynamic weight staging.
+    // Weights are packed into the input IOSurface on each forward() call,
+    // so weight updates (load_state_dict) do NOT require recompilation.
+    // Only Linear layers are supported in dynamic mode.
+    static ANECompiledModel compile_dynamic(const nn::Module &module,
+                                             const Shape &input_shape);
+
+    // Re-stage weights from a module into the cached IOSurface.
+    // Only valid for dynamically-compiled models.
+    void update_weights(const nn::Module &module);
+
     // Run inference on ANE.
     // Input must match the shape declared at compile time.
     // Returns a CPU tensor with the module's output.

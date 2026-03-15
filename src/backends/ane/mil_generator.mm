@@ -588,6 +588,106 @@ std::string MILGenerator::add_matmul(const std::string &a,
 }
 
 // ============================================================================
+// Dynamic weight staging (weights packed into input IOSurface spatial dim)
+// ============================================================================
+
+std::string MILGenerator::add_linear_dynamic(
+    const std::string &graph_input, const std::string &activation,
+    int64_t in_features, int64_t out_features, bool has_bias, int64_t seq_len,
+    int64_t &weight_offset, const std::string &name) {
+
+    // graph_input: the program input [1, C, 1, total_spatial] (has weights)
+    // activation:  the actual activation [1, in_features, 1, seq_len]
+    //              (may be graph_input for first layer, or output of prev layer)
+
+    std::vector<int64_t> act_shape = {1, in_features, 1, seq_len};
+    std::vector<int64_t> w_slice_shape = {1, in_features, 1, out_features};
+
+    // Use the activation directly (already extracted or from previous layer)
+    std::string act = activation;
+    // Ensure shape tracking for the activation
+    if (shapes_.find(act) == shapes_.end() ||
+        shape_of(act) != act_shape) {
+        // If activation is the graph input, slice it
+        if (act == graph_input) {
+            std::string begin_act = next_var("ba");
+            emit_int_tensor_const(begin_act, {0, 0, 0, 0});
+            std::string size_act = next_var("sa");
+            emit_int_tensor_const(size_act,
+                                   {1, static_cast<int>(in_features), 1,
+                                    static_cast<int>(seq_len)});
+            act = next_var("act");
+            body_ += "        " + mil_type(act_shape) + " " + act +
+                     " = slice_by_size(begin=" + begin_act +
+                     ", size=" + size_act + ", x=" + graph_input +
+                     ")[name=string(\"" + name + "_act\")];\n";
+            track(act, act_shape);
+        }
+    }
+
+    // Slice weight from graph_input (not from activation)
+    std::string begin_w = next_var("bw");
+    emit_int_tensor_const(begin_w, {0, 0, 0,
+                                     static_cast<int>(weight_offset)});
+    std::string size_w = next_var("sw");
+    emit_int_tensor_const(size_w, {1, static_cast<int>(in_features), 1,
+                                    static_cast<int>(out_features)});
+
+    std::string w_raw = next_var("wr");
+    body_ += "        " + mil_type(w_slice_shape) + " " + w_raw +
+             " = slice_by_size(begin=" + begin_w + ", size=" + size_w +
+             ", x=" + graph_input + ")[name=string(\"" + name + "_wr\")];\n";
+    track(w_raw, w_slice_shape);
+
+    weight_offset += out_features;
+
+    // Reshape weight for matmul: [1, in, 1, out] → [1, 1, in, out]
+    std::vector<int64_t> w_mm_shape = {1, 1, in_features, out_features};
+    std::string w_mm = add_reshape(w_raw, w_mm_shape, name + "_wrsh");
+
+    // Reshape activation for matmul: [1, in, 1, seq] → [1, 1, seq, in]
+    std::vector<int64_t> act_mm_shape = {1, 1, seq_len, in_features};
+    std::string act_rs = add_reshape(act, {1, 1, in_features, seq_len},
+                                      name + "_ars");
+    std::string act_mm = add_transpose(act_rs, {0, 1, 3, 2}, name + "_at");
+
+    // Matmul: [1, 1, seq, in] @ [1, 1, in, out] → [1, 1, seq, out]
+    std::string mm = add_matmul(act_mm, w_mm, false, false, name + "_mm");
+
+    // Handle bias (sliced from input if has_bias)
+    if (has_bias) {
+        std::string begin_b = next_var("bb");
+        emit_int_tensor_const(begin_b, {0, 0, 0,
+                                         static_cast<int>(weight_offset)});
+        // Bias: [1, 1, 1, out_features] — broadcast over seq
+        std::string size_b = next_var("sb");
+        emit_int_tensor_const(size_b, {1, 1, 1,
+                                        static_cast<int>(out_features)});
+
+        std::string bias_raw = next_var("br");
+        std::vector<int64_t> b_shape = {1, 1, 1, out_features};
+        body_ += "        " + mil_type(b_shape) + " " + bias_raw +
+                 " = slice_by_size(begin=" + begin_b + ", size=" + size_b +
+                 ", x=" + graph_input + ")[name=string(\"" + name +
+                 "_br\")];\n";
+        track(bias_raw, b_shape);
+
+        weight_offset += out_features; // Bias occupies out_features spatial slots
+        mm = add_add(mm, bias_raw, name + "_ba");
+    }
+
+    // Reshape output: [1, 1, seq, out] → [1, out, 1, seq]
+    std::string out_rs = add_reshape(mm, {1, 1, out_features, seq_len},
+                                      name + "_ors");
+    std::string out_var = add_transpose(out_rs, {0, 2, 1, 3}, name + "_ot");
+
+    // Update dynamic spatial total
+    dynamic_spatial_total_ = std::max(dynamic_spatial_total_, weight_offset);
+
+    return out_var;
+}
+
+// ============================================================================
 // INT8 quantized linear (1x1 conv with dequantized weights)
 // ============================================================================
 
@@ -739,6 +839,7 @@ std::string MILGenerator::add_conv2d(const std::string &input_var,
 
     // Weight: [out_ch, in_ch/groups, kH, kW]
     auto &ws = weight.shape();
+    int64_t in_ch = in_shape[1];
     int64_t out_ch = static_cast<int64_t>(ws[0]);
     int64_t kH = static_cast<int64_t>(ws[2]);
     int64_t kW = static_cast<int64_t>(ws[3]);
@@ -747,12 +848,47 @@ std::string MILGenerator::add_conv2d(const std::string &input_var,
                                      static_cast<int64_t>(ws[2]),
                                      static_cast<int64_t>(ws[3])};
 
+    // Input comes as [1, C, 1, H*W] from IOSurface. We need to know H and W
+    // to reshape for the conv op. For 1x1 conv, no reshape needed.
+    // For spatial conv, we need the original H, W — infer from spatial dim.
+    int64_t total_spatial = in_shape[3]; // H*W (since in_shape is [1,C,1,H*W])
+    int64_t H_in = 1, W_in = total_spatial;
+
+    // Try to find square-ish decomposition of spatial
+    if (kH > 1 || kW > 1) {
+        // Need actual H, W — try sqrt for square inputs
+        int64_t sq = static_cast<int64_t>(std::sqrt(static_cast<double>(total_spatial)));
+        if (sq * sq == total_spatial) {
+            H_in = sq;
+            W_in = sq;
+        } else {
+            // Try common aspect ratios
+            for (int64_t h = sq; h >= 1; h--) {
+                if (total_spatial % h == 0) {
+                    H_in = h;
+                    W_in = total_spatial / h;
+                    break;
+                }
+            }
+        }
+    }
+
     // Compute output spatial dims
-    int64_t H_out = (in_shape[2] + 2 * padding[0] - dilation[0] * (kH - 1) - 1) /
+    int64_t H_out = (H_in + 2 * padding[0] - dilation[0] * (kH - 1) - 1) /
                         stride[0] + 1;
-    int64_t W_out = (in_shape[3] + 2 * padding[1] - dilation[1] * (kW - 1) - 1) /
+    int64_t W_out = (W_in + 2 * padding[1] - dilation[1] * (kW - 1) - 1) /
                         stride[1] + 1;
-    std::vector<int64_t> out_shape = {in_shape[0], out_ch, H_out, W_out};
+
+    // For actual spatial conv (kH>1 or kW>1), reshape input to 4D
+    std::string conv_input = input_var;
+    if (kH > 1 || kW > 1) {
+        std::vector<int64_t> shape_4d = {1, in_ch, H_in, W_in};
+        conv_input = add_reshape(input_var, shape_4d, name + "_r4d");
+    }
+
+    std::vector<int64_t> conv_out_shape = {1, out_ch, H_out, W_out};
+    // Final output in IOSurface format [1, C_out, 1, H_out*W_out]
+    std::vector<int64_t> out_shape = {1, out_ch, 1, H_out * W_out};
 
     // Emit conv constants with actual stride/padding values
     std::string st_name = next_var("cst");
@@ -779,7 +915,8 @@ std::string MILGenerator::add_conv2d(const std::string &input_var,
              "\"@model_path/weights/" + w_name +
              ".bin\"), offset=uint64(64)))];\n";
 
-    std::string out_var = next_var("cv");
+    // Conv output in 4D (may differ from final output if spatial conv)
+    std::string conv_var = next_var("cv");
 
     if (bias) {
         std::string b_name = name + "_b";
@@ -790,22 +927,30 @@ std::string MILGenerator::add_conv2d(const std::string &input_var,
                  "path=string(\"@model_path/weights/" + b_name +
                  ".bin\"), offset=uint64(64)))];\n";
 
-        body_ += "        " + mil_type(out_shape) + " " + out_var +
+        body_ += "        " + mil_type(conv_out_shape) + " " + conv_var +
                  " = conv(bias=" + b_name + ", dilations=" + dl_name +
                  ", groups=" + gr_name + ", pad=" + pd_name +
                  ", pad_type=" + pt_name + ", strides=" + st_name +
-                 ", weight=" + w_name + ", x=" + input_var +
+                 ", weight=" + w_name + ", x=" + conv_input +
                  ")[name=string(\"" + name + "\")];\n";
     } else {
-        body_ += "        " + mil_type(out_shape) + " " + out_var +
+        body_ += "        " + mil_type(conv_out_shape) + " " + conv_var +
                  " = conv(dilations=" + dl_name + ", groups=" + gr_name +
                  ", pad=" + pd_name + ", pad_type=" + pt_name +
                  ", strides=" + st_name + ", weight=" + w_name +
-                 ", x=" + input_var + ")[name=string(\"" + name + "\")];\n";
+                 ", x=" + conv_input + ")[name=string(\"" + name + "\")];\n";
     }
+    track(conv_var, conv_out_shape);
 
-    track(out_var, out_shape);
-    return out_var;
+    // Reshape back to [1, C_out, 1, H_out*W_out] for IOSurface output
+    if (conv_out_shape != out_shape) {
+        std::string out_var = add_reshape(conv_var, out_shape,
+                                           name + "_flat");
+        return out_var;
+    }
+    // For 1x1 conv, conv_out_shape already == out_shape
+    track(conv_var, out_shape); // Override to out_shape
+    return conv_var;
 }
 
 // ============================================================================

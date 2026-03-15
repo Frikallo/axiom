@@ -95,6 +95,35 @@ class MILGenerator {
                               const std::string &name);
 
     // ================================================================
+    // Dynamic weight staging
+    // ================================================================
+
+    // Linear with weights packed into the input IOSurface's spatial dimension.
+    // Instead of BLOBFILE constants, weights are sliced from the input tensor.
+    // This avoids recompilation when weights change.
+    //
+    // The input tensor is extended: [1, C, 1, S + weight_cols]
+    //   spatial [0:S] = activation data
+    //   spatial [S:S+in*out/C] = weight data (packed per-channel row)
+    //
+    // weight_offset: the spatial offset where weight data starts
+    // Returns the output variable name and updates weight_offset.
+    // graph_input: the original program input (where weights are packed)
+    // activation: the actual activation to process (may differ from graph_input
+    //             for layers after the first in a Sequential)
+    std::string add_linear_dynamic(const std::string &graph_input,
+                                    const std::string &activation,
+                                    int64_t in_features, int64_t out_features,
+                                    bool has_bias, int64_t seq_len,
+                                    int64_t &weight_offset,
+                                    const std::string &name);
+
+    // Get the total spatial size needed for dynamic weight staging.
+    // Call after building the graph to know how large the input IOSurface
+    // needs to be.
+    int64_t dynamic_spatial_total() const { return dynamic_spatial_total_; }
+
+    // ================================================================
     // INT8 quantized operations
     // ================================================================
 
@@ -173,6 +202,7 @@ class MILGenerator {
     std::map<std::string, std::vector<int64_t>> shapes_; // var → shape
     int var_counter_ = 0;
     bool conv_consts_emitted_ = false;
+    int64_t dynamic_spatial_total_ = 0; // Total spatial for dynamic weights
 
     std::string next_var(const std::string &prefix = "v");
 
