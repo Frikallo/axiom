@@ -29,6 +29,9 @@ class RMSNorm : public Module {
     Tensor forward(const Tensor &input) const override;
     Tensor operator()(const Tensor &input) const { return forward(input); }
 
+    const Tensor &weight() const { return weight_; }
+    float eps() const { return eps_; }
+
   private:
     Tensor weight_;
     float eps_;
