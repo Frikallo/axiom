@@ -343,8 +343,14 @@ Tensor Tensor::slice(const std::vector<Slice> &slice_args) const {
     // GPU lazy tensors: create a lazy slice node to keep the graph intact.
     // Skip if input is already materialized — eagerly compute the slice
     // to avoid encoding absolute indices into the graph (prevents caching).
-    if (is_lazy() && device() == Device::GPU &&
-        !(lazy_node_ && lazy_node_->is_materialized_)) {
+    bool use_lazy_slice = is_lazy() && device() == Device::GPU &&
+                          !(lazy_node_ && lazy_node_->is_materialized_);
+#ifdef AXIOM_HAS_ANE
+    use_lazy_slice =
+        use_lazy_slice || (backends::ane::is_ane_tracing() &&
+                           !(lazy_node_ && lazy_node_->is_materialized_));
+#endif
+    if (use_lazy_slice) {
         // Normalize slice args and compute output shape
         std::vector<int64_t> starts, ends, steps;
         Shape out_shape;
@@ -535,9 +541,12 @@ void recursive_copy(uint8_t *dst, const uint8_t *src, const Shape &shape,
 }
 
 Tensor Tensor::ascontiguousarray() const {
-    // GPU lazy tensors: MPSGraph manages layout, so contiguity is implicit.
-    // Return self to keep the lazy graph intact.
-    if (is_lazy() && device() == Device::GPU) {
+    // GPU lazy tensors or ANE tracing: return self to keep graph intact
+    bool skip_contiguous = is_lazy() && device() == Device::GPU;
+#ifdef AXIOM_HAS_ANE
+    skip_contiguous = skip_contiguous || backends::ane::is_ane_tracing();
+#endif
+    if (skip_contiguous) {
         return *this;
     }
 
@@ -798,6 +807,25 @@ Tensor Tensor::transpose(const std::vector<int> &axes) const {
 }
 
 Tensor Tensor::squeeze(int axis) const {
+#ifdef AXIOM_HAS_ANE
+    // During ANE tracing, use lazy reshape to capture in graph
+    if (backends::ane::is_ane_tracing() && is_lazy()) {
+        Shape new_shape;
+        if (axis == -1) {
+            for (size_t i = 0; i < shape_.size(); ++i)
+                if (shape_[i] != 1)
+                    new_shape.push_back(shape_[i]);
+        } else {
+            int real_axis = axis < 0 ? axis + static_cast<int>(ndim()) : axis;
+            for (size_t i = 0; i < shape_.size(); ++i)
+                if (static_cast<int>(i) != real_axis || shape_[i] != 1)
+                    new_shape.push_back(shape_[i]);
+        }
+        if (new_shape.empty())
+            new_shape.push_back(1);
+        return graph::GraphRegistry::create_lazy_reshape(*this, new_shape);
+    }
+#endif
     // Materialize lazy tensors before squeeze
     materialize_if_needed();
 
@@ -834,8 +862,12 @@ Tensor Tensor::squeeze(int axis) const {
 }
 
 Tensor Tensor::unsqueeze(int axis) const {
-    // GPU lazy tensors: unsqueeze is just reshape with extra dim
-    if (is_lazy() && device() == Device::GPU) {
+    // GPU lazy tensors or ANE tracing: keep graph intact
+    bool use_lazy = is_lazy() && device() == Device::GPU;
+#ifdef AXIOM_HAS_ANE
+    use_lazy = use_lazy || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy) {
         Shape new_shape = unsqueeze_shape(shape_, axis);
         return graph::GraphRegistry::create_lazy_reshape(*this, new_shape);
     }
