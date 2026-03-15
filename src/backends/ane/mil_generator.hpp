@@ -186,6 +186,24 @@ class MILGenerator {
     // Get the tracked shape for a variable.
     const std::vector<int64_t> &shape_of(const std::string &var) const;
 
+    // Public helpers for trace-based compilation
+    void emit_raw(const std::string &mil_line) { body_ += mil_line; }
+    void track_shape(const std::string &var,
+                     const std::vector<int64_t> &shape) {
+        track(var, shape);
+    }
+    std::string emit_scalar_const_public(const std::string &name,
+                                         const std::string &type, float value) {
+        return emit_scalar_const(name, type, value);
+    }
+    void pack_weight_public(const Tensor &t, const std::vector<int64_t> &shape,
+                            const std::string &name) {
+        pack_weight(t, shape, name);
+    }
+    static std::string mil_type_public(const std::vector<int64_t> &shape) {
+        return mil_type(shape);
+    }
+
   private:
     std::string body_;
     std::string input_decl_;

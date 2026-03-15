@@ -15,6 +15,7 @@
 #include "axiom/nn/pooling.hpp"
 #include "backends/ane/ane_bridge.h"
 #include "backends/ane/ane_iosurface.h"
+#include "backends/ane/ane_tracer.hpp"
 #include "backends/ane/mil_generator.hpp"
 
 #include <cmath>
@@ -473,62 +474,97 @@ ANECompiledModel ANECompiledModel::compile(const nn::Module &module,
     for (auto d : input_shape)
         impl.input_elements *= d;
 
-    // Generate MIL
-    g_quantize_weights = quantize_weights;
-    MILGenerator gen;
-    gen.begin_program();
-    auto x = gen.add_input("x", impl.ane_in_shape);
-    std::string out_var;
-    try {
-        out_var = walk_module(gen, module, x, "m");
-        g_quantize_weights = false;
-    } catch (const std::exception &e) {
-        g_quantize_weights = false;
-        throw RuntimeError("ANE compilation failed: " + std::string(e.what()));
-    }
-    gen.set_output(out_var);
-    std::string mil = gen.finalize();
+    // Generate MIL — try walk_module for directly supported modules,
+    // fall back to trace-based compilation for complex modules.
+    std::string mil;
+    bool used_trace = false;
 
-    impl.ane_out_shape = gen.shape_of(out_var);
+    if (is_supported(module)) {
+        // Direct walk_module path (faster, no tracing overhead)
+        g_quantize_weights = quantize_weights;
+        MILGenerator gen;
+        gen.begin_program();
+        auto x = gen.add_input("x", impl.ane_in_shape);
+        std::string out_var;
+        try {
+            out_var = walk_module(gen, module, x, "m");
+            g_quantize_weights = false;
+        } catch (const std::exception &e) {
+            g_quantize_weights = false;
+            throw RuntimeError("ANE compilation failed: " +
+                               std::string(e.what()));
+        }
+        gen.set_output(out_var);
+        mil = gen.finalize();
+        impl.ane_out_shape = gen.shape_of(out_var);
 
-    // For Conv2d, infer output shape from the module directly
-    if (auto *conv = dynamic_cast<const nn::Conv2d *>(&module)) {
-        // Run a shape inference by looking at weight shape + conv params
-        auto &ws = conv->weight().shape();
-        int64_t out_ch = static_cast<int64_t>(ws[0]);
-        int64_t kH = static_cast<int64_t>(ws[2]);
-        int64_t kW = static_cast<int64_t>(ws[3]);
-        auto &st = conv->stride();
-        auto &pd = conv->padding();
-        auto &dl = conv->dilation();
-        int64_t H_in = static_cast<int64_t>(input_shape[2]);
-        int64_t W_in = static_cast<int64_t>(input_shape[3]);
-        int64_t H_out = (H_in + 2*pd[0] - dl[0]*(kH-1) - 1) / st[0] + 1;
-        int64_t W_out = (W_in + 2*pd[1] - dl[1]*(kW-1) - 1) / st[1] + 1;
-        impl.output_shape = {input_shape[0], static_cast<size_t>(out_ch),
-                              static_cast<size_t>(H_out),
-                              static_cast<size_t>(W_out)};
+        // For Conv2d, infer output shape from the module directly
+        if (auto *conv = dynamic_cast<const nn::Conv2d *>(&module)) {
+            auto &ws = conv->weight().shape();
+            int64_t out_ch = static_cast<int64_t>(ws[0]);
+            int64_t kH = static_cast<int64_t>(ws[2]);
+            int64_t kW = static_cast<int64_t>(ws[3]);
+            auto &st = conv->stride();
+            auto &pd = conv->padding();
+            auto &dl = conv->dilation();
+            int64_t H_in = static_cast<int64_t>(input_shape[2]);
+            int64_t W_in = static_cast<int64_t>(input_shape[3]);
+            int64_t H_out =
+                (H_in + 2 * pd[0] - dl[0] * (kH - 1) - 1) / st[0] + 1;
+            int64_t W_out =
+                (W_in + 2 * pd[1] - dl[1] * (kW - 1) - 1) / st[1] + 1;
+            impl.output_shape = {input_shape[0],
+                                  static_cast<size_t>(out_ch),
+                                  static_cast<size_t>(H_out),
+                                  static_cast<size_t>(W_out)};
+        } else {
+            impl.output_shape =
+                to_axiom_shape(impl.ane_out_shape, input_shape);
+        }
+
+        // Prepare weight entries from walk_module blobs
+        auto &blobs = gen.weight_blobs();
+        std::vector<ANEWeightEntry> entries;
+        entries.reserve(blobs.size());
+        for (auto &b : blobs) {
+            entries.push_back({b.name.c_str(), b.blob_data.data(),
+                                b.blob_data.size()});
+            impl.weight_bytes += b.blob_data.size();
+        }
+
+        impl.handle = ane_compile_with_weights(
+            mil.c_str(), entries.data(),
+            static_cast<int>(entries.size()));
     } else {
+        // Trace-based compilation — captures arbitrary forward() logic
+        // including residuals, inline ops, permutations, etc.
+        auto trace = trace_module(module, input_shape);
+        auto traced = compile_trace_to_mil(trace, input_shape);
+
+        mil = traced.mil_text;
+        impl.ane_in_shape = traced.ane_input_shape;
+        impl.ane_out_shape = traced.ane_output_shape;
         impl.output_shape = to_axiom_shape(impl.ane_out_shape, input_shape);
+        used_trace = true;
+
+        // Prepare weight entries from trace blobs
+        std::vector<ANEWeightEntry> entries;
+        entries.reserve(traced.weight_blobs.size());
+        for (auto &b : traced.weight_blobs) {
+            entries.push_back({b.name.c_str(), b.blob_data.data(),
+                                b.blob_data.size()});
+            impl.weight_bytes += b.blob_data.size();
+        }
+
+        impl.handle = ane_compile_with_weights(
+            mil.c_str(), entries.data(),
+            static_cast<int>(entries.size()));
     }
 
     impl.output_elements = 1;
     for (auto d : impl.output_shape)
         impl.output_elements *= d;
 
-    // Prepare weight entries
-    auto &blobs = gen.weight_blobs();
-    std::vector<ANEWeightEntry> entries;
-    entries.reserve(blobs.size());
-    for (auto &b : blobs) {
-        entries.push_back(
-            {b.name.c_str(), b.blob_data.data(), b.blob_data.size()});
-        impl.weight_bytes += b.blob_data.size();
-    }
-
-    // Compile on ANE
-    impl.handle = ane_compile_with_weights(
-        mil.c_str(), entries.data(), static_cast<int>(entries.size()));
     if (!impl.handle)
         throw RuntimeError("ANE MIL compilation failed");
     impl.compile_count = 1;

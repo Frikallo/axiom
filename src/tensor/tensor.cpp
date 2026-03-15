@@ -12,6 +12,9 @@
 #include "axiom/error.hpp"
 #include "axiom/graph/graph_node.hpp"
 #include "axiom/graph/graph_registry.hpp"
+#ifdef AXIOM_HAS_ANE
+#include "backends/ane/ane_tracer.hpp"
+#endif
 #include "axiom/io/io.hpp"
 #include "axiom/linalg.hpp"
 #include "axiom/numeric.hpp"
@@ -255,6 +258,12 @@ Device Tensor::device() const {
 void Tensor::materialize_if_needed() const {
     if (!lazy_node_)
         return;
+
+#ifdef AXIOM_HAS_ANE
+    // During ANE tracing, never materialize — we're building a graph
+    if (backends::ane::is_ane_tracing())
+        return;
+#endif
 
     if (!lazy_node_->is_materialized_) {
         graph::GraphRegistry::materialize(lazy_node_.get());
@@ -621,8 +630,12 @@ Tensor Tensor::asfortranarray() const {
 }
 
 Tensor Tensor::reshape(const Shape &new_shape, MemoryOrder order) const {
-    // GPU lazy tensors: create a lazy reshape node to keep the graph intact
-    if (is_lazy() && device() == Device::GPU) {
+    // GPU lazy tensors or ANE tracing: keep the graph intact
+    bool use_lazy = is_lazy() && device() == Device::GPU;
+#ifdef AXIOM_HAS_ANE
+    use_lazy = use_lazy || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy) {
         Shape validated_shape = reshape_shape(shape_, new_shape);
         return graph::GraphRegistry::create_lazy_reshape(*this,
                                                          validated_shape);
@@ -714,8 +727,12 @@ Tensor Tensor::transpose() const {
 }
 
 Tensor Tensor::transpose(const std::vector<int> &axes) const {
-    // GPU lazy tensors: create a lazy transpose node to keep the graph intact
-    if (is_lazy() && device() == Device::GPU) {
+    // GPU lazy tensors or ANE tracing: keep the graph intact
+    bool use_lazy = is_lazy() && device() == Device::GPU;
+#ifdef AXIOM_HAS_ANE
+    use_lazy = use_lazy || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy) {
         // Compute output shape for the transpose
         Shape out_shape(ndim());
         Strides out_strides(ndim()); // placeholder, GPU doesn't use strides

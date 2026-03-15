@@ -20,16 +20,10 @@ Tensor Module::operator()(const Tensor &input) const {
     // so their operator() calls go straight to forward().
     if (device_ == Device::ANE) {
         if (!ane_model_ || ane_compiled_shape_ != input.shape()) {
-            // Only attempt compilation if this module is directly supported.
-            // Complex modules with custom forward() logic (residuals,
-            // inline ops, permutations) cannot be captured by walk_module
-            // and must fall back to CPU.
-            if (!backends::ane::ANECompiledModel::is_supported(*this)) {
-                // Not ANE-compilable — fall back to CPU permanently
-                ane_compiled_shape_ = input.shape();
-                ane_model_.reset();
-                return forward(input.cpu());
-            }
+            // Try ANE compilation. For directly supported modules,
+            // walk_module generates MIL. For complex modules with custom
+            // forward() logic, the trace-based compiler captures all
+            // ops including residuals, inline activations, and permutations.
             try {
                 auto compiled = backends::ane::ANECompiledModel::compile(
                     *this, input.shape());

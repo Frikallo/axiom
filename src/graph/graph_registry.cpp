@@ -1,5 +1,8 @@
 #include "axiom/graph/graph_registry.hpp"
 #include "axiom/error.hpp"
+#ifdef AXIOM_HAS_ANE
+#include "backends/ane/ane_tracer.hpp"
+#endif
 #include "axiom/graph/compiled_graph.hpp"
 #include "axiom/graph/graph_cache.hpp"
 #include "axiom/graph/graph_executor.hpp"
@@ -38,6 +41,11 @@ static std::atomic<size_t> g_max_pending_nodes{10000};
 static thread_local bool tl_eager_mode = false;
 
 bool is_eager_mode_enabled() {
+    // During ANE tracing, force lazy mode to capture the computation graph
+#ifdef AXIOM_HAS_ANE
+    if (backends::ane::is_ane_tracing())
+        return false;
+#endif
     // Check environment variable once (thread-safe static init per C++11)
     static const bool env_eager = [] {
         const char *env = std::getenv("AXIOM_EAGER_MODE");
