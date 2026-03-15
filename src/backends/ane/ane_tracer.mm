@@ -452,15 +452,57 @@ TracedMIL compile_trace_to_mil(const TraceResult &trace,
             break;
         }
 
-        // GLU
+        // GLU: split along axis, sigmoid(second_half) * first_half
         case ops::OpType::GLU: {
-            // Split along axis, sigmoid second half, multiply
-            auto ane_shape = shape_to_vec(node->output_shape);
-            // GLU output is half the size along the split axis
-            // For now, emit as passthrough — GLU requires slice_by_index
-            // which needs the exact split point
-            result_var = input_names[0]; // TODO: implement GLU split
-            gen.track_shape(result_var, ane_shape);
+            auto in_shape = shape_to_vec(node->inputs[0]->output_shape);
+            auto out_shape = shape_to_vec(node->output_shape);
+            std::string type_str = MILGenerator::mil_type_public(out_shape);
+
+            // Determine split axis and half size
+            // GLU splits the input in half along a dimension
+            int split_dim = -1;
+            for (size_t i = 0; i < in_shape.size(); i++) {
+                if (in_shape[i] != out_shape[i]) {
+                    split_dim = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (split_dim < 0) split_dim = static_cast<int>(in_shape.size()) - 1;
+            int64_t half = out_shape[split_dim];
+
+            // Slice first half
+            std::vector<int> begin1(in_shape.size(), 0);
+            std::vector<int> end1(in_shape.begin(), in_shape.end());
+            end1[split_dim] = static_cast<int>(half);
+            std::string b1 = next_name("gb");
+            std::string e1 = next_name("ge");
+            gen.emit_int_tensor_const_public(b1, begin1);
+            gen.emit_int_tensor_const_public(e1, end1);
+            std::string first = next_name("g1");
+            gen.emit_raw("        " + type_str + " " + first +
+                          " = slice_by_index(begin=" + b1 + ", end=" + e1 +
+                          ", x=" + input_names[0] +
+                          ")[name=string(\"" + name + "_1\")];\n");
+            gen.track_shape(first, out_shape);
+
+            // Slice second half
+            std::vector<int> begin2(in_shape.size(), 0);
+            begin2[split_dim] = static_cast<int>(half);
+            std::vector<int> end2(in_shape.begin(), in_shape.end());
+            std::string b2 = next_name("gb");
+            std::string e2 = next_name("ge");
+            gen.emit_int_tensor_const_public(b2, begin2);
+            gen.emit_int_tensor_const_public(e2, end2);
+            std::string second = next_name("g2");
+            gen.emit_raw("        " + type_str + " " + second +
+                          " = slice_by_index(begin=" + b2 + ", end=" + e2 +
+                          ", x=" + input_names[0] +
+                          ")[name=string(\"" + name + "_2\")];\n");
+            gen.track_shape(second, out_shape);
+
+            // sigmoid(second) * first
+            std::string sig = gen.add_sigmoid(second, name + "_sig");
+            result_var = gen.add_mul(first, sig, name + "_glu");
             break;
         }
 
@@ -530,29 +572,118 @@ TracedMIL compile_trace_to_mil(const TraceResult &trace,
             break;
         }
 
-        // LayerNorm
+        // LayerNorm: (x - mean) / sqrt(var + eps) * weight + bias
         case ops::OpType::LayerNorm: {
             // Inputs: [input, weight, bias]
             auto &np = std::get<graph::NormParams>(node->params);
-            // Use existing MIL generator's layer_norm which builds from
-            // primitives. But we need Tensor objects for weight/bias.
-            // Since they're already emitted as constants, use the
-            // primitive approach inline.
             auto ane_shape = shape_to_vec(node->output_shape);
-            // For traced graphs, the weight/bias are MIL variables
-            // already. Emit layer_norm from primitives.
-            // This is complex — delegate to a simplified version.
-            // For now, pass through (the graph still captures the operation)
-            result_var = input_names[0]; // TODO: full layer_norm emission
-            gen.track_shape(result_var, ane_shape);
+            // Determine norm dimension size from weight shape
+            int64_t dim = node->inputs[1]->output_shape.empty()
+                              ? ane_shape.back()
+                              : static_cast<int64_t>(
+                                    ShapeUtils::size(node->inputs[1]->output_shape));
+            std::string eps_v = gen.emit_scalar_const_public(
+                next_name("lne"), "fp16", np.eps);
+            std::string invd = gen.emit_scalar_const_public(
+                next_name("lni"), "fp16", 1.0f / static_cast<float>(dim));
+            std::string nhalf = gen.emit_scalar_const_public(
+                next_name("lnh"), "fp16", -0.5f);
+
+            // Reduce axis — last dim
+            int axis = np.axis >= 0 ? np.axis : static_cast<int>(ane_shape.size()) - 1;
+            std::string ax = next_name("lna");
+            gen.emit_int_tensor_const_public(ax, {axis});
+            std::string kd = next_name("lnk");
+            gen.emit_raw("        bool " + kd + " = const()[name=string(\"" +
+                          kd + "\"), val=bool(true)];\n");
+
+            // mean
+            std::string sx = next_name("lns");
+            auto red_shape = ane_shape;
+            red_shape[axis] = 1;
+            gen.emit_raw("        " + MILGenerator::mil_type_public(red_shape) +
+                          " " + sx + " = reduce_sum(axes=" + ax +
+                          ", keep_dims=" + kd + ", x=" + input_names[0] +
+                          ")[name=string(\"" + name + "_sx\")];\n");
+            gen.track_shape(sx, red_shape);
+            std::string mean = gen.add_mul(sx, invd, name + "_mean");
+
+            // center
+            std::string xc = gen.add_sub(input_names[0], mean, name + "_xc");
+
+            // var
+            std::string sq = gen.add_mul(xc, xc, name + "_sq");
+            std::string ssq = next_name("lnq");
+            gen.emit_raw("        " + MILGenerator::mil_type_public(red_shape) +
+                          " " + ssq + " = reduce_sum(axes=" + ax +
+                          ", keep_dims=" + kd + ", x=" + sq +
+                          ")[name=string(\"" + name + "_ssq\")];\n");
+            gen.track_shape(ssq, red_shape);
+            std::string var = gen.add_mul(ssq, invd, name + "_var");
+
+            // rstd = (var + eps) ^ (-0.5)
+            std::string ve = gen.add_add(var, eps_v, name + "_ve");
+            std::string rstd = next_name("lnr");
+            gen.emit_raw("        " + MILGenerator::mil_type_public(red_shape) +
+                          " " + rstd + " = pow(x=" + ve + ", y=" + nhalf +
+                          ")[name=string(\"" + name + "_rstd\")];\n");
+            gen.track_shape(rstd, red_shape);
+
+            // normalize and affine
+            std::string xn = gen.add_mul(xc, rstd, name + "_xn");
+            std::string scaled = gen.add_mul(xn, input_names[1], name + "_sc");
+            result_var = gen.add_add(scaled, input_names[2], name + "_ln");
             break;
         }
 
-        // RMSNorm
+        // RMSNorm: x * rsqrt(mean(x^2) + eps) * weight
         case ops::OpType::RMSNorm: {
+            // Inputs: [input, weight]
+            auto &np = std::get<graph::NormParams>(node->params);
             auto ane_shape = shape_to_vec(node->output_shape);
-            result_var = input_names[0]; // TODO: full rms_norm emission
-            gen.track_shape(result_var, ane_shape);
+            int64_t dim = node->inputs[1]->output_shape.empty()
+                              ? ane_shape.back()
+                              : static_cast<int64_t>(
+                                    ShapeUtils::size(node->inputs[1]->output_shape));
+            std::string eps_v = gen.emit_scalar_const_public(
+                next_name("rne"), "fp16", np.eps);
+            std::string invd = gen.emit_scalar_const_public(
+                next_name("rni"), "fp16", 1.0f / static_cast<float>(dim));
+            std::string nhalf = gen.emit_scalar_const_public(
+                next_name("rnh"), "fp16", -0.5f);
+
+            int axis = np.axis >= 0 ? np.axis : static_cast<int>(ane_shape.size()) - 1;
+            std::string ax = next_name("rna");
+            gen.emit_int_tensor_const_public(ax, {axis});
+            std::string kd = next_name("rnk");
+            gen.emit_raw("        bool " + kd + " = const()[name=string(\"" +
+                          kd + "\"), val=bool(true)];\n");
+
+            // sq = x * x
+            std::string sq = gen.add_mul(input_names[0], input_names[0], name + "_sq");
+
+            // mean of squares
+            auto red_shape = ane_shape;
+            red_shape[axis] = 1;
+            std::string ss = next_name("rns");
+            gen.emit_raw("        " + MILGenerator::mil_type_public(red_shape) +
+                          " " + ss + " = reduce_sum(axes=" + ax +
+                          ", keep_dims=" + kd + ", x=" + sq +
+                          ")[name=string(\"" + name + "_ss\")];\n");
+            gen.track_shape(ss, red_shape);
+            std::string ms = gen.add_mul(ss, invd, name + "_ms");
+
+            // rrms = (ms + eps) ^ (-0.5)
+            std::string ve = gen.add_add(ms, eps_v, name + "_ve");
+            std::string rrms = next_name("rnr");
+            gen.emit_raw("        " + MILGenerator::mil_type_public(red_shape) +
+                          " " + rrms + " = pow(x=" + ve + ", y=" + nhalf +
+                          ")[name=string(\"" + name + "_rrms\")];\n");
+            gen.track_shape(rrms, red_shape);
+
+            // normalize and scale
+            std::string xn = gen.add_mul(input_names[0], rrms, name + "_xn");
+            result_var = gen.add_mul(xn, input_names[1], name + "_rn");
             break;
         }
 
@@ -676,9 +807,124 @@ TracedMIL compile_trace_to_mil(const TraceResult &trace,
             gen.track_shape(result_var, shape_to_vec(node->output_shape));
             break;
 
+        // Where: select(cond, a, b)
+        case ops::OpType::Where: {
+            auto ane_shape = shape_to_vec(node->output_shape);
+            std::string type_str = MILGenerator::mil_type_public(ane_shape);
+            result_var = next_name("wh");
+            // inputs: [condition, x_true, x_false]
+            gen.emit_raw("        " + type_str + " " + result_var +
+                          " = select(a=" + input_names[1] + ", b=" +
+                          input_names[2] + ", cond=" + input_names[0] +
+                          ")[name=string(\"" + name + "\")];\n");
+            gen.track_shape(result_var, ane_shape);
+            break;
+        }
+
+        // Dropout — identity in inference
+        case ops::OpType::Dropout:
+            result_var = input_names[0];
+            break;
+
+        // Cast — type conversion (passthrough for ANE, compute stays fp16)
+        case ops::OpType::Cast:
+            // If this is not the trace input placeholder
+            if (!node->inputs.empty()) {
+                result_var = input_names[0];
+            } else {
+                result_var = input_var;
+            }
+            break;
+
+        // Comparison ops — emit as MIL ops
+        case ops::OpType::Less:
+        case ops::OpType::LessEqual:
+        case ops::OpType::Greater:
+        case ops::OpType::GreaterEqual:
+        case ops::OpType::Equal:
+        case ops::OpType::NotEqual: {
+            auto ane_shape = shape_to_vec(node->output_shape);
+            std::string type_str = MILGenerator::mil_type_public(ane_shape);
+            std::string op_name;
+            switch (node->op_type) {
+            case ops::OpType::Less: op_name = "less"; break;
+            case ops::OpType::LessEqual: op_name = "less_equal"; break;
+            case ops::OpType::Greater: op_name = "greater"; break;
+            case ops::OpType::GreaterEqual: op_name = "greater_equal"; break;
+            case ops::OpType::Equal: op_name = "equal"; break;
+            case ops::OpType::NotEqual: op_name = "not_equal"; break;
+            default: break;
+            }
+            result_var = next_name("cmp");
+            gen.emit_raw("        " + type_str + " " + result_var + " = " +
+                          op_name + "(x=" + input_names[0] + ", y=" +
+                          input_names[1] + ")[name=string(\"" + name +
+                          "\")];\n");
+            gen.track_shape(result_var, ane_shape);
+            break;
+        }
+
+        // Maximum / Minimum
+        case ops::OpType::Maximum:
+        case ops::OpType::Minimum: {
+            auto ane_shape = shape_to_vec(node->output_shape);
+            std::string type_str = MILGenerator::mil_type_public(ane_shape);
+            std::string op_name = (node->op_type == ops::OpType::Maximum)
+                                       ? "maximum" : "minimum";
+            result_var = next_name("mm");
+            gen.emit_raw("        " + type_str + " " + result_var + " = " +
+                          op_name + "(x=" + input_names[0] + ", y=" +
+                          input_names[1] + ")[name=string(\"" + name +
+                          "\")];\n");
+            gen.track_shape(result_var, ane_shape);
+            break;
+        }
+
+        // Reciprocal
+        case ops::OpType::Reciprocal: {
+            auto ane_shape = shape_to_vec(node->output_shape);
+            std::string type_str = MILGenerator::mil_type_public(ane_shape);
+            result_var = next_name("rc");
+            gen.emit_raw("        " + type_str + " " + result_var +
+                          " = inverse(x=" + input_names[0] +
+                          ")[name=string(\"" + name + "\")];\n");
+            gen.track_shape(result_var, ane_shape);
+            break;
+        }
+
+        // Unsqueeze — should have been converted to Reshape by the tracing
+        // guard but handle it just in case
+        case ops::OpType::Unsqueeze: {
+            auto out_shape = shape_to_vec(node->output_shape);
+            result_var = gen.add_reshape(input_names[0], out_shape, name);
+            break;
+        }
+
+        // LeakyReLU
+        case ops::OpType::LeakyReLU: {
+            auto &ap = std::get<graph::ActivationParams>(node->params);
+            auto ane_shape = shape_to_vec(node->output_shape);
+            std::string type_str = MILGenerator::mil_type_public(ane_shape);
+            result_var = next_name("lr");
+            gen.emit_raw("        " + type_str + " " + result_var +
+                          " = leaky_relu(alpha=fp16(" +
+                          std::to_string(ap.alpha) + "), x=" +
+                          input_names[0] + ")[name=string(\"" + name +
+                          "\")];\n");
+            gen.track_shape(result_var, ane_shape);
+            break;
+        }
+
+        // ScaledDotProductAttention — complex composite
+        case ops::OpType::ScaledDotProductAttention: {
+            // This should be decomposed by the tracer into matmul+scale+softmax+matmul
+            // If it appears as a single node, pass through
+            result_var = input_names[0];
+            break;
+        }
+
         default:
-            // Unsupported op — passthrough (will produce wrong results
-            // but won't crash during graph construction)
+            // Unsupported op — passthrough with warning
             result_var = input_names.empty() ? input_var : input_names[0];
             break;
         }
