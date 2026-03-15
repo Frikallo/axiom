@@ -185,12 +185,14 @@ TEST(ANEIntegration, RecompileOnShapeChange) {
 TEST(ANEIntegration, FallbackOnUnsupported) {
     SKIP_IF_NO_ANE();
 
-    // LSTM is not ANE-supported — should fall back to CPU gracefully
+    // LSTM is not ANE-supported — to(ANE) should not crash,
+    // and LSTM itself stays on CPU (only supported leaf children
+    // get device_==ANE)
     nn::LSTM lstm;
-    // Just verify the to() call doesn't crash
     lstm.to(Device::ANE);
-    EXPECT_EQ(lstm.device(), Device::ANE);
-    // forward() would fall back to CPU (tested implicitly)
+    // LSTM itself is not supported, so device stays CPU
+    EXPECT_EQ(lstm.device(), Device::CPU);
+    // But its internal Linear submodules may have gotten ANE
 }
 
 TEST(ANEIntegration, WeightUpdateInvalidatesCache) {

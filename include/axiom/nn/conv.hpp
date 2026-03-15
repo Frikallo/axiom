@@ -30,11 +30,13 @@ class Conv1d : public Module {
 
     Tensor forward(const Tensor &input) const override;
 
-    // Accessors for fused GPU operations
     const Tensor &weight() const { return weight_; }
     const Tensor &bias() const { return bias_; }
+    int stride() const { return stride_; }
     int padding() const { return padding_; }
+    int dilation() const { return dilation_; }
     int groups() const { return groups_; }
+    bool has_bias() const { return has_bias_; }
 
   private:
     Tensor weight_;

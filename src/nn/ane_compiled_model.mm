@@ -325,6 +325,17 @@ static std::string walk_module(MILGenerator &gen, const nn::Module &module,
         return gen.add_linear(input_var, linear->weight(), bias, prefix);
     }
 
+    // Conv1d: reshape weight [O, I/g, K] → [O, I/g, 1, K] and use Conv2d
+    if (auto *conv = dynamic_cast<const nn::Conv1d *>(&module)) {
+        const Tensor *bias = conv->has_bias() ? &conv->bias() : nullptr;
+        Tensor w2d = conv->weight().reshape(
+            {conv->weight().shape()[0], conv->weight().shape()[1], 1,
+             conv->weight().shape()[2]});
+        return gen.add_conv2d(input_var, w2d, bias,
+                              {1, conv->stride()}, {0, conv->padding()},
+                              {1, conv->dilation()}, conv->groups(), prefix);
+    }
+
     if (auto *conv = dynamic_cast<const nn::Conv2d *>(&module)) {
         const Tensor *bias = conv->has_bias() ? &conv->bias() : nullptr;
         return gen.add_conv2d(input_var, conv->weight(), bias, conv->stride(),
@@ -435,6 +446,7 @@ ANECompiledModel::operator=(ANECompiledModel &&) noexcept = default;
 
 bool ANECompiledModel::is_supported(const nn::Module &module) {
     if (dynamic_cast<const nn::Linear *>(&module)) return true;
+    if (dynamic_cast<const nn::Conv1d *>(&module)) return true;
     if (dynamic_cast<const nn::Conv2d *>(&module)) return true;
     if (dynamic_cast<const nn::MultiHeadAttention *>(&module)) return true;
     if (dynamic_cast<const nn::ReLU *>(&module)) return true;
