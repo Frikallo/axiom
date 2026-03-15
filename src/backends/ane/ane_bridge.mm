@@ -379,3 +379,42 @@ void ane_release(ANEModelHandle *handle) {
 }
 
 int ane_compile_count(void) { return g_compile_count.load(); }
+
+bool ane_can_execute(void) {
+    static int result = -1; // -1 = untested, 0 = no, 1 = yes
+    if (result >= 0)
+        return result == 1;
+
+    if (!ane_is_available()) {
+        result = 0;
+        return false;
+    }
+
+    // Try compiling and evaluating a trivial MIL program
+    const char *mil =
+        "program(1.3)\n"
+        "[buildInfo = dict<string, string>({"
+        "{\"coremlc-component-MIL\", \"3510.2.1\"}, "
+        "{\"coremlc-version\", \"3505.4.1\"}, "
+        "{\"coremltools-component-milinternal\", \"\"}, "
+        "{\"coremltools-version\", \"9.0\"}"
+        "})]\n"
+        "{\n"
+        "    func main<ios18>(tensor<fp16, [1, 1, 1, 1]> x) {\n"
+        "        tensor<fp16, [1, 1, 1, 1]> y = relu(x=x)"
+        "[name=string(\"r\")];\n"
+        "    } -> (y);\n"
+        "}\n";
+
+    ANEModelHandle *handle = ane_compile(mil);
+    if (!handle) {
+        result = 0;
+        return false;
+    }
+
+    int rc = ane_load(handle);
+    ane_release(handle);
+
+    result = (rc == 0) ? 1 : 0;
+    return result == 1;
+}

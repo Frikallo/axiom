@@ -79,6 +79,12 @@ void ane_release(ANEModelHandle *handle);
 // The ANE private framework leaks resources after ~119 compilations.
 int ane_compile_count(void);
 
+// Test if ANE can actually compile and execute a model.
+// Returns true only if a trivial MIL program compiles, loads, and evaluates
+// successfully. Use this instead of ane_is_available() for test guards in CI
+// where the framework may exist but the hardware is inaccessible.
+bool ane_can_execute(void);
+
 // Maximum recommended compilations before resource exhaustion.
 #define ANE_COMPILE_BUDGET_WARNING 95
 #define ANE_COMPILE_BUDGET_LIMIT 115

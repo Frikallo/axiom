@@ -16,6 +16,13 @@
         }                                                                      \
     } while (0)
 
+#define SKIP_IF_NO_ANE_EXEC()                                                  \
+    do {                                                                       \
+        if (!ane_can_execute()) {                                              \
+            GTEST_SKIP() << "ANE execution not available";                     \
+        }                                                                      \
+    } while (0)
+
 namespace axiom {
 namespace testing {
 
@@ -164,7 +171,7 @@ TEST(ANEMIL, StackedLinearsMIL) {
 // ============================================================================
 
 TEST(ANEMIL, CompileSimpleIdentity) {
-    SKIP_IF_NO_ANE();
+    SKIP_IF_NO_ANE_EXEC();
 
     backends::ane::MILGenerator gen;
     gen.begin_program();
@@ -241,7 +248,7 @@ TEST(ANEMIL, CompileSimpleIdentity) {
 }
 
 TEST(ANEMIL, CompileLinearForward) {
-    SKIP_IF_NO_ANE();
+    SKIP_IF_NO_ANE_EXEC();
 
     // Create a simple 3→4 linear layer
     int64_t in_f = 3, out_f = 4, seq = 2;

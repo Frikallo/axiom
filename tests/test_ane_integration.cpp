@@ -15,8 +15,8 @@
 
 #define SKIP_IF_NO_ANE()                                                       \
     do {                                                                       \
-        if (!ane_is_available()) {                                             \
-            GTEST_SKIP() << "ANE not available";                               \
+        if (!ane_can_execute()) {                                              \
+            GTEST_SKIP() << "ANE execution not available";                     \
         }                                                                      \
     } while (0)
 
