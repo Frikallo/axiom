@@ -294,39 +294,48 @@ int ane_eval(ANEModelHandle *handle, IOSurfaceRef input_surface,
     @try {
         id model = (__bridge id)handle->model;
 
-        // Create _ANEIOSurfaceObject wrappers
-        SEL ioSurfaceInitSel = sel_registerName("initWithIOSurface:");
+        // Wrap IOSurfaces using class factory method (not init)
+        SEL wrapSel = sel_registerName("objectWithIOSurface:");
 
-        id inputObj = ((id(*)(id, SEL, IOSurfaceRef))objc_msgSend)(
-            [g_ANECIOSurfaceObject alloc], ioSurfaceInitSel, input_surface);
-        id outputObj = ((id(*)(id, SEL, IOSurfaceRef))objc_msgSend)(
-            [g_ANECIOSurfaceObject alloc], ioSurfaceInitSel, output_surface);
+        id inputObj = ((id(*)(Class, SEL, IOSurfaceRef))objc_msgSend)(
+            g_ANECIOSurfaceObject, wrapSel, input_surface);
+        id outputObj = ((id(*)(Class, SEL, IOSurfaceRef))objc_msgSend)(
+            g_ANECIOSurfaceObject, wrapSel, output_surface);
 
         if (!inputObj || !outputObj) {
-            NSLog(@"[Axiom ANE] Failed to create IOSurface objects");
+            NSLog(@"[Axiom ANE] Failed to wrap IOSurface objects");
             return -1;
         }
 
-        // Create request
-        SEL requestInitSel = sel_registerName("initWithInputs:outputs:");
-        NSArray *inputs = @[ inputObj ];
-        NSArray *outputs = @[ outputObj ];
+        // Create request using full class factory method
+        SEL requestSel = sel_registerName(
+            "requestWithInputs:inputIndices:outputs:outputIndices:"
+            "weightsBuffer:perfStats:procedureIndex:");
 
-        id request = ((id(*)(id, SEL, id, id))objc_msgSend)(
-            [g_ANECRequest alloc], requestInitSel, inputs, outputs);
+        id request = ((id(*)(Class, SEL, id, id, id, id, id, id, id))
+                          objc_msgSend)(
+            g_ANECRequest, requestSel,
+            @[ inputObj ],  // inputs
+            @[ @0 ],        // inputIndices
+            @[ outputObj ], // outputs
+            @[ @0 ],        // outputIndices
+            (id)nil,        // weightsBuffer
+            (id)nil,        // perfStats
+            @0);            // procedureIndex
         if (!request) {
             NSLog(@"[Axiom ANE] Failed to create request");
             return -1;
         }
 
-        // Evaluate
-        SEL evalSel = sel_registerName("evaluateWithRequest:qos:error:");
+        // Evaluate: -[_ANEInMemoryModel evaluateWithQoS:options:request:error:]
+        SEL evalSel =
+            sel_registerName("evaluateWithQoS:options:request:error:");
         NSError *error = nil;
 
         BOOL evalOk =
-            ((BOOL(*)(id, SEL, id, int,
+            ((BOOL(*)(id, SEL, unsigned int, id, id,
                       NSError *__autoreleasing *))objc_msgSend)(
-                model, evalSel, request, 21, &error);
+                model, evalSel, 21u, @{}, request, &error);
         if (!evalOk || error) {
             NSLog(@"[Axiom ANE] Eval failed: %@",
                   error ? [error localizedDescription] : @"unknown error");
@@ -354,10 +363,12 @@ void ane_release(ANEModelHandle *handle) {
         if (handle->model) {
             id model = (__bridge_transfer id)(handle->model);
 
-            SEL unloadSel = sel_registerName("unloadWithQoS:options:error:");
+            // unloadWithQoS:error: (2 params, not 3)
+            SEL unloadSel = sel_registerName("unloadWithQoS:error:");
             NSError *error = nil;
-            ((BOOL(*)(id, SEL, int, id, NSError *__autoreleasing *))
-                 objc_msgSend)(model, unloadSel, 21, @{}, &error);
+            ((BOOL(*)(id, SEL, unsigned int,
+                      NSError *__autoreleasing *))objc_msgSend)(
+                model, unloadSel, 21u, &error);
             // model released by ARC via __bridge_transfer
         }
     } @catch (NSException *exception) {

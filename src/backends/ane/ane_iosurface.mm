@@ -161,6 +161,23 @@ int ane_surface_read_f16(IOSurfaceRef surface, uint16_t *data, int channels,
     return 0;
 }
 
+IOSurfaceRef ane_create_flat_surface(size_t size_bytes) {
+    if (size_bytes == 0) {
+        return NULL;
+    }
+
+    NSDictionary *props = @{
+        (id)kIOSurfaceWidth : @(size_bytes),
+        (id)kIOSurfaceHeight : @1,
+        (id)kIOSurfaceBytesPerElement : @1,
+        (id)kIOSurfaceBytesPerRow : @(size_bytes),
+        (id)kIOSurfaceAllocSize : @(size_bytes),
+        (id)kIOSurfacePixelFormat : @0,
+    };
+
+    return IOSurfaceCreate((__bridge CFDictionaryRef)props);
+}
+
 size_t ane_surface_size_bytes(IOSurfaceRef surface) {
     if (!surface) {
         return 0;

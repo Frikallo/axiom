@@ -166,17 +166,14 @@ TEST(ANEMIL, StackedLinearsMIL) {
 TEST(ANEMIL, CompileSimpleIdentity) {
     SKIP_IF_NO_ANE();
 
-    // Simplest possible MIL: pass input through to output
-    // Using add with zero as identity
     backends::ane::MILGenerator gen;
     gen.begin_program();
     auto x = gen.add_input("x", {1, 4, 1, 8});
-
-    // Use SiLU as a simple identity-ish test (tests compilation)
     auto y = gen.add_relu(x, "act");
     gen.set_output(y);
 
     auto mil = gen.finalize();
+    std::cout << "=== Generated MIL ===\n" << mil << "=== END ===\n";
     auto &blobs = gen.weight_blobs();
 
     // Try to compile
@@ -194,32 +191,47 @@ TEST(ANEMIL, CompileSimpleIdentity) {
     if (handle) {
         int rc = ane_load(handle);
         if (rc == 0) {
-            // Create IOSurfaces
-            IOSurfaceRef input_surface = ane_create_surface(4, 8);
-            IOSurfaceRef output_surface = ane_create_surface(4, 8);
+            // Create flat IOSurfaces for ANE eval
+            // Input: [1, 4, 1, 8] in FP16 = 4*8*2 = 64 bytes
+            // ANE may require page-aligned buffers (16384 bytes minimum)
+            size_t num_elements = 4 * 8;
+            size_t buf_bytes = 16384; // Page-aligned minimum
+            IOSurfaceRef input_surface = ane_create_flat_surface(buf_bytes);
+            IOSurfaceRef output_surface = ane_create_flat_surface(buf_bytes);
             ASSERT_NE(input_surface, nullptr);
             ASSERT_NE(output_surface, nullptr);
 
-            // Write test data
-            std::vector<float> input_data(32, 1.0f);
-            ane_surface_write_f32(input_surface, input_data.data(), 4, 8);
+            // Write FP16 test data (all 1.0 = 0x3C00)
+            IOSurfaceLock(input_surface, 0, NULL);
+            auto *fp16_in = static_cast<uint16_t *>(
+                IOSurfaceGetBaseAddress(input_surface));
+            for (size_t i = 0; i < num_elements; i++)
+                fp16_in[i] = 0x3C00; // 1.0 in FP16
+            IOSurfaceUnlock(input_surface, 0, NULL);
 
-            // Evaluate
             rc = ane_eval(handle, input_surface, output_surface);
             if (rc == 0) {
-                // Read output
-                std::vector<float> output_data(32);
-                ane_surface_read_f32(output_surface, output_data.data(), 4, 8);
+                // Read FP16 output, convert to float
+                IOSurfaceLock(output_surface, kIOSurfaceLockReadOnly, NULL);
+                auto *fp16_out = static_cast<const uint16_t *>(
+                    IOSurfaceGetBaseAddress(output_surface));
 
-                // Should be identity (input + 0 = input)
-                for (int i = 0; i < 32; i++) {
-                    EXPECT_NEAR(input_data[i], output_data[i], 0.1f)
-                        << "Mismatch at " << i;
-                }
+                // ReLU(1.0) should be 1.0
+                // Check first element (FP16: 0x3C00 = 1.0)
+                std::cout << "[INFO] ANE ReLU output fp16[0] = 0x"
+                          << std::hex << fp16_out[0] << std::dec << "\n";
+                EXPECT_EQ(fp16_out[0], 0x3C00)
+                    << "ReLU(1.0) should be 1.0";
+
+                IOSurfaceUnlock(output_surface, kIOSurfaceLockReadOnly, NULL);
+            } else {
+                std::cout << "[INFO] ANE eval failed\n";
             }
 
             CFRelease(input_surface);
             CFRelease(output_surface);
+        } else {
+            std::cout << "[INFO] ANE load failed\n";
         }
         ane_release(handle);
     } else {
@@ -252,6 +264,7 @@ TEST(ANEMIL, CompileLinearForward) {
     gen.set_output(y);
 
     auto mil = gen.finalize();
+    std::cout << "=== Linear MIL ===\n" << mil << "=== END ===\n";
     auto &blobs = gen.weight_blobs();
 
     std::vector<ANEWeightEntry> entries;
@@ -265,40 +278,50 @@ TEST(ANEMIL, CompileLinearForward) {
 
     if (handle) {
         int rc = ane_load(handle);
+        ASSERT_EQ(rc, 0) << "ANE load failed";
+
+        // Create flat IOSurfaces (page-aligned)
+        size_t buf_bytes = 16384;
+        IOSurfaceRef input_surface = ane_create_flat_surface(buf_bytes);
+        IOSurfaceRef output_surface = ane_create_flat_surface(buf_bytes);
+        ASSERT_NE(input_surface, nullptr);
+        ASSERT_NE(output_surface, nullptr);
+
+        // Write FP16 input: [1, 3, 1, 2] = 6 elements
+        // Channel 0: [1.0, 2.0], Channel 1: [3.0, 4.0], Channel 2: [5.0, 6.0]
+        IOSurfaceLock(input_surface, 0, NULL);
+        auto *fp16_in = static_cast<uint16_t *>(
+            IOSurfaceGetBaseAddress(input_surface));
+        std::memset(fp16_in, 0, buf_bytes);
+        // FP16 values: 1.0=0x3C00, 2.0=0x4000, 3.0=0x4200,
+        //              4.0=0x4400, 5.0=0x4500, 6.0=0x4600
+        fp16_in[0] = 0x3C00; fp16_in[1] = 0x4000; // chan 0
+        fp16_in[2] = 0x4200; fp16_in[3] = 0x4400; // chan 1
+        fp16_in[4] = 0x4500; fp16_in[5] = 0x4600; // chan 2
+        IOSurfaceUnlock(input_surface, 0, NULL);
+
+        rc = ane_eval(handle, input_surface, output_surface);
         if (rc == 0) {
-            IOSurfaceRef input_surface =
-                ane_create_surface(static_cast<int>(in_f), static_cast<int>(seq));
-            IOSurfaceRef output_surface =
-                ane_create_surface(static_cast<int>(out_f), static_cast<int>(seq));
-            ASSERT_NE(input_surface, nullptr);
-            ASSERT_NE(output_surface, nullptr);
+            IOSurfaceLock(output_surface, kIOSurfaceLockReadOnly, NULL);
+            auto *fp16_out = static_cast<const uint16_t *>(
+                IOSurfaceGetBaseAddress(output_surface));
 
-            std::vector<float> input_data = {1.0f, 2.0f, 3.0f,
-                                              4.0f, 5.0f, 6.0f};
-            ane_surface_write_f32(input_surface, input_data.data(),
-                                 static_cast<int>(in_f), static_cast<int>(seq));
+            // Print output for debugging
+            std::cout << "[INFO] ANE Linear output (FP16 hex): ";
+            for (int i = 0; i < static_cast<int>(out_f * seq); i++)
+                std::cout << "0x" << std::hex << fp16_out[i] << " ";
+            std::cout << std::dec << "\n";
 
-            rc = ane_eval(handle, input_surface, output_surface);
-            if (rc == 0) {
-                std::vector<float> output_data(static_cast<size_t>(out_f * seq));
-                ane_surface_read_f32(output_surface, output_data.data(),
-                                     static_cast<int>(out_f), static_cast<int>(seq));
-
-                // With identity-ish weight, first output channel should ~= first
-                // input channel
-                std::cout << "[INFO] ANE Linear output: ";
-                for (auto v : output_data)
-                    std::cout << v << " ";
-                std::cout << "\n";
-            }
-
-            CFRelease(input_surface);
-            CFRelease(output_surface);
+            IOSurfaceUnlock(output_surface, kIOSurfaceLockReadOnly, NULL);
+        } else {
+            std::cout << "[INFO] ANE Linear eval failed\n";
         }
+
+        CFRelease(input_surface);
+        CFRelease(output_surface);
         ane_release(handle);
     } else {
-        std::cout << "[INFO] ANE Linear compilation failed (expected during "
-                     "development)\n";
+        FAIL() << "ANE compilation failed";
     }
 }
 

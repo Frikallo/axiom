@@ -42,6 +42,10 @@ int ane_surface_write_f16(IOSurfaceRef surface, const uint16_t *data,
 int ane_surface_read_f16(IOSurfaceRef surface, uint16_t *data, int channels,
                          int spatial_size);
 
+// Create a flat 1D IOSurface (width=size_bytes, height=1, bytesPerElement=1).
+// This matches the format expected by the ANE evaluation API.
+IOSurfaceRef ane_create_flat_surface(size_t size_bytes);
+
 // Get the total byte size of an IOSurface's allocation.
 size_t ane_surface_size_bytes(IOSurfaceRef surface);
 
