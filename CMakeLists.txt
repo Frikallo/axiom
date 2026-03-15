@@ -412,12 +412,14 @@ if(APPLE AND AXIOM_HAS_ANE)
         src/backends/ane/ane_bridge.mm
         src/backends/ane/ane_iosurface.mm
         src/backends/ane/ane_storage.mm
+        src/backends/ane/mil_generator.mm
     )
 
     set_source_files_properties(
         src/backends/ane/ane_bridge.mm
         src/backends/ane/ane_iosurface.mm
         src/backends/ane/ane_storage.mm
+        src/backends/ane/mil_generator.mm
         PROPERTIES
             COMPILE_FLAGS "-fobjc-arc"
     )

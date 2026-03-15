@@ -5,9 +5,9 @@
 #import <dlfcn.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
-#import <os/log.h>
 
 #include <atomic>
+#include <cstring>
 
 // ============================================================================
 // Private API class references (resolved at runtime via dlopen)
@@ -17,21 +17,17 @@ static Class g_ANECInMemoryModelDescriptor = nil;
 static Class g_ANECInMemoryModel = nil;
 static Class g_ANECRequest = nil;
 static Class g_ANECIOSurfaceObject = nil;
-static Class g_ANECClient = nil;
 
 static bool g_ane_initialized = false;
 static bool g_ane_available = false;
 static std::atomic<int> g_compile_count{0};
-
-static os_log_t g_ane_log = nullptr;
 
 // ============================================================================
 // Opaque handle wrapping the compiled+loaded ANE model
 // ============================================================================
 
 struct ANEModelHandle {
-    void *model;      // id retained via __bridge_retained
-    void *descriptor; // id retained via __bridge_retained
+    void *model; // _ANEInMemoryModel retained via __bridge_retained
 };
 
 // ============================================================================
@@ -43,9 +39,6 @@ int ane_init(void) {
     __block int result = 0;
 
     dispatch_once(&once, ^{
-      g_ane_log = os_log_create("com.axiom.ane", "bridge");
-
-      // Load the private ANE framework
       void *fw = dlopen("/System/Library/PrivateFrameworks/"
                         "AppleNeuralEngine.framework/AppleNeuralEngine",
                         RTLD_NOW);
@@ -56,16 +49,14 @@ int ane_init(void) {
           return;
       }
 
-      // Resolve private classes
       g_ANECInMemoryModelDescriptor =
           objc_getClass("_ANEInMemoryModelDescriptor");
       g_ANECInMemoryModel = objc_getClass("_ANEInMemoryModel");
       g_ANECRequest = objc_getClass("_ANERequest");
       g_ANECIOSurfaceObject = objc_getClass("_ANEIOSurfaceObject");
-      g_ANECClient = objc_getClass("_ANEClient");
 
       if (!g_ANECInMemoryModelDescriptor || !g_ANECInMemoryModel) {
-          NSLog(@"[Axiom ANE] Failed to resolve ANE private classes. "
+          NSLog(@"[Axiom ANE] Failed to resolve private classes. "
                  "Requires macOS 15+ on Apple Silicon.");
           result = -1;
           return;
@@ -87,10 +78,57 @@ bool ane_is_available(void) {
 }
 
 // ============================================================================
+// Weight blob construction
+// ============================================================================
+
+void *ane_build_weight_blob(const void *data, size_t data_size,
+                            size_t *out_total_size) {
+    // ANE weight blob format:
+    // Bytes 0-127: header
+    //   [0] = 0x01 (marker)
+    //   [4] = 0x02 (format)
+    //   [64-67] = 0xDEADBEEF (magic, little-endian)
+    //   [68] = 0x01 (version)
+    //   [72-75] = data_size (uint32, data size in bytes)
+    //   [80-83] = 128 (uint32, data offset)
+    // Bytes 128+: raw fp16 data
+    size_t total = 128 + data_size;
+    auto *buf = static_cast<uint8_t *>(calloc(1, total));
+    if (!buf) {
+        return nullptr;
+    }
+
+    buf[0] = 0x01;
+    buf[4] = 0x02;
+    buf[64] = 0xEF;
+    buf[65] = 0xBE;
+    buf[66] = 0xAD;
+    buf[67] = 0xDE;
+    buf[68] = 0x01;
+
+    auto data_size_32 = static_cast<uint32_t>(data_size);
+    std::memcpy(buf + 72, &data_size_32, sizeof(uint32_t));
+
+    uint32_t offset = 128;
+    std::memcpy(buf + 80, &offset, sizeof(uint32_t));
+
+    if (data && data_size > 0) {
+        std::memcpy(buf + 128, data, data_size);
+    }
+
+    if (out_total_size) {
+        *out_total_size = total;
+    }
+    return buf;
+}
+
+// ============================================================================
 // Compilation
 // ============================================================================
 
-ANEModelHandle *ane_compile(const char *mil_text) {
+ANEModelHandle *ane_compile_with_weights(const char *mil_text,
+                                          const ANEWeightEntry *weights,
+                                          int num_weights) {
     if (!g_ane_available) {
         NSLog(@"[Axiom ANE] ANE not available");
         return nullptr;
@@ -98,46 +136,91 @@ ANEModelHandle *ane_compile(const char *mil_text) {
 
     int count = g_compile_count.fetch_add(1) + 1;
     if (count >= ANE_COMPILE_BUDGET_LIMIT) {
-        NSLog(@"[Axiom ANE] Compile budget exhausted (%d/%d). "
-               "Resource leaks likely.",
-              count, ANE_COMPILE_BUDGET_LIMIT);
+        NSLog(@"[Axiom ANE] Compile budget exhausted (%d/%d)", count,
+              ANE_COMPILE_BUDGET_LIMIT);
     } else if (count >= ANE_COMPILE_BUDGET_WARNING) {
-        NSLog(@"[Axiom ANE] Compile budget warning: %d/%d compilations used",
-              count, ANE_COMPILE_BUDGET_LIMIT);
+        NSLog(@"[Axiom ANE] Compile budget warning: %d/%d", count,
+              ANE_COMPILE_BUDGET_LIMIT);
     }
 
     @try {
-        NSString *milString = [NSString stringWithUTF8String:mil_text];
-        if (!milString) {
-            NSLog(@"[Axiom ANE] Invalid MIL text (not valid UTF-8)");
-            return nullptr;
+        // Convert MIL text to NSData (UTF-8)
+        NSData *milData = [NSData dataWithBytes:mil_text
+                                         length:strlen(mil_text)];
+
+        // Build weight dictionary: path → {offset: 0, data: NSData}
+        NSMutableDictionary *wdict = [NSMutableDictionary dictionary];
+        for (int i = 0; i < num_weights; i++) {
+            NSString *path = [NSString
+                stringWithFormat:@"@model_path/weights/%s.bin",
+                                 weights[i].name];
+            NSData *blobData = [NSData dataWithBytes:weights[i].blob_data
+                                              length:weights[i].blob_size];
+            wdict[path] = @{@"offset" : @0, @"data" : blobData};
         }
 
-        // Create model descriptor from MIL text
+        // Create model descriptor from MIL data + weights
         SEL createSel =
             sel_registerName("modelWithMILText:weights:optionsPlist:");
 
-        NSData *weightsData = [NSData data];
-        NSDictionary *options = @{};
-
-        id descriptor =
-            ((id(*)(id, SEL, id, id, id))objc_msgSend)(
-                (id)g_ANECInMemoryModelDescriptor, createSel, milString,
-                weightsData, options);
+        id descriptor = ((id(*)(id, SEL, id, id, id))objc_msgSend)(
+            (id)g_ANECInMemoryModelDescriptor, createSel, milData, wdict,
+            (id)nil);
         if (!descriptor) {
             NSLog(@"[Axiom ANE] Failed to create model descriptor from MIL");
             return nullptr;
         }
 
-        // Compile the model
+        // Create in-memory model from descriptor
+        SEL modelSel =
+            sel_registerName("inMemoryModelWithDescriptor:");
+        id model = ((id(*)(id, SEL, id))objc_msgSend)(
+            (id)g_ANECInMemoryModel, modelSel, descriptor);
+        if (!model) {
+            NSLog(@"[Axiom ANE] Failed to create in-memory model");
+            return nullptr;
+        }
+
+        // Get the hex identifier for temp directory setup
+        SEL hexIdSel = sel_registerName("hexStringIdentifier");
+        NSString *hexId =
+            ((NSString * (*)(id, SEL)) objc_msgSend)(model, hexIdSel);
+
+        if (hexId) {
+            // Create temp directory structure for weight files
+            NSString *tmpDir = [NSTemporaryDirectory()
+                stringByAppendingPathComponent:hexId];
+            NSString *weightsDir =
+                [tmpDir stringByAppendingPathComponent:@"weights"];
+            [[NSFileManager defaultManager] createDirectoryAtPath:weightsDir
+                                      withIntermediateDirectories:YES
+                                                       attributes:nil
+                                                            error:nil];
+
+            // Write model.mil
+            NSString *milPath =
+                [tmpDir stringByAppendingPathComponent:@"model.mil"];
+            [milData writeToFile:milPath atomically:YES];
+
+            // Write weight files
+            for (int i = 0; i < num_weights; i++) {
+                NSString *wpath = [weightsDir stringByAppendingPathComponent:
+                    [NSString stringWithFormat:@"%s.bin", weights[i].name]];
+                NSData *blobData =
+                    [NSData dataWithBytes:weights[i].blob_data
+                                   length:weights[i].blob_size];
+                [blobData writeToFile:wpath atomically:YES];
+            }
+        }
+
+        // Compile
         SEL compileSel = sel_registerName("compileWithQoS:options:error:");
         NSError *error = nil;
-        NSDictionary *compileOptions = @{};
 
         BOOL compileOk =
             ((BOOL(*)(id, SEL, int, id,
                       NSError *__autoreleasing *))objc_msgSend)(
-                descriptor, compileSel, 0x19, compileOptions, &error);
+                model, compileSel, 21, @{}, &error);
         if (!compileOk || error) {
             NSLog(@"[Axiom ANE] Compile failed: %@",
                   error ? [error localizedDescription] : @"unknown error");
@@ -150,9 +233,7 @@ ANEModelHandle *ane_compile(const char *mil_text) {
             return nullptr;
         }
 
-        // Retain the descriptor (it becomes the model after compilation)
-        handle->descriptor = (__bridge_retained void *)descriptor;
-        handle->model = handle->descriptor; // Same object
+        handle->model = (__bridge_retained void *)model;
 
         NSLog(@"[Axiom ANE] Model compiled successfully (compile #%d)", count);
         return handle;
@@ -163,33 +244,35 @@ ANEModelHandle *ane_compile(const char *mil_text) {
     }
 }
 
+ANEModelHandle *ane_compile(const char *mil_text) {
+    return ane_compile_with_weights(mil_text, nullptr, 0);
+}
+
 // ============================================================================
 // Loading
 // ============================================================================
 
 int ane_load(ANEModelHandle *handle) {
-    if (!handle || !handle->descriptor) {
+    if (!handle || !handle->model) {
         return -1;
     }
 
     @try {
-        id descriptor = (__bridge id)handle->descriptor;
+        id model = (__bridge id)handle->model;
 
         SEL loadSel = sel_registerName("loadWithQoS:options:error:");
         NSError *error = nil;
-        NSDictionary *loadOptions = @{};
 
         BOOL loadOk =
             ((BOOL(*)(id, SEL, int, id,
                       NSError *__autoreleasing *))objc_msgSend)(
-                descriptor, loadSel, 0x19, loadOptions, &error);
+                model, loadSel, 21, @{}, &error);
         if (!loadOk || error) {
             NSLog(@"[Axiom ANE] Load failed: %@",
                   error ? [error localizedDescription] : @"unknown error");
             return -1;
         }
 
-        NSLog(@"[Axiom ANE] Model loaded onto hardware");
         return 0;
 
     } @catch (NSException *exception) {
@@ -243,7 +326,7 @@ int ane_eval(ANEModelHandle *handle, IOSurfaceRef input_surface,
         BOOL evalOk =
             ((BOOL(*)(id, SEL, id, int,
                       NSError *__autoreleasing *))objc_msgSend)(
-                model, evalSel, request, 0x19, &error);
+                model, evalSel, request, 21, &error);
         if (!evalOk || error) {
             NSLog(@"[Axiom ANE] Eval failed: %@",
                   error ? [error localizedDescription] : @"unknown error");
@@ -271,19 +354,11 @@ void ane_release(ANEModelHandle *handle) {
         if (handle->model) {
             id model = (__bridge_transfer id)(handle->model);
 
-            // Try to unload from hardware
             SEL unloadSel = sel_registerName("unloadWithQoS:options:error:");
             NSError *error = nil;
             ((BOOL(*)(id, SEL, int, id, NSError *__autoreleasing *))
-                 objc_msgSend)(model, unloadSel, 0x19, @{}, &error);
+                 objc_msgSend)(model, unloadSel, 21, @{}, &error);
             // model released by ARC via __bridge_transfer
-        }
-
-        // If descriptor is a different object (shouldn't be with current
-        // implementation, but guard for future changes)
-        if (handle->descriptor && handle->descriptor != handle->model) {
-            id desc = (__bridge_transfer id)(handle->descriptor);
-            (void)desc; // Released by ARC
         }
     } @catch (NSException *exception) {
         NSLog(@"[Axiom ANE] Release exception: %@", exception);
