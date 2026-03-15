@@ -138,7 +138,6 @@ class Sequential : public Module {
     }
 
     Tensor forward(const Tensor &input) const override;
-    Tensor operator()(const Tensor &input) const { return forward(input); }
 
     size_t size() const { return modules_.size(); }
 
