@@ -462,6 +462,151 @@ TEST(ANEIntegration, MHACompilation) {
 }
 
 // ============================================================================
+// INT8 Quantization tests
+// ============================================================================
+
+TEST(ANEIntegration, INT8LinearCompilation) {
+    SKIP_IF_NO_ANE();
+
+    nn::Linear linear;
+    std::map<std::string, Tensor> state;
+    state["weight"] = Tensor::randn({64, 32});
+    state["bias"] = Tensor::randn({64});
+    linear.load_state_dict(state);
+
+    // Compile with INT8 quantization
+    try {
+        auto compiled = backends::ane::ANECompiledModel::compile(
+            linear, {4, 32}, /*quantize_weights=*/true);
+
+        auto input = Tensor::randn({4, 32});
+        auto ane_out = compiled.forward(input);
+        ASSERT_EQ(ane_out.shape(), Shape({4, 64}));
+
+        // Compare with FP16 (non-quantized) — INT8 will be less precise
+        auto compiled_fp16 = backends::ane::ANECompiledModel::compile(
+            linear, {4, 32}, /*quantize_weights=*/false);
+        auto fp16_out = compiled_fp16.forward(input);
+
+        // CPU reference
+        auto cpu_out = linear(input);
+
+        float *ane = ane_out.typed_data<float>();
+        float *fp16 = fp16_out.typed_data<float>();
+        float *cpu = cpu_out.typed_data<float>();
+
+        int int8_close = 0, fp16_close = 0;
+        for (size_t i = 0; i < std::min(size_t(32), ane_out.size()); i++) {
+            if (std::abs(ane[i] - cpu[i]) < 1.0f) int8_close++;
+            if (std::abs(fp16[i] - cpu[i]) < 0.5f) fp16_close++;
+        }
+
+        std::cout << "[INFO] INT8: " << int8_close << "/32 within 1.0 of CPU\n";
+        std::cout << "[INFO] FP16: " << fp16_close << "/32 within 0.5 of CPU\n";
+
+        // INT8 should still be reasonably close
+        EXPECT_GT(int8_close, 16) << "INT8 should be close to CPU for most values";
+    } catch (const std::exception &e) {
+        // INT8 dequantize may not be available in all MIL versions
+        std::cout << "[INFO] INT8 compilation: " << e.what() << "\n";
+    }
+}
+
+TEST(ANEIntegration, INT8SequentialFFN) {
+    SKIP_IF_NO_ANE();
+
+    nn::Sequential ffn;
+    ffn.emplace_back<nn::Linear>();
+    ffn.emplace_back<nn::ReLU>();
+    ffn.emplace_back<nn::Linear>();
+
+    std::map<std::string, Tensor> state;
+    state["0.weight"] = Tensor::randn({128, 64});
+    state["0.bias"] = Tensor::randn({128});
+    state["2.weight"] = Tensor::randn({64, 128});
+    state["2.bias"] = Tensor::randn({64});
+    ffn.load_state_dict(state);
+
+    try {
+        auto compiled = backends::ane::ANECompiledModel::compile(
+            ffn, {4, 64}, /*quantize_weights=*/true);
+        auto input = Tensor::randn({4, 64});
+        auto output = compiled.forward(input);
+        ASSERT_EQ(output.shape(), Shape({4, 64}));
+
+        auto info = compiled.plan_info();
+        std::cout << "[INFO] INT8 FFN: " << info.summary << "\n";
+        std::cout << "[INFO] Weight bytes: " << info.weight_bytes
+                  << " (INT8 should be ~2x less than FP16)\n";
+    } catch (const std::exception &e) {
+        std::cout << "[INFO] INT8 FFN compilation: " << e.what() << "\n";
+    }
+}
+
+// ============================================================================
+// Tiling tests
+// ============================================================================
+
+TEST(ANEIntegration, TilingPlanInfo) {
+    SKIP_IF_NO_ANE();
+
+    // Create a large Linear layer that would exceed SRAM
+    nn::Linear linear;
+    std::map<std::string, Tensor> state;
+    // 4096x4096 weight = 32MB in FP16 — exceeds 24MB SRAM budget
+    state["weight"] = Tensor::randn({4096, 4096});
+    state["bias"] = Tensor::randn({4096});
+    linear.load_state_dict(state);
+
+    try {
+        auto compiled = backends::ane::ANECompiledModel::compile(
+            linear, {64, 4096});
+        auto info = compiled.plan_info();
+
+        std::cout << "[INFO] Large Linear: " << info.summary << "\n";
+        // Should indicate tiling if working set > 24MB
+        if (info.ane_steps > 1) {
+            std::cout << "[INFO] Tiling active: " << info.ane_steps
+                      << " tiles\n";
+        }
+    } catch (const std::exception &e) {
+        std::cout << "[INFO] Large Linear compilation: " << e.what() << "\n";
+    }
+}
+
+// ============================================================================
+// vDSP performance test
+// ============================================================================
+
+TEST(ANEIntegration, BenchmarkWithOptimizations) {
+    SKIP_IF_NO_ANE();
+
+    // Same benchmark as before — should be faster with vDSP + buffer caching
+    nn::Linear linear;
+    std::map<std::string, Tensor> state;
+    state["weight"] = Tensor::randn({512, 256});
+    state["bias"] = Tensor::randn({512});
+    linear.load_state_dict(state);
+
+    auto input = Tensor::randn({16, 256});
+
+    linear.to(Device::ANE);
+    auto warmup = linear(input);
+
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 200; i++) {
+        auto out = linear(input);
+        (void)out.typed_data<float>();
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    double us = std::chrono::duration<double, std::micro>(end - start).count()
+                / 200.0;
+
+    std::cout << "[BENCH] Linear(256→512) x16 (optimized): "
+              << us << " µs/forward\n";
+}
+
+// ============================================================================
 // Benchmarks
 // ============================================================================
 

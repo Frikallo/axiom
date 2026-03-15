@@ -588,6 +588,143 @@ std::string MILGenerator::add_matmul(const std::string &a,
 }
 
 // ============================================================================
+// INT8 quantized linear (1x1 conv with dequantized weights)
+// ============================================================================
+
+std::string MILGenerator::add_linear_int8(
+    const std::string &input_var, const std::vector<int8_t> &int8_data,
+    const std::vector<float> &scale, const std::vector<int8_t> &zero_point,
+    int64_t out_features, int64_t in_features, const Tensor *bias,
+    const std::string &name) {
+
+    ensure_conv_consts();
+    auto &in_shape = shape_of(input_var);
+    std::vector<int64_t> out_shape = {in_shape[0], out_features, in_shape[2],
+                                       in_shape[3]};
+    std::vector<int64_t> w_shape = {out_features, in_features, 1, 1};
+
+    // Pack INT8 weight data with 64-byte header
+    std::string w_name = name + "_wq";
+    {
+        size_t count = static_cast<size_t>(out_features * in_features);
+        // 64-byte header for INT8 blobs
+        size_t total = 64 + count;
+        std::vector<uint8_t> blob(total, 0);
+        blob[0] = 0xEF; blob[1] = 0xBE; blob[2] = 0xAD; blob[3] = 0xDE;
+        blob[4] = 0x01;
+        blob[10] = 0x08;
+        uint32_t data_size = static_cast<uint32_t>(count);
+        std::memcpy(blob.data() + 8, &data_size, sizeof(uint32_t));
+        std::memcpy(blob.data() + 64, int8_data.data(), count);
+
+        WeightBlob wb;
+        wb.name = w_name;
+        wb.blob_data = std::move(blob);
+        weight_blobs_.push_back(std::move(wb));
+    }
+
+    // Pack FP16 scale
+    std::string s_name = name + "_sc";
+    {
+        std::vector<uint16_t> fp16_scale(scale.size());
+        vImage_Buffer src = {const_cast<float *>(scale.data()), 1,
+                              static_cast<vImagePixelCount>(scale.size()),
+                              scale.size() * sizeof(float)};
+        vImage_Buffer dst = {fp16_scale.data(), 1,
+                              static_cast<vImagePixelCount>(scale.size()),
+                              scale.size() * sizeof(uint16_t)};
+        vImageConvert_PlanarFtoPlanar16F(&src, &dst, 0);
+
+        size_t data_bytes = scale.size() * sizeof(uint16_t);
+        size_t total_size = 0;
+        void *blob_ptr =
+            ane_build_weight_blob(fp16_scale.data(), data_bytes, &total_size);
+        WeightBlob wb;
+        wb.name = s_name;
+        wb.blob_data.resize(total_size);
+        std::memcpy(wb.blob_data.data(), blob_ptr, total_size);
+        free(blob_ptr);
+        weight_blobs_.push_back(std::move(wb));
+    }
+
+    // Pack INT8 zero_point
+    std::string z_name = name + "_zp";
+    {
+        size_t count = zero_point.size();
+        size_t total = 64 + count;
+        std::vector<uint8_t> blob(total, 0);
+        blob[0] = 0xEF; blob[1] = 0xBE; blob[2] = 0xAD; blob[3] = 0xDE;
+        blob[4] = 0x01;
+        blob[10] = 0x08;
+        uint32_t data_size = static_cast<uint32_t>(count);
+        std::memcpy(blob.data() + 8, &data_size, sizeof(uint32_t));
+        std::memcpy(blob.data() + 64, zero_point.data(), count);
+
+        WeightBlob wb;
+        wb.name = z_name;
+        wb.blob_data = std::move(blob);
+        weight_blobs_.push_back(std::move(wb));
+    }
+
+    // Emit INT8 weight const
+    body_ += "        tensor<int8, " + mil_shape(w_shape) + "> " + w_name +
+             " = const()[name=string(\"" + w_name +
+             "\"), val=tensor<int8, " + mil_shape(w_shape) +
+             ">(BLOBFILE(path=string(\"@model_path/weights/" + w_name +
+             ".bin\"), offset=uint64(0)))];\n";
+
+    // Emit scale const (FP16, per output channel)
+    body_ += "        tensor<fp16, [" + std::to_string(out_features) + "]> " +
+             s_name + " = const()[name=string(\"" + s_name +
+             "\"), val=tensor<fp16, [" + std::to_string(out_features) +
+             "]>(BLOBFILE(path=string(\"@model_path/weights/" + s_name +
+             ".bin\"), offset=uint64(64)))];\n";
+
+    // Emit zero_point const (INT8, per output channel)
+    body_ += "        tensor<int8, [" + std::to_string(out_features) + "]> " +
+             z_name + " = const()[name=string(\"" + z_name +
+             "\"), val=tensor<int8, [" + std::to_string(out_features) +
+             "]>(BLOBFILE(path=string(\"@model_path/weights/" + z_name +
+             ".bin\"), offset=uint64(0)))];\n";
+
+    // Dequantize: w_fp16 = (w_int8 - zero_point) * scale
+    std::string w_dq = next_var("wdq");
+    body_ += "        " + mil_type(w_shape) + " " + w_dq +
+             " = constexpr_affine_dequantize(axis=int32(0), "
+             "quantized_data=" + w_name + ", scale=" + s_name +
+             ", zero_point=" + z_name + ")[name=string(\"" + name +
+             "_dq\")];\n";
+    track(w_dq, w_shape);
+
+    // Conv with dequantized weight
+    std::string out_var = next_var("l");
+
+    if (bias) {
+        std::string b_name = name + "_b";
+        pack_weight(*bias, {out_features}, b_name);
+        body_ += "        tensor<fp16, [" + std::to_string(out_features) +
+                 "]> " + b_name + " = const()[name=string(\"" + b_name +
+                 "\"), val=tensor<fp16, [" + std::to_string(out_features) +
+                 "]>(BLOBFILE(path=string(\"@model_path/weights/" + b_name +
+                 ".bin\"), offset=uint64(64)))];\n";
+
+        body_ += "        " + mil_type(out_shape) + " " + out_var +
+                 " = conv(bias=" + b_name +
+                 ", dilations=_dl, groups=_gr, pad=_pd, pad_type=_pt, "
+                 "strides=_st, weight=" + w_dq + ", x=" + input_var +
+                 ")[name=string(\"" + name + "\")];\n";
+    } else {
+        body_ += "        " + mil_type(out_shape) + " " + out_var +
+                 " = conv(dilations=_dl, groups=_gr, pad=_pd, pad_type=_pt, "
+                 "strides=_st, weight=" + w_dq + ", x=" + input_var +
+                 ")[name=string(\"" + name + "\")];\n";
+    }
+
+    track(out_var, out_shape);
+    return out_var;
+}
+
+// ============================================================================
 // Conv2d (native convolution)
 // ============================================================================
 

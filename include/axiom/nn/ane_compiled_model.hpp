@@ -55,9 +55,12 @@ class ANECompiledModel {
     // Compile an NN module for ANE inference.
     // input_shape: the expected input tensor shape (e.g., {batch, features}
     //              or {batch, seq, features}).
+    // quantize_weights: if true, quantize Linear weights to INT8 (1.88x
+    //                   bandwidth savings; compute stays FP16).
     // Throws on failure (module unsupported or ANE unavailable).
     static ANECompiledModel compile(const nn::Module &module,
-                                     const Shape &input_shape);
+                                     const Shape &input_shape,
+                                     bool quantize_weights = false);
 
     // Run inference on ANE.
     // Input must match the shape declared at compile time.

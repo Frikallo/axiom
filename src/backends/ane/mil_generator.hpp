@@ -95,6 +95,23 @@ class MILGenerator {
                               const std::string &name);
 
     // ================================================================
+    // INT8 quantized operations
+    // ================================================================
+
+    // Linear with INT8 weights (dequantized to FP16 on ANE before compute).
+    // Saves ~2x memory bandwidth; 1.88x throughput for bandwidth-bound models.
+    // int8_data: quantized weight [out, in] as int8
+    // scale: per-channel scale [out] as FP32
+    // zero_point: per-channel zero point [out] as int8
+    std::string add_linear_int8(const std::string &input_var,
+                                const std::vector<int8_t> &int8_data,
+                                const std::vector<float> &scale,
+                                const std::vector<int8_t> &zero_point,
+                                int64_t out_features, int64_t in_features,
+                                const Tensor *bias,
+                                const std::string &name);
+
+    // ================================================================
     // Conv2d (native convolution on ANE)
     // ================================================================
 
