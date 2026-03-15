@@ -115,6 +115,13 @@ class Tensor {
     bool is_lazy() const { return lazy_node_ != nullptr; }
     std::shared_ptr<graph::GraphNode> lazy_node() const { return lazy_node_; }
 
+    // Attach a lazy graph node to an existing tensor (for ANE tracing).
+    // The tensor keeps its storage/shape/strides; the node is grafted on
+    // so lazy operations chain graph nodes through this tensor.
+    void set_lazy_node(std::shared_ptr<graph::GraphNode> node) const {
+        lazy_node_ = std::move(node);
+    }
+
     // Force materialization of lazy tensors (public API for sync points)
     void sync() const { materialize_if_needed(); }
 

@@ -48,31 +48,29 @@ TraceResult trace_module(const nn::Module &module, const Shape &input_shape) {
     input_node->output_dtype = DType::Float32;
     input_node->target_device = Device::CPU;
 
-    // Create a trace tensor with REAL storage (random data) so it can
-    // flow through any operation including ascontiguousarray(), shape
-    // queries, position embedding creation, etc. The lazy_node_ is
-    // attached on top so lazy ops build the graph.
+    // Create a real tensor with random data. This tensor has valid
+    // shape, strides, and storage so it flows through ANY operation
+    // (unsqueeze, ascontiguousarray, position embeddings, etc.).
     Tensor trace_input = Tensor::randn(input_shape);
 
-    // Mark the input node as "materialized" with real storage so
-    // materialize_if_needed() during tracing can provide data to
-    // operations that need it (ascontiguousarray, shape queries, etc.)
+    // Mark the input node as materialized with the real storage
     input_node->cached_result_ = trace_input.storage();
     input_node->cached_shape_ = input_shape;
     input_node->is_materialized_ = true;
 
-    // Create the trace tensor: has lazy_node_ for graph building AND
-    // real storage accessible via materialize_if_needed() during tracing.
-    Tensor trace_lazy =
-        graph::GraphRegistry::finalize_lazy_node(input_node);
+    // Graft the lazy node directly onto the real tensor.
+    // trace_input keeps its shape/strides/storage AND gets a lazy_node_
+    // so lazy operations chain graph nodes through it.
+    trace_input.set_lazy_node(input_node);
 
-    // Enable tracing: lazy mode forced, materialize_if_needed() is no-op,
-    // reshape/transpose create lazy nodes
+    // Enable tracing: lazy mode forced, reshape/transpose create lazy
+    // nodes, materialize_if_needed() executes but preserves lazy_node_
     TraceScope scope;
 
-    // Run forward() — lazy ops build graph, eager ops execute on real
-    // data but get captured by the lazy system
-    Tensor output = module.forward(trace_lazy);
+    // Run forward() — lazy ops build the graph, operations that need
+    // real data (unsqueeze, ascontiguousarray, etc.) work because
+    // trace_input has valid storage/shape/strides
+    Tensor output = module.forward(trace_input);
 
     TraceResult result;
     result.input_node = input_node;
