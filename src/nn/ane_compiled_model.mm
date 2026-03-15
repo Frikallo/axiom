@@ -124,29 +124,28 @@ static Shape to_axiom_shape(const std::vector<int64_t> &ane_shape,
     return result;
 }
 
-// Write FP32 tensor → IOSurface (FP16 channel-first) using vDSP
+// Write FP32 tensor → flat IOSurface (FP16 channel-first, contiguous)
+// ANE IOSurfaces are always flat 1D byte buffers (width=totalBytes, height=1).
+// Data layout: C channels × S spatial elements, contiguous FP16.
 static void write_tensor_to_surface(IOSurfaceRef surface, const Tensor &t,
                                      const std::vector<int64_t> &ane_shape,
                                      std::vector<float> &transpose_buf,
                                      std::vector<uint16_t> &fp16_buf) {
     Tensor cpu = t.cpu().ascontiguousarray();
-    if (cpu.dtype() != DType::Float32) {
+    if (cpu.dtype() != DType::Float32)
         cpu = cpu.astype(DType::Float32);
-    }
 
     size_t num_elements = cpu.size();
     const float *src = cpu.typed_data<float>();
 
     int channels = static_cast<int>(ane_shape[1]);
     int spatial = compute_spatial(ane_shape);
-
-    // Transpose [S, C] row-major → [C, S] channel-first using vDSP
-    transpose_buf.resize(num_elements);
     bool needs_transpose =
         (spatial > 1) && !(ane_shape.size() == 4 && ane_shape[2] > 1);
 
+    // Transpose [S, C] row-major → [C, S] channel-first using vDSP
+    transpose_buf.resize(num_elements);
     if (needs_transpose) {
-        // vDSP_mtrans: transpose MxN matrix (S rows, C cols) → (C rows, S cols)
         vDSP_mtrans(src, 1, transpose_buf.data(), 1,
                      static_cast<vDSP_Length>(channels),
                      static_cast<vDSP_Length>(spatial));
@@ -154,17 +153,17 @@ static void write_tensor_to_surface(IOSurfaceRef surface, const Tensor &t,
         std::memcpy(transpose_buf.data(), src, num_elements * sizeof(float));
     }
 
-    // FP32 → FP16 using vImage
+    // FP32 → FP16
     fp16_buf.resize(num_elements);
-    vImage_Buffer src_vimg = {transpose_buf.data(), 1,
-                               static_cast<vImagePixelCount>(num_elements),
-                               num_elements * sizeof(float)};
-    vImage_Buffer dst_vimg = {fp16_buf.data(), 1,
-                               static_cast<vImagePixelCount>(num_elements),
-                               num_elements * sizeof(uint16_t)};
-    vImageConvert_PlanarFtoPlanar16F(&src_vimg, &dst_vimg, 0);
+    vImage_Buffer sv = {transpose_buf.data(), 1,
+                         static_cast<vImagePixelCount>(num_elements),
+                         num_elements * sizeof(float)};
+    vImage_Buffer dv = {fp16_buf.data(), 1,
+                         static_cast<vImagePixelCount>(num_elements),
+                         num_elements * sizeof(uint16_t)};
+    vImageConvert_PlanarFtoPlanar16F(&sv, &dv, 0);
 
-    // Write to IOSurface with row alignment
+    // Write to 2D IOSurface with 64-byte row alignment
     IOSurfaceLock(surface, 0, NULL);
     auto *base = static_cast<uint8_t *>(IOSurfaceGetBaseAddress(surface));
     std::memset(base, 0, IOSurfaceGetAllocSize(surface));
@@ -177,7 +176,7 @@ static void write_tensor_to_surface(IOSurfaceRef surface, const Tensor &t,
     IOSurfaceUnlock(surface, 0, NULL);
 }
 
-// Read IOSurface (FP16 channel-first) → FP32 tensor using vDSP
+// Read flat IOSurface (FP16 channel-first, contiguous) → FP32 tensor
 static Tensor read_tensor_from_surface(IOSurfaceRef surface,
                                         const std::vector<int64_t> &ane_shape,
                                         const Shape &axiom_shape,
@@ -186,29 +185,29 @@ static Tensor read_tensor_from_surface(IOSurfaceRef surface,
     int channels = static_cast<int>(ane_shape[1]);
     int spatial = compute_spatial(ane_shape);
     size_t num_elements = static_cast<size_t>(channels * spatial);
+    size_t data_bytes = num_elements * sizeof(uint16_t);
 
-    // Read FP16 with row alignment
+    // Read FP16 from 2D IOSurface with row alignment
     fp16_buf.resize(num_elements);
     IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
     auto *base =
         static_cast<const uint8_t *>(IOSurfaceGetBaseAddress(surface));
     size_t row_bytes = IOSurfaceGetBytesPerRow(surface);
-    size_t data_per_row = static_cast<size_t>(spatial) * sizeof(uint16_t);
     for (int c = 0; c < channels; c++) {
         std::memcpy(fp16_buf.data() + c * spatial, base + c * row_bytes,
-                     data_per_row);
+                     data_bytes / static_cast<size_t>(channels));
     }
     IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
 
     // FP16 → FP32
     std::vector<float> f32(num_elements);
-    vImage_Buffer src_vimg = {fp16_buf.data(), 1,
-                               static_cast<vImagePixelCount>(num_elements),
-                               num_elements * sizeof(uint16_t)};
-    vImage_Buffer dst_vimg = {f32.data(), 1,
-                               static_cast<vImagePixelCount>(num_elements),
-                               num_elements * sizeof(float)};
-    vImageConvert_Planar16FtoPlanarF(&src_vimg, &dst_vimg, 0);
+    vImage_Buffer sv = {fp16_buf.data(), 1,
+                         static_cast<vImagePixelCount>(num_elements),
+                         num_elements * sizeof(uint16_t)};
+    vImage_Buffer dv = {f32.data(), 1,
+                         static_cast<vImagePixelCount>(num_elements),
+                         num_elements * sizeof(float)};
+    vImageConvert_Planar16FtoPlanarF(&sv, &dv, 0);
 
     // Transpose [C, S] → [S, C] using vDSP
     bool needs_transpose =
@@ -515,6 +514,8 @@ ANECompiledModel ANECompiledModel::compile(const nn::Module &module,
         out_s = compute_spatial(impl.ane_out_shape);
     }
 
+    // Create 2D IOSurfaces matching ANE tensor layout (channels × spatial)
+    // with 64-byte row alignment. This format is verified working on M4 Pro.
     impl.in_surface = ane_create_surface(in_c, in_s);
     impl.out_surface = ane_create_surface(out_c, out_s);
     if (!impl.in_surface || !impl.out_surface)
