@@ -278,9 +278,20 @@ void Tensor::materialize_if_needed() const {
             shape_ = lazy_node_->cached_shape_.empty()
                          ? lazy_node_->output_shape
                          : lazy_node_->cached_shape_;
-            strides_ = lazy_node_->cached_strides_;
             dtype_ = lazy_node_->output_dtype;
             offset_ = 0;
+
+            // Use cached strides if available, otherwise compute
+            // contiguous strides from shape (reshape/unsqueeze/squeeze
+            // nodes often don't populate cached_strides_)
+            if (!lazy_node_->cached_strides_.empty() &&
+                lazy_node_->cached_strides_.size() == shape_.size()) {
+                strides_ = lazy_node_->cached_strides_;
+            } else {
+                strides_ = ShapeUtils::calculate_strides(
+                    shape_, dtype_size(dtype_), MemoryOrder::RowMajor);
+            }
+
             flags_.owndata = true;
             flags_.writeable = true;
             update_contiguity_flags();
