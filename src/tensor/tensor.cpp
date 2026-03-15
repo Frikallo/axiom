@@ -260,9 +260,34 @@ void Tensor::materialize_if_needed() const {
         return;
 
 #ifdef AXIOM_HAS_ANE
-    // During ANE tracing, never materialize — we're building a graph
-    if (backends::ane::is_ane_tracing())
+    // During ANE tracing: execute the graph AND keep the lazy_node_.
+    // This is "trace + execute" mode (like PyTorch's torch.jit.trace):
+    // operations build the graph AND produce real data, so subsequent
+    // operations that need storage (ascontiguousarray, position embeddings,
+    // etc.) can access it.
+    if (backends::ane::is_ane_tracing()) {
+        if (!lazy_node_->is_materialized_) {
+            // Temporarily disable tracing so materialize() actually executes
+            backends::ane::set_ane_tracing(false);
+            graph::GraphRegistry::materialize(lazy_node_.get());
+            backends::ane::set_ane_tracing(true);
+        }
+        // Populate tensor fields from cached result
+        if (lazy_node_->cached_result_) {
+            storage_ = lazy_node_->cached_result_;
+            shape_ = lazy_node_->cached_shape_.empty()
+                         ? lazy_node_->output_shape
+                         : lazy_node_->cached_shape_;
+            strides_ = lazy_node_->cached_strides_;
+            dtype_ = lazy_node_->output_dtype;
+            offset_ = 0;
+            flags_.owndata = true;
+            flags_.writeable = true;
+            update_contiguity_flags();
+        }
+        // DO NOT clear lazy_node_ — graph must be preserved for ANE compilation
         return;
+    }
 #endif
 
     if (!lazy_node_->is_materialized_) {

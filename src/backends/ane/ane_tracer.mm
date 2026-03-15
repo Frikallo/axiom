@@ -48,15 +48,31 @@ TraceResult trace_module(const nn::Module &module, const Shape &input_shape) {
     input_node->output_dtype = DType::Float32;
     input_node->target_device = Device::CPU;
 
-    // Create a trace tensor backed by this node
-    Tensor trace_input =
+    // Create a trace tensor with REAL storage (random data) so it can
+    // flow through any operation including ascontiguousarray(), shape
+    // queries, position embedding creation, etc. The lazy_node_ is
+    // attached on top so lazy ops build the graph.
+    Tensor trace_input = Tensor::randn(input_shape);
+
+    // Mark the input node as "materialized" with real storage so
+    // materialize_if_needed() during tracing can provide data to
+    // operations that need it (ascontiguousarray, shape queries, etc.)
+    input_node->cached_result_ = trace_input.storage();
+    input_node->cached_shape_ = input_shape;
+    input_node->is_materialized_ = true;
+
+    // Create the trace tensor: has lazy_node_ for graph building AND
+    // real storage accessible via materialize_if_needed() during tracing.
+    Tensor trace_lazy =
         graph::GraphRegistry::finalize_lazy_node(input_node);
 
-    // Enable tracing
+    // Enable tracing: lazy mode forced, materialize_if_needed() is no-op,
+    // reshape/transpose create lazy nodes
     TraceScope scope;
 
-    // Run forward() — all ops create lazy nodes, nothing materializes
-    Tensor output = module.forward(trace_input);
+    // Run forward() — lazy ops build graph, eager ops execute on real
+    // data but get captured by the lazy system
+    Tensor output = module.forward(trace_lazy);
 
     TraceResult result;
     result.input_node = input_node;
