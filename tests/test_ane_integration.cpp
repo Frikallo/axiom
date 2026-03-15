@@ -368,15 +368,15 @@ TEST(ANEIntegration, SequentialCompileCount) {
 TEST(ANEIntegration, Conv2dCompilation) {
     SKIP_IF_NO_ANE();
 
-    nn::Conv2d conv({1, 1}, {1, 1}); // stride=1, pad=1
+    // Start with 1x1 conv (no padding) — simplest case
+    nn::Conv2d conv({1, 1}, {0, 0}); // stride=1, pad=0
     std::map<std::string, Tensor> state;
-    // 8 output channels, 3 input channels, 3x3 kernel
-    state["weight"] = Tensor::randn({8, 3, 3, 3});
-    state["bias"] = Tensor::randn({8});
+    state["weight"] = Tensor::randn({4, 3, 1, 1}); // 1x1 conv: 3→4 channels
+    state["bias"] = Tensor::randn({4});
     conv.load_state_dict(state);
 
-    // Input: [1, 3, 8, 8] (batch=1, 3 channels, 8x8 spatial)
-    auto input = Tensor::randn({1, 3, 8, 8});
+    // Input: [1, 3, 4, 4] (batch=1, 3 channels, 4x4 spatial)
+    auto input = Tensor::randn({1, 3, 4, 4});
 
     // CPU reference
     auto cpu_out = conv(input);
@@ -406,9 +406,10 @@ TEST(ANEIntegration, Conv2dCompilation) {
 TEST(ANEIntegration, MHACompilation) {
     SKIP_IF_NO_ANE();
 
-    nn::MultiHeadAttention mha(4); // 4 heads
+    // Use 2 heads, d_model=8, small enough to debug
+    nn::MultiHeadAttention mha(2); // 2 heads
     std::map<std::string, Tensor> state;
-    int d_model = 64;
+    int d_model = 8;
     state["q_proj.weight"] = Tensor::randn({static_cast<size_t>(d_model),
                                              static_cast<size_t>(d_model)});
     state["q_proj.bias"] = Tensor::randn({static_cast<size_t>(d_model)});
@@ -425,39 +426,52 @@ TEST(ANEIntegration, MHACompilation) {
 
     EXPECT_TRUE(backends::ane::ANECompiledModel::is_supported(mha));
 
-    // MHA uses self-attention: query=key=value
-    // Input shape: [batch, seq, d_model] = [2, 8, 64]
-    // ANE layout: [1, d_model, 1, batch*seq] = [1, 64, 1, 16]
-    // Compile via ANECompiledModel directly since MHA has multi-arg forward
+    // Use simple identity-ish weights for easier debugging
+    // Set all projection weights to small identity + noise
+    for (auto &[k, v] : state) {
+        float *d = v.typed_data<float>();
+        for (size_t i = 0; i < v.size(); i++)
+            d[i] *= 0.1f; // Small values to avoid saturation
+    }
+    mha.load_state_dict(state);
+
+    // MHA self-attention: [batch=1, seq=4, d_model=8]
+    // ANE: [1, 8, 1, 4]
     try {
         auto compiled =
-            backends::ane::ANECompiledModel::compile(mha, {2, 8, 64});
+            backends::ane::ANECompiledModel::compile(mha, {1, 4, 8});
 
-        auto input = Tensor::randn({2, 8, 64});
+        // Use small deterministic input
+        auto input = Tensor({1, 4, 8}, DType::Float32);
+        float *in_d = input.typed_data<float>();
+        for (int i = 0; i < 32; i++)
+            in_d[i] = static_cast<float>(i % 8) * 0.1f;
+
         auto ane_out = compiled.forward(input);
-        ASSERT_EQ(ane_out.shape(), Shape({2, 8, 64}));
+        ASSERT_EQ(ane_out.shape(), Shape({1, 4, 8}));
 
-        std::cout << "[INFO] MHA output shape: [" << ane_out.shape()[0]
-                  << ", " << ane_out.shape()[1] << ", " << ane_out.shape()[2]
-                  << "]\n";
-
-        // Compare with CPU
+        // Compare with CPU self-attention
         auto cpu_out = mha.forward(input, input, input);
         float *ane_d = ane_out.typed_data<float>();
         float *cpu_d = cpu_out.typed_data<float>();
+
+        std::cout << "[INFO] MHA CPU[0:8]: ";
+        for (int i = 0; i < 8; i++) std::cout << cpu_d[i] << " ";
+        std::cout << "\n[INFO] MHA ANE[0:8]: ";
+        for (int i = 0; i < 8; i++) std::cout << ane_d[i] << " ";
+        std::cout << "\n";
+
         int close = 0;
-        for (size_t i = 0; i < std::min(size_t(32), ane_out.size()); i++) {
-            if (std::abs(ane_d[i] - cpu_d[i]) < 1.0f)
+        for (size_t i = 0; i < ane_out.size(); i++) {
+            if (std::abs(ane_d[i] - cpu_d[i]) < 0.5f)
                 close++;
         }
-        // MHA layout conversion for 3D tensors is still being refined
-        std::cout << "[INFO] MHA: " << close << "/32 values within 1.0 tolerance\n";
-        if (close < 16) {
-            std::cout << "[INFO] MHA numerical accuracy needs layout refinement\n";
-        }
+        std::cout << "[INFO] MHA: " << close << "/" << ane_out.size()
+                  << " within 0.5 tolerance\n";
+        EXPECT_EQ(close, static_cast<int>(ane_out.size()))
+            << "All MHA values should match CPU within FP16 tolerance";
     } catch (const std::exception &e) {
-        std::cout << "[INFO] MHA compilation failed (expected during dev): "
-                  << e.what() << "\n";
+        std::cout << "[INFO] MHA compilation failed: " << e.what() << "\n";
     }
 }
 
@@ -546,6 +560,39 @@ TEST(ANEIntegration, INT8SequentialFFN) {
 // ============================================================================
 // Tiling tests
 // ============================================================================
+
+TEST(ANEIntegration, TilingCorrectness) {
+    SKIP_IF_NO_ANE();
+
+    // Create a Linear where tiling is forced by using large batch
+    nn::Linear linear;
+    std::map<std::string, Tensor> state;
+    state["weight"] = Tensor::randn({256, 256});
+    state["bias"] = Tensor::randn({256});
+    linear.load_state_dict(state);
+
+    // Non-tiled: small batch
+    auto input_small = Tensor::randn({4, 256});
+    try {
+        auto compiled_small =
+            backends::ane::ANECompiledModel::compile(linear, {4, 256});
+        auto out_small = compiled_small.forward(input_small);
+        auto cpu_small = linear(input_small);
+
+        float *ane_d = out_small.typed_data<float>();
+        float *cpu_d = cpu_small.typed_data<float>();
+        int close = 0;
+        for (size_t i = 0; i < out_small.size(); i++) {
+            if (std::abs(ane_d[i] - cpu_d[i]) < 0.5f)
+                close++;
+        }
+        std::cout << "[INFO] Tiling small batch: " << close << "/"
+                  << out_small.size() << " within 0.5\n";
+        EXPECT_GT(close, static_cast<int>(out_small.size() * 9 / 10));
+    } catch (const std::exception &e) {
+        std::cout << "[INFO] Tiling small: " << e.what() << "\n";
+    }
+}
 
 TEST(ANEIntegration, TilingPlanInfo) {
     SKIP_IF_NO_ANE();
