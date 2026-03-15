@@ -3,6 +3,9 @@
 #include "axiom/error.hpp"
 #include "axiom/graph/graph_registry.hpp"
 #include "axiom/operations.hpp"
+#ifdef AXIOM_HAS_ANE
+#include "backends/ane/ane_tracer.hpp"
+#endif
 
 namespace axiom::nn {
 
@@ -55,7 +58,11 @@ static Tensor batch_norm_forward(const Tensor &input,
 
     // GPU fast-path: route through lazy graph compiler (handles dtype
     // internally) to avoid eager astype calls that fragment the lazy graph.
-    if (device == Device::GPU) {
+    bool use_lazy_batchnorm = (device == Device::GPU);
+#ifdef AXIOM_HAS_ANE
+    use_lazy_batchnorm = use_lazy_batchnorm || backends::ane::is_ane_tracing();
+#endif
+    if (use_lazy_batchnorm) {
         // Reshape stats to (1, C, 1, ...) on CPU for broadcast, then transfer
         auto mean_r = running_mean.reshape(stat_shape);
         auto var_r = running_var.reshape(stat_shape);

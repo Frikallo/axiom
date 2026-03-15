@@ -835,6 +835,13 @@ collect_constant_inputs(const GraphNode *root, const CompiledGraph & /*plan*/) {
                                         n->constant_strides, n->output_dtype,
                                         n->constant_offset);
                 } else {
+                    auto &strides = n->cached_strides_;
+                    if (strides.empty() ||
+                        strides.size() != n->cached_shape_.size()) {
+                        strides = ShapeUtils::calculate_strides(
+                            n->cached_shape_, dtype_size(n->output_dtype),
+                            MemoryOrder::RowMajor);
+                    }
                     inputs.emplace_back(n->cached_result_, n->cached_shape_,
                                         n->cached_strides_, n->output_dtype);
                 }

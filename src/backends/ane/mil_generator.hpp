@@ -203,6 +203,13 @@ class MILGenerator {
     static std::string mil_type_public(const std::vector<int64_t> &shape) {
         return mil_type(shape);
     }
+    std::string emit_int_const_public(const std::string &name, int value) {
+        return emit_int_const(name, value);
+    }
+    std::string emit_int_tensor_const_public(const std::string &name,
+                                             const std::vector<int> &values) {
+        return emit_int_tensor_const(name, values);
+    }
 
   private:
     std::string body_;
