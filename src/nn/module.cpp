@@ -19,12 +19,10 @@ Tensor Module::operator()(const Tensor &input) const {
         // Lazily compile on first call, or recompile if input shape changed
         if (!ane_model_ || ane_compiled_shape_ != input.shape()) {
             try {
-                auto compiled =
-                    backends::ane::ANECompiledModel::compile(*this,
-                                                             input.shape());
-                ane_model_ =
-                    std::make_shared<backends::ane::ANECompiledModel>(
-                        std::move(compiled));
+                auto compiled = backends::ane::ANECompiledModel::compile(
+                    *this, input.shape());
+                ane_model_ = std::make_shared<backends::ane::ANECompiledModel>(
+                    std::move(compiled));
                 ane_compiled_shape_ = input.shape();
             } catch (const std::exception &) {
                 // ANE compilation failed — fall back to CPU.

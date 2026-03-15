@@ -1123,13 +1123,11 @@ static Tensor execute_binary_operation_eager(OpType op_type, const Tensor &lhs,
                                              const Tensor &rhs) {
     // Determine the target device (prefer GPU if available)
     // ANE tensors fall back to CPU for per-op execution
-    Device lhs_dev =
-        lhs.device() == Device::ANE ? Device::CPU : lhs.device();
-    Device rhs_dev =
-        rhs.device() == Device::ANE ? Device::CPU : rhs.device();
-    Device target_device =
-        (lhs_dev == Device::GPU || rhs_dev == Device::GPU) ? Device::GPU
-                                                           : Device::CPU;
+    Device lhs_dev = lhs.device() == Device::ANE ? Device::CPU : lhs.device();
+    Device rhs_dev = rhs.device() == Device::ANE ? Device::CPU : rhs.device();
+    Device target_device = (lhs_dev == Device::GPU || rhs_dev == Device::GPU)
+                               ? Device::GPU
+                               : Device::CPU;
 
     // Get the operation implementation
     const Operation *op =

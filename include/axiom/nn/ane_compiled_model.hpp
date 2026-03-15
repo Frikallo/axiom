@@ -20,11 +20,11 @@ namespace ane {
 
 // Diagnostic info about a compiled ANE execution plan.
 struct ANEPlanInfo {
-    int ane_steps;          // Number of ANE dispatch steps
-    int cpu_steps;          // Number of CPU fallback steps
-    int compile_count;      // ANE compilations used
-    size_t weight_bytes;    // Total weight data in FP16
-    std::string summary;    // Human-readable summary
+    int ane_steps;       // Number of ANE dispatch steps
+    int cpu_steps;       // Number of CPU fallback steps
+    int compile_count;   // ANE compilations used
+    size_t weight_bytes; // Total weight data in FP16
+    std::string summary; // Human-readable summary
 };
 
 // A compiled model that runs NN module inference on Apple Neural Engine.
@@ -59,15 +59,15 @@ class ANECompiledModel {
     //                   bandwidth savings; compute stays FP16).
     // Throws on failure (module unsupported or ANE unavailable).
     static ANECompiledModel compile(const nn::Module &module,
-                                     const Shape &input_shape,
-                                     bool quantize_weights = false);
+                                    const Shape &input_shape,
+                                    bool quantize_weights = false);
 
     // Compile with dynamic weight staging.
     // Weights are packed into the input IOSurface on each forward() call,
     // so weight updates (load_state_dict) do NOT require recompilation.
     // Only Linear layers are supported in dynamic mode.
     static ANECompiledModel compile_dynamic(const nn::Module &module,
-                                             const Shape &input_shape);
+                                            const Shape &input_shape);
 
     // Re-stage weights from a module into the cached IOSurface.
     // Only valid for dynamically-compiled models.

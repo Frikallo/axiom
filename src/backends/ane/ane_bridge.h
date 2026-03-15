@@ -41,10 +41,10 @@ void *ane_build_weight_blob(const void *data, size_t data_size,
 
 // A single named weight blob for passing to ane_compile_with_weights.
 typedef struct {
-    const char *name;       // e.g., "wq" (used as @model_path/weights/<name>.bin)
-    const void *blob_data;  // Full blob including 128-byte header (from
-                            // ane_build_weight_blob)
-    size_t blob_size;       // Total blob size including header
+    const char *name; // e.g., "wq" (used as @model_path/weights/<name>.bin)
+    const void *blob_data; // Full blob including 128-byte header (from
+                           // ane_build_weight_blob)
+    size_t blob_size;      // Total blob size including header
 } ANEWeightEntry;
 
 // Compile MIL text with weight blobs into an ANE model.

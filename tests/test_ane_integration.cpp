@@ -14,7 +14,7 @@
 #endif
 
 #define SKIP_IF_NO_ANE()                                                       \
-    do {                                                                        \
+    do {                                                                       \
         if (!ane_is_available()) {                                             \
             GTEST_SKIP() << "ANE not available";                               \
         }                                                                      \
@@ -103,8 +103,14 @@ TEST(ANEIntegration, ReLUToANE) {
 
     auto input = Tensor({2, 4}, DType::Float32);
     float *data = input.typed_data<float>();
-    data[0] = -1.0f; data[1] = 0.0f; data[2] = 1.0f; data[3] = 2.0f;
-    data[4] = -3.0f; data[5] = -0.5f; data[6] = 0.5f; data[7] = 3.0f;
+    data[0] = -1.0f;
+    data[1] = 0.0f;
+    data[2] = 1.0f;
+    data[3] = 2.0f;
+    data[4] = -3.0f;
+    data[5] = -0.5f;
+    data[6] = 0.5f;
+    data[7] = 3.0f;
 
     auto output = relu(input); // Should run on ANE
 
@@ -155,7 +161,8 @@ TEST(ANEIntegration, RecompileOnShapeChange) {
     // First shape
     auto input1 = Tensor({2, 4}, DType::Float32);
     float *d1 = input1.typed_data<float>();
-    for (int i = 0; i < 8; i++) d1[i] = 1.0f;
+    for (int i = 0; i < 8; i++)
+        d1[i] = 1.0f;
     auto out1 = relu(input1);
     ASSERT_EQ(out1.shape(), Shape({2, 4}));
     EXPECT_NEAR(out1.typed_data<float>()[0], 1.0f, 0.01f);
@@ -168,7 +175,8 @@ TEST(ANEIntegration, RecompileOnShapeChange) {
     // Different shape — should work (via recompile or fallback)
     auto input2 = Tensor({4, 4}, DType::Float32);
     float *d2 = input2.typed_data<float>();
-    for (int i = 0; i < 16; i++) d2[i] = 2.0f;
+    for (int i = 0; i < 16; i++)
+        d2[i] = 2.0f;
     auto out2 = relu(input2);
     ASSERT_EQ(out2.shape(), Shape({4, 4}));
     EXPECT_NEAR(out2.typed_data<float>()[0], 2.0f, 0.01f);
@@ -320,8 +328,7 @@ TEST(ANEIntegration, SequentialMegaKernel) {
     std::cout << "\n";
 
     for (size_t i = 0; i < ane_output.size(); i++) {
-        EXPECT_NEAR(ane[i], cpu[i], 0.2f)
-            << "Mismatch at index " << i;
+        EXPECT_NEAR(ane[i], cpu[i], 0.2f) << "Mismatch at index " << i;
     }
 }
 
@@ -347,8 +354,7 @@ TEST(ANEIntegration, SequentialCompileCount) {
     net.load_state_dict(state);
 
     int count_before = ane_compile_count();
-    auto compiled =
-        backends::ane::ANECompiledModel::compile(net, {2, 4});
+    auto compiled = backends::ane::ANECompiledModel::compile(net, {2, 4});
     // Should be exactly 1 compilation (mega-kernel)
     EXPECT_EQ(ane_compile_count(), count_before + 1);
 
@@ -392,7 +398,8 @@ TEST(ANEIntegration, Conv2dCompilation) {
 
     int close = 0;
     for (size_t i = 0; i < ane_out.size(); i++) {
-        if (std::abs(ane_d[i] - cpu_d[i]) < 0.5f) close++;
+        if (std::abs(ane_d[i] - cpu_d[i]) < 0.5f)
+            close++;
     }
     std::cout << "[INFO] Conv2d 1x1: " << close << "/" << ane_out.size()
               << " within 0.5 tolerance\n";
@@ -410,17 +417,17 @@ TEST(ANEIntegration, MHACompilation) {
     nn::MultiHeadAttention mha(2); // 2 heads
     std::map<std::string, Tensor> state;
     int d_model = 8;
-    state["q_proj.weight"] = Tensor::randn({static_cast<size_t>(d_model),
-                                             static_cast<size_t>(d_model)});
+    state["q_proj.weight"] = Tensor::randn(
+        {static_cast<size_t>(d_model), static_cast<size_t>(d_model)});
     state["q_proj.bias"] = Tensor::randn({static_cast<size_t>(d_model)});
-    state["k_proj.weight"] = Tensor::randn({static_cast<size_t>(d_model),
-                                             static_cast<size_t>(d_model)});
+    state["k_proj.weight"] = Tensor::randn(
+        {static_cast<size_t>(d_model), static_cast<size_t>(d_model)});
     state["k_proj.bias"] = Tensor::randn({static_cast<size_t>(d_model)});
-    state["v_proj.weight"] = Tensor::randn({static_cast<size_t>(d_model),
-                                             static_cast<size_t>(d_model)});
+    state["v_proj.weight"] = Tensor::randn(
+        {static_cast<size_t>(d_model), static_cast<size_t>(d_model)});
     state["v_proj.bias"] = Tensor::randn({static_cast<size_t>(d_model)});
-    state["out_proj.weight"] = Tensor::randn({static_cast<size_t>(d_model),
-                                               static_cast<size_t>(d_model)});
+    state["out_proj.weight"] = Tensor::randn(
+        {static_cast<size_t>(d_model), static_cast<size_t>(d_model)});
     state["out_proj.bias"] = Tensor::randn({static_cast<size_t>(d_model)});
     mha.load_state_dict(state);
 
@@ -456,9 +463,11 @@ TEST(ANEIntegration, MHACompilation) {
         float *cpu_d = cpu_out.typed_data<float>();
 
         std::cout << "[INFO] MHA CPU[0:8]: ";
-        for (int i = 0; i < 8; i++) std::cout << cpu_d[i] << " ";
+        for (int i = 0; i < 8; i++)
+            std::cout << cpu_d[i] << " ";
         std::cout << "\n[INFO] MHA ANE[0:8]: ";
-        for (int i = 0; i < 8; i++) std::cout << ane_d[i] << " ";
+        for (int i = 0; i < 8; i++)
+            std::cout << ane_d[i] << " ";
         std::cout << "\n";
 
         int close = 0;
@@ -502,9 +511,11 @@ TEST(ANEIntegration, DynamicWeightStaging) {
         float *cpu_d = cpu_out.typed_data<float>();
 
         std::cout << "[INFO] Dynamic CPU[0:4]: ";
-        for (int i = 0; i < 4; i++) std::cout << cpu_d[i] << " ";
+        for (int i = 0; i < 4; i++)
+            std::cout << cpu_d[i] << " ";
         std::cout << "\n[INFO] Dynamic ANE[0:4]: ";
-        for (int i = 0; i < 4; i++) std::cout << ane_d[i] << " ";
+        for (int i = 0; i < 4; i++)
+            std::cout << ane_d[i] << " ";
         std::cout << "\n";
 
         int close = 0;
@@ -605,15 +616,18 @@ TEST(ANEIntegration, INT8LinearCompilation) {
 
         int int8_close = 0, fp16_close = 0;
         for (size_t i = 0; i < std::min(size_t(32), ane_out.size()); i++) {
-            if (std::abs(ane[i] - cpu[i]) < 1.0f) int8_close++;
-            if (std::abs(fp16[i] - cpu[i]) < 0.5f) fp16_close++;
+            if (std::abs(ane[i] - cpu[i]) < 1.0f)
+                int8_close++;
+            if (std::abs(fp16[i] - cpu[i]) < 0.5f)
+                fp16_close++;
         }
 
         std::cout << "[INFO] INT8: " << int8_close << "/32 within 1.0 of CPU\n";
         std::cout << "[INFO] FP16: " << fp16_close << "/32 within 0.5 of CPU\n";
 
         // INT8 should still be reasonably close
-        EXPECT_GT(int8_close, 16) << "INT8 should be close to CPU for most values";
+        EXPECT_GT(int8_close, 16)
+            << "INT8 should be close to CPU for most values";
     } catch (const std::exception &e) {
         // INT8 dequantize may not be available in all MIL versions
         std::cout << "[INFO] INT8 compilation: " << e.what() << "\n";
@@ -700,8 +714,8 @@ TEST(ANEIntegration, TilingPlanInfo) {
     linear.load_state_dict(state);
 
     try {
-        auto compiled = backends::ane::ANECompiledModel::compile(
-            linear, {64, 4096});
+        auto compiled =
+            backends::ane::ANECompiledModel::compile(linear, {64, 4096});
         auto info = compiled.plan_info();
 
         std::cout << "[INFO] Large Linear: " << info.summary << "\n";
@@ -740,11 +754,11 @@ TEST(ANEIntegration, BenchmarkWithOptimizations) {
         (void)out.typed_data<float>();
     }
     auto end = std::chrono::high_resolution_clock::now();
-    double us = std::chrono::duration<double, std::micro>(end - start).count()
-                / 200.0;
+    double us =
+        std::chrono::duration<double, std::micro>(end - start).count() / 200.0;
 
-    std::cout << "[BENCH] Linear(256→512) x16 (optimized): "
-              << us << " µs/forward\n";
+    std::cout << "[BENCH] Linear(256→512) x16 (optimized): " << us
+              << " µs/forward\n";
 }
 
 // ============================================================================
@@ -773,8 +787,9 @@ TEST(ANEIntegration, BenchmarkLinear) {
         (void)out.typed_data<float>(); // Force materialization
     }
     auto cpu_end = std::chrono::high_resolution_clock::now();
-    double cpu_us = std::chrono::duration<double, std::micro>(
-                        cpu_end - cpu_start).count() / 100.0;
+    double cpu_us =
+        std::chrono::duration<double, std::micro>(cpu_end - cpu_start).count() /
+        100.0;
 
     // ANE benchmark
     linear.to(Device::ANE);
@@ -786,8 +801,9 @@ TEST(ANEIntegration, BenchmarkLinear) {
         (void)out.typed_data<float>();
     }
     auto ane_end = std::chrono::high_resolution_clock::now();
-    double ane_us = std::chrono::duration<double, std::micro>(
-                        ane_end - ane_start).count() / 100.0;
+    double ane_us =
+        std::chrono::duration<double, std::micro>(ane_end - ane_start).count() /
+        100.0;
 
     std::cout << "[BENCH] Linear(256→512) x16:\n"
               << "  CPU: " << cpu_us << " µs/forward\n"
@@ -824,8 +840,9 @@ TEST(ANEIntegration, BenchmarkLargeLinear) {
         (void)out.typed_data<float>();
     }
     auto cpu_end = std::chrono::high_resolution_clock::now();
-    double cpu_us = std::chrono::duration<double, std::micro>(
-                        cpu_end - cpu_start).count() / 50.0;
+    double cpu_us =
+        std::chrono::duration<double, std::micro>(cpu_end - cpu_start).count() /
+        50.0;
 
     linear.to(Device::ANE);
     auto ane_warmup = linear(input);
@@ -836,8 +853,9 @@ TEST(ANEIntegration, BenchmarkLargeLinear) {
         (void)out.typed_data<float>();
     }
     auto ane_end = std::chrono::high_resolution_clock::now();
-    double ane_us = std::chrono::duration<double, std::micro>(
-                        ane_end - ane_start).count() / 50.0;
+    double ane_us =
+        std::chrono::duration<double, std::micro>(ane_end - ane_start).count() /
+        50.0;
 
     std::cout << "[BENCH] Linear(1024→1024) x64:\n"
               << "  CPU: " << cpu_us << " µs/forward\n"
@@ -871,8 +889,9 @@ TEST(ANEIntegration, BenchmarkSequentialFFN) {
         (void)out.typed_data<float>();
     }
     auto cpu_end = std::chrono::high_resolution_clock::now();
-    double cpu_us = std::chrono::duration<double, std::micro>(
-                        cpu_end - cpu_start).count() / 50.0;
+    double cpu_us =
+        std::chrono::duration<double, std::micro>(cpu_end - cpu_start).count() /
+        50.0;
 
     // ANE benchmark
     ffn.to(Device::ANE);
@@ -884,8 +903,9 @@ TEST(ANEIntegration, BenchmarkSequentialFFN) {
         (void)out.typed_data<float>();
     }
     auto ane_end = std::chrono::high_resolution_clock::now();
-    double ane_us = std::chrono::duration<double, std::micro>(
-                        ane_end - ane_start).count() / 50.0;
+    double ane_us =
+        std::chrono::duration<double, std::micro>(ane_end - ane_start).count() /
+        50.0;
 
     std::cout << "[BENCH] FFN(256→1024→256) x16:\n"
               << "  CPU: " << cpu_us << " µs/forward\n"

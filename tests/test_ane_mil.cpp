@@ -10,7 +10,7 @@
 #endif
 
 #define SKIP_IF_NO_ANE()                                                       \
-    do {                                                                        \
+    do {                                                                       \
         if (!axiom::backends::ane::is_ane_available()) {                       \
             GTEST_SKIP() << "ANE not available";                               \
         }                                                                      \
@@ -203,8 +203,8 @@ TEST(ANEMIL, CompileSimpleIdentity) {
 
             // Write FP16 test data (all 1.0 = 0x3C00)
             IOSurfaceLock(input_surface, 0, NULL);
-            auto *fp16_in = static_cast<uint16_t *>(
-                IOSurfaceGetBaseAddress(input_surface));
+            auto *fp16_in =
+                static_cast<uint16_t *>(IOSurfaceGetBaseAddress(input_surface));
             for (size_t i = 0; i < num_elements; i++)
                 fp16_in[i] = 0x3C00; // 1.0 in FP16
             IOSurfaceUnlock(input_surface, 0, NULL);
@@ -218,10 +218,9 @@ TEST(ANEMIL, CompileSimpleIdentity) {
 
                 // ReLU(1.0) should be 1.0
                 // Check first element (FP16: 0x3C00 = 1.0)
-                std::cout << "[INFO] ANE ReLU output fp16[0] = 0x"
-                          << std::hex << fp16_out[0] << std::dec << "\n";
-                EXPECT_EQ(fp16_out[0], 0x3C00)
-                    << "ReLU(1.0) should be 1.0";
+                std::cout << "[INFO] ANE ReLU output fp16[0] = 0x" << std::hex
+                          << fp16_out[0] << std::dec << "\n";
+                EXPECT_EQ(fp16_out[0], 0x3C00) << "ReLU(1.0) should be 1.0";
 
                 IOSurfaceUnlock(output_surface, kIOSurfaceLockReadOnly, NULL);
             } else {
@@ -246,7 +245,9 @@ TEST(ANEMIL, CompileLinearForward) {
 
     // Create a simple 3→4 linear layer
     int64_t in_f = 3, out_f = 4, seq = 2;
-    auto weight = Tensor({static_cast<size_t>(out_f), static_cast<size_t>(in_f)}, DType::Float32);
+    auto weight =
+        Tensor({static_cast<size_t>(out_f), static_cast<size_t>(in_f)},
+               DType::Float32);
     auto bias = Tensor({static_cast<size_t>(out_f)}, DType::Float32);
 
     // Identity-like weight for easy verification
@@ -290,14 +291,17 @@ TEST(ANEMIL, CompileLinearForward) {
         // Write FP16 input: [1, 3, 1, 2] = 6 elements
         // Channel 0: [1.0, 2.0], Channel 1: [3.0, 4.0], Channel 2: [5.0, 6.0]
         IOSurfaceLock(input_surface, 0, NULL);
-        auto *fp16_in = static_cast<uint16_t *>(
-            IOSurfaceGetBaseAddress(input_surface));
+        auto *fp16_in =
+            static_cast<uint16_t *>(IOSurfaceGetBaseAddress(input_surface));
         std::memset(fp16_in, 0, buf_bytes);
         // FP16 values: 1.0=0x3C00, 2.0=0x4000, 3.0=0x4200,
         //              4.0=0x4400, 5.0=0x4500, 6.0=0x4600
-        fp16_in[0] = 0x3C00; fp16_in[1] = 0x4000; // chan 0
-        fp16_in[2] = 0x4200; fp16_in[3] = 0x4400; // chan 1
-        fp16_in[4] = 0x4500; fp16_in[5] = 0x4600; // chan 2
+        fp16_in[0] = 0x3C00;
+        fp16_in[1] = 0x4000; // chan 0
+        fp16_in[2] = 0x4200;
+        fp16_in[3] = 0x4400; // chan 1
+        fp16_in[4] = 0x4500;
+        fp16_in[5] = 0x4600; // chan 2
         IOSurfaceUnlock(input_surface, 0, NULL);
 
         rc = ane_eval(handle, input_surface, output_surface);

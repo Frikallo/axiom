@@ -1,7 +1,8 @@
 #pragma once
 
 // IOSurface utilities for ANE data transfer.
-// ANE uses IOSurface for zero-copy I/O in [1, C, 1, S] channel-first FP16 format.
+// ANE uses IOSurface for zero-copy I/O in [1, C, 1, S] channel-first FP16
+// format.
 
 #include <IOSurface/IOSurface.h>
 #include <stdbool.h>
@@ -13,9 +14,9 @@ extern "C" {
 #endif
 
 // Create an IOSurface for ANE I/O.
-// Allocates a surface with dimensions suitable for [1, channels, 1, spatial_size]
-// in FP16 (2 bytes per element).
-// Returns IOSurfaceRef on success (caller must CFRelease), NULL on failure.
+// Allocates a surface with dimensions suitable for [1, channels, 1,
+// spatial_size] in FP16 (2 bytes per element). Returns IOSurfaceRef on success
+// (caller must CFRelease), NULL on failure.
 IOSurfaceRef ane_create_surface(int channels, int spatial_size);
 
 // Write FP32 row-major data into an IOSurface, converting to FP16.

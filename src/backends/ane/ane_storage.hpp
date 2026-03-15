@@ -52,8 +52,9 @@ class ANEStorage : public Storage {
     size_t logical_bytes_; // channels * spatial_size * sizeof(fp16)
 };
 
-// Factory function matching the pattern of make_cpu_storage / make_metal_storage.
-// For ANE, the caller must specify the channel-first dimensions.
+// Factory function matching the pattern of make_cpu_storage /
+// make_metal_storage. For ANE, the caller must specify the channel-first
+// dimensions.
 std::unique_ptr<Storage> make_ane_storage(int channels, int spatial_size);
 
 // Check if ANE is available on this system.

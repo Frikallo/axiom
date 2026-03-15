@@ -4,15 +4,15 @@
 #include <optional>
 
 #ifdef AXIOM_HAS_ANE
+#include "axiom/nn/activation.hpp"
 #include "axiom/nn/ane_compiled_model.hpp"
 #include "axiom/nn/linear.hpp"
-#include "axiom/nn/activation.hpp"
 #include "axiom/nn/normalization.hpp"
 #include "backends/ane/ane_bridge.h"
 #endif
 
 #define SKIP_IF_NO_ANE()                                                       \
-    do {                                                                        \
+    do {                                                                       \
         if (!ane_is_available()) {                                             \
             GTEST_SKIP() << "ANE not available";                               \
         }                                                                      \
@@ -106,11 +106,15 @@ TEST(ANECompiled, LinearForwardCorrectness) {
     auto input = Tensor({2, 4}, DType::Float32);
     float *in_data = input.typed_data<float>();
     // Row 0
-    in_data[0] = 2.0f; in_data[1] = 4.0f;
-    in_data[2] = 6.0f; in_data[3] = 8.0f;
+    in_data[0] = 2.0f;
+    in_data[1] = 4.0f;
+    in_data[2] = 6.0f;
+    in_data[3] = 8.0f;
     // Row 1
-    in_data[4] = 1.0f; in_data[5] = 0.0f;
-    in_data[6] = 0.0f; in_data[7] = 0.0f;
+    in_data[4] = 1.0f;
+    in_data[5] = 0.0f;
+    in_data[6] = 0.0f;
+    in_data[7] = 0.0f;
 
     auto ane_output = compiled.forward(input);
 
@@ -153,9 +157,15 @@ TEST(ANECompiled, ReLUForward) {
     auto input = Tensor({2, 4}, DType::Float32);
     float *data = input.typed_data<float>();
     // Row 0: [-1, 0, 1, 2]
-    data[0] = -1.0f; data[1] = 0.0f; data[2] = 1.0f; data[3] = 2.0f;
+    data[0] = -1.0f;
+    data[1] = 0.0f;
+    data[2] = 1.0f;
+    data[3] = 2.0f;
     // Row 1: [-3, -2, 3, 4]
-    data[4] = -3.0f; data[5] = -2.0f; data[6] = 3.0f; data[7] = 4.0f;
+    data[4] = -3.0f;
+    data[5] = -2.0f;
+    data[6] = 3.0f;
+    data[7] = 4.0f;
 
     // Also test CPU reference
     auto cpu_output = relu(input);
@@ -165,21 +175,24 @@ TEST(ANECompiled, ReLUForward) {
     float *out = output.typed_data<float>();
 
     std::cout << "[INFO] ReLU input:   ";
-    for (int i = 0; i < 8; i++) std::cout << data[i] << " ";
+    for (int i = 0; i < 8; i++)
+        std::cout << data[i] << " ";
     std::cout << "\n[INFO] CPU output:   ";
-    for (int i = 0; i < 8; i++) std::cout << cpu_out[i] << " ";
+    for (int i = 0; i < 8; i++)
+        std::cout << cpu_out[i] << " ";
     std::cout << "\n[INFO] ANE output:   ";
-    for (int i = 0; i < 8; i++) std::cout << out[i] << " ";
+    for (int i = 0; i < 8; i++)
+        std::cout << out[i] << " ";
     std::cout << "\n";
 
-    EXPECT_NEAR(out[0], 0.0f, 0.01f);  // relu(-1) = 0
-    EXPECT_NEAR(out[1], 0.0f, 0.01f);  // relu(0) = 0
-    EXPECT_NEAR(out[2], 1.0f, 0.01f);  // relu(1) = 1
-    EXPECT_NEAR(out[3], 2.0f, 0.01f);  // relu(2) = 2
-    EXPECT_NEAR(out[4], 0.0f, 0.01f);  // relu(-3) = 0
-    EXPECT_NEAR(out[5], 0.0f, 0.01f);  // relu(-2) = 0
-    EXPECT_NEAR(out[6], 3.0f, 0.01f);  // relu(3) = 3
-    EXPECT_NEAR(out[7], 4.0f, 0.01f);  // relu(4) = 4
+    EXPECT_NEAR(out[0], 0.0f, 0.01f); // relu(-1) = 0
+    EXPECT_NEAR(out[1], 0.0f, 0.01f); // relu(0) = 0
+    EXPECT_NEAR(out[2], 1.0f, 0.01f); // relu(1) = 1
+    EXPECT_NEAR(out[3], 2.0f, 0.01f); // relu(2) = 2
+    EXPECT_NEAR(out[4], 0.0f, 0.01f); // relu(-3) = 0
+    EXPECT_NEAR(out[5], 0.0f, 0.01f); // relu(-2) = 0
+    EXPECT_NEAR(out[6], 3.0f, 0.01f); // relu(3) = 3
+    EXPECT_NEAR(out[7], 4.0f, 0.01f); // relu(4) = 4
 }
 
 TEST(ANECompiled, RepeatedForward) {

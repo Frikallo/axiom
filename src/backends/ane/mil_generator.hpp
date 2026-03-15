@@ -13,8 +13,9 @@ namespace ane {
 
 // A weight entry ready for ANE compilation.
 struct WeightBlob {
-    std::string name;               // e.g., "wq", "w1"
-    std::vector<uint8_t> blob_data; // Full blob with 128-byte header + FP16 data
+    std::string name; // e.g., "wq", "w1"
+    std::vector<uint8_t>
+        blob_data; // Full blob with 128-byte header + FP16 data
 };
 
 // Generates MIL (Model Intermediate Language) text for Apple Neural Engine.
@@ -38,7 +39,8 @@ class MILGenerator {
 
     void begin_program();
 
-    // Declare an input tensor. shape must be 4D: [batch, channels, height, width]
+    // Declare an input tensor. shape must be 4D: [batch, channels, height,
+    // width]
     std::string add_input(const std::string &name,
                           const std::vector<int64_t> &shape);
 
@@ -62,14 +64,11 @@ class MILGenerator {
     // Activations
     // ================================================================
 
-    std::string add_relu(const std::string &input_var,
-                         const std::string &name);
+    std::string add_relu(const std::string &input_var, const std::string &name);
     std::string add_sigmoid(const std::string &input_var,
                             const std::string &name);
-    std::string add_silu(const std::string &input_var,
-                         const std::string &name);
-    std::string add_gelu(const std::string &input_var,
-                         const std::string &name);
+    std::string add_silu(const std::string &input_var, const std::string &name);
+    std::string add_gelu(const std::string &input_var, const std::string &name);
     std::string add_softmax(const std::string &input_var, int axis,
                             const std::string &name);
 
@@ -112,11 +111,11 @@ class MILGenerator {
     // activation: the actual activation to process (may differ from graph_input
     //             for layers after the first in a Sequential)
     std::string add_linear_dynamic(const std::string &graph_input,
-                                    const std::string &activation,
-                                    int64_t in_features, int64_t out_features,
-                                    bool has_bias, int64_t seq_len,
-                                    int64_t &weight_offset,
-                                    const std::string &name);
+                                   const std::string &activation,
+                                   int64_t in_features, int64_t out_features,
+                                   bool has_bias, int64_t seq_len,
+                                   int64_t &weight_offset,
+                                   const std::string &name);
 
     // Get the total spatial size needed for dynamic weight staging.
     // Call after building the graph to know how large the input IOSurface
@@ -137,8 +136,7 @@ class MILGenerator {
                                 const std::vector<float> &scale,
                                 const std::vector<int8_t> &zero_point,
                                 int64_t out_features, int64_t in_features,
-                                const Tensor *bias,
-                                const std::string &name);
+                                const Tensor *bias, const std::string &name);
 
     // ================================================================
     // Conv2d (native convolution on ANE)
@@ -160,17 +158,11 @@ class MILGenerator {
     // softmax → @V → reshape → output projection.
     // Input: [1, d_model, 1, seq_len] (ANE layout)
     // Returns: [1, d_model, 1, seq_len]
-    std::string add_multihead_attention(const std::string &input_var,
-                                         const Tensor &q_weight,
-                                         const Tensor &k_weight,
-                                         const Tensor &v_weight,
-                                         const Tensor &o_weight,
-                                         const Tensor *q_bias,
-                                         const Tensor *k_bias,
-                                         const Tensor *v_bias,
-                                         const Tensor *o_bias,
-                                         int num_heads,
-                                         const std::string &name);
+    std::string add_multihead_attention(
+        const std::string &input_var, const Tensor &q_weight,
+        const Tensor &k_weight, const Tensor &v_weight, const Tensor &o_weight,
+        const Tensor *q_bias, const Tensor *k_bias, const Tensor *v_bias,
+        const Tensor *o_bias, int num_heads, const std::string &name);
 
     // ================================================================
     // Matmul (for attention scores, not linear layers)

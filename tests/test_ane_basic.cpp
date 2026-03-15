@@ -11,7 +11,7 @@
 
 // Skip macro for ANE tests
 #define SKIP_IF_NO_ANE()                                                       \
-    do {                                                                        \
+    do {                                                                       \
         if (!axiom::backends::ane::is_ane_available()) {                       \
             GTEST_SKIP() << "ANE not available";                               \
         }                                                                      \
@@ -100,8 +100,7 @@ TEST(ANEBasic, IOSurfaceRoundTripF32) {
 
     // Check round-trip accuracy (FP32 -> FP16 -> FP32 loses some precision)
     for (size_t i = 0; i < num_elements; i++) {
-        EXPECT_NEAR(input[i], output[i], 0.01f)
-            << "Mismatch at index " << i;
+        EXPECT_NEAR(input[i], output[i], 0.01f) << "Mismatch at index " << i;
     }
 
     CFRelease(surface);
@@ -136,8 +135,7 @@ TEST(ANEBasic, IOSurfaceRoundTripF16) {
     ASSERT_EQ(rc, 0);
 
     for (size_t i = 0; i < num_elements; i++) {
-        EXPECT_EQ(input[i], output[i])
-            << "FP16 mismatch at index " << i;
+        EXPECT_EQ(input[i], output[i]) << "FP16 mismatch at index " << i;
     }
 
     CFRelease(surface);
@@ -194,7 +192,8 @@ TEST(ANEBasic, StorageCreation) {
     ASSERT_EQ(storage->device(), Device::ANE);
     ASSERT_EQ(storage->size_bytes(), (size_t)(4 * 8 * 2)); // FP16
 
-    auto *ane_storage = dynamic_cast<backends::ane::ANEStorage *>(storage.get());
+    auto *ane_storage =
+        dynamic_cast<backends::ane::ANEStorage *>(storage.get());
     ASSERT_NE(ane_storage, nullptr);
     ASSERT_EQ(ane_storage->channels(), 4);
     ASSERT_EQ(ane_storage->spatial_size(), 8);
@@ -213,7 +212,8 @@ TEST(ANEBasic, StorageCopyFromCPU) {
     size_t num_elements = channels * spatial;
 
     // Create CPU tensor with known data
-    auto cpu_storage = axiom::backends::cpu::make_cpu_storage(num_elements * sizeof(float));
+    auto cpu_storage =
+        axiom::backends::cpu::make_cpu_storage(num_elements * sizeof(float));
     float *cpu_data = static_cast<float *>(cpu_storage->data());
     for (size_t i = 0; i < num_elements; i++) {
         cpu_data[i] = static_cast<float>(i) * 0.5f;
@@ -224,7 +224,8 @@ TEST(ANEBasic, StorageCopyFromCPU) {
     ane_storage->copy_from(*cpu_storage);
 
     // Copy back to CPU and verify
-    auto cpu_out = axiom::backends::cpu::make_cpu_storage(num_elements * sizeof(float));
+    auto cpu_out =
+        axiom::backends::cpu::make_cpu_storage(num_elements * sizeof(float));
     ane_storage->copy_to(*cpu_out);
 
     float *out_data = static_cast<float *>(cpu_out->data());
@@ -248,7 +249,8 @@ TEST(ANEBasic, StorageClone) {
     auto original = backends::ane::make_ane_storage(channels, spatial);
 
     // Write data via CPU path
-    auto cpu_storage = axiom::backends::cpu::make_cpu_storage(num_elements * sizeof(float));
+    auto cpu_storage =
+        axiom::backends::cpu::make_cpu_storage(num_elements * sizeof(float));
     float *cpu_data = static_cast<float *>(cpu_storage->data());
     for (size_t i = 0; i < num_elements; i++) {
         cpu_data[i] = static_cast<float>(i) + 1.0f;
@@ -261,7 +263,8 @@ TEST(ANEBasic, StorageClone) {
     ASSERT_EQ(cloned->device(), Device::ANE);
 
     // Verify clone has same data
-    auto cpu_out = axiom::backends::cpu::make_cpu_storage(num_elements * sizeof(float));
+    auto cpu_out =
+        axiom::backends::cpu::make_cpu_storage(num_elements * sizeof(float));
     cloned->copy_to(*cpu_out);
 
     float *out_data = static_cast<float *>(cpu_out->data());
