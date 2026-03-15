@@ -33,15 +33,26 @@ struct ANECompiledModel::Impl {
     std::vector<int64_t> ane_out_shape;
     size_t input_elements = 0;
     size_t output_elements = 0;
-    size_t surface_bytes = 0; // Page-aligned buffer size
     std::string module_type;
     int compile_count = 0;
     size_t weight_bytes = 0;
+
+    // Pre-allocated IOSurfaces (reused across forward() calls)
+    IOSurfaceRef in_surface = nullptr;
+    IOSurfaceRef out_surface = nullptr;
 
     ~Impl() {
         if (handle) {
             ane_release(handle);
             handle = nullptr;
+        }
+        if (in_surface) {
+            CFRelease(in_surface);
+            in_surface = nullptr;
+        }
+        if (out_surface) {
+            CFRelease(out_surface);
+            out_surface = nullptr;
         }
     }
 };
@@ -117,16 +128,29 @@ static void write_tensor_to_surface(IOSurfaceRef surface, const Tensor &t,
     const float *src = cpu.typed_data<float>();
 
     int channels = static_cast<int>(ane_shape[1]);
-    int spatial = static_cast<int>(ane_shape[3]);
+    // Spatial = product of all dims except channels (dim 1)
+    int spatial = 1;
+    for (size_t d = 0; d < ane_shape.size(); d++) {
+        if (d != 1) spatial *= static_cast<int>(ane_shape[d]);
+    }
 
-    // Transpose from row-major [spatial, channels] to channel-first
-    // [channels, spatial].
-    // When spatial==1, data is already contiguous per-channel (no transpose).
+    // Convert from Axiom row-major to ANE channel-first layout.
+    // For [1,C,1,S] and [N,C,H,W] shapes, the channel dim (dim 1) moves to
+    // become the IOSurface row dimension.
+    int total_spatial = 1;
+    for (size_t d = 0; d < ane_shape.size(); d++) {
+        if (d != 1) total_spatial *= static_cast<int>(ane_shape[d]);
+    }
+
     std::vector<float> transposed(num_elements);
-    if (spatial == 1) {
-        // [1, C, 1, 1]: channels are contiguous, just copy
+    if (total_spatial == 1) {
+        // Channels only, no spatial — just copy
+        std::memcpy(transposed.data(), src, num_elements * sizeof(float));
+    } else if (ane_shape.size() == 4 && ane_shape[2] > 1) {
+        // True 4D: [N, C, H, W] — already in NCHW order, just copy
         std::memcpy(transposed.data(), src, num_elements * sizeof(float));
     } else {
+        // [1, C, 1, S] — need to transpose from [S, C] row-major
         for (int s = 0; s < spatial; s++) {
             for (int c = 0; c < channels; c++) {
                 transposed[c * spatial + s] = src[s * channels + c];
@@ -170,7 +194,10 @@ static Tensor read_tensor_from_surface(IOSurfaceRef surface,
                                         const std::vector<int64_t> &ane_shape,
                                         const Shape &axiom_shape) {
     int channels = static_cast<int>(ane_shape[1]);
-    int spatial = static_cast<int>(ane_shape[3]);
+    int spatial = 1;
+    for (size_t d = 0; d < ane_shape.size(); d++) {
+        if (d != 1) spatial *= static_cast<int>(ane_shape[d]);
+    }
     size_t num_elements = static_cast<size_t>(channels * spatial);
 
     // Read FP16 from IOSurface respecting row alignment
@@ -204,14 +231,22 @@ static Tensor read_tensor_from_surface(IOSurfaceRef surface,
     };
     vImageConvert_Planar16FtoPlanarF(&src_buf, &dst_buf, 0);
 
-    // Transpose from channel-first [channels, spatial] to row-major
-    // [spatial, channels].
-    // When spatial==1, data is already in the right order (no transpose).
+    // Convert from ANE channel-first to Axiom row-major layout.
+    int total_spatial = 1;
+    for (size_t d = 0; d < ane_shape.size(); d++) {
+        if (d != 1) total_spatial *= static_cast<int>(ane_shape[d]);
+    }
+
     std::vector<float> transposed(num_elements);
-    if (spatial == 1) {
+    if (total_spatial == 1) {
+        std::memcpy(transposed.data(), f32.data(),
+                     num_elements * sizeof(float));
+    } else if (ane_shape.size() == 4 && ane_shape[2] > 1) {
+        // True 4D NCHW — already in correct order, just copy
         std::memcpy(transposed.data(), f32.data(),
                      num_elements * sizeof(float));
     } else {
+        // [1, C, 1, S] → [S, C] row-major
         for (int s = 0; s < spatial; s++) {
             for (int c = 0; c < channels; c++) {
                 transposed[s * channels + c] = f32[c * spatial + s];
@@ -239,6 +274,26 @@ static std::string walk_module(MILGenerator &gen, const nn::Module &module,
         const Tensor *bias =
             linear->has_bias() ? &linear->bias() : nullptr;
         return gen.add_linear(input_var, linear->weight(), bias, prefix);
+    }
+
+    // Conv2d
+    if (auto *conv = dynamic_cast<const nn::Conv2d *>(&module)) {
+        const Tensor *bias = conv->has_bias() ? &conv->bias() : nullptr;
+        return gen.add_conv2d(input_var, conv->weight(), bias, conv->stride(),
+                              conv->padding(), conv->dilation(), conv->groups(),
+                              prefix);
+    }
+
+    // MultiHeadAttention (non-causal only)
+    if (auto *mha = dynamic_cast<const nn::MultiHeadAttention *>(&module)) {
+        const Tensor *qb = mha->q_proj().has_bias() ? &mha->q_proj().bias() : nullptr;
+        const Tensor *kb = mha->k_proj().has_bias() ? &mha->k_proj().bias() : nullptr;
+        const Tensor *vb = mha->v_proj().has_bias() ? &mha->v_proj().bias() : nullptr;
+        const Tensor *ob = mha->out_proj().has_bias() ? &mha->out_proj().bias() : nullptr;
+        return gen.add_multihead_attention(
+            input_var, mha->q_proj().weight(), mha->k_proj().weight(),
+            mha->v_proj().weight(), mha->out_proj().weight(), qb, kb, vb, ob,
+            mha->num_heads(), prefix);
     }
 
     // Activations (stateless)
@@ -332,6 +387,10 @@ ANECompiledModel::operator=(ANECompiledModel &&) noexcept = default;
 bool ANECompiledModel::is_supported(const nn::Module &module) {
     // Leaf modules
     if (dynamic_cast<const nn::Linear *>(&module))
+        return true;
+    if (dynamic_cast<const nn::Conv2d *>(&module))
+        return true;
+    if (dynamic_cast<const nn::MultiHeadAttention *>(&module))
         return true;
     if (dynamic_cast<const nn::ReLU *>(&module))
         return true;
@@ -436,15 +495,26 @@ ANECompiledModel ANECompiledModel::compile(const nn::Module &module,
         throw RuntimeError("ANE model loading failed");
     }
 
-    // Compute surface buffer size.
-    // ANE surfaces need to be large enough for the tensor data.
-    // Use page-aligned size but ensure minimum for small tensors.
-    size_t in_bytes = impl.input_elements * sizeof(uint16_t);
-    size_t out_bytes = impl.output_elements * sizeof(uint16_t);
-    impl.surface_bytes =
-        std::max({in_bytes, out_bytes, size_t(16384)});
-    // Round up to page boundary
-    impl.surface_bytes = (impl.surface_bytes + 16383) & ~size_t(16383);
+    // Pre-allocate IOSurfaces for reuse across forward() calls.
+    // channels = dim 1, spatial = product of all other dims.
+    auto spatial_size = [](const std::vector<int64_t> &s) -> int {
+        int sp = 1;
+        for (size_t d = 0; d < s.size(); d++) {
+            if (d != 1) sp *= static_cast<int>(s[d]);
+        }
+        return sp;
+    };
+    int in_c = static_cast<int>(impl.ane_in_shape[1]);
+    int in_s = spatial_size(impl.ane_in_shape);
+    int out_c = static_cast<int>(impl.ane_out_shape[1]);
+    int out_s = spatial_size(impl.ane_out_shape);
+
+    impl.in_surface = ane_create_surface(in_c, in_s);
+    impl.out_surface = ane_create_surface(out_c, out_s);
+    if (!impl.in_surface || !impl.out_surface) {
+        throw MemoryError::allocation_failed(
+            impl.input_elements * sizeof(uint16_t));
+    }
 
     impl.module_type = typeid(module).name();
 
@@ -475,41 +545,22 @@ Tensor ANECompiledModel::forward(const Tensor &input) const {
         throw ShapeError(oss.str());
     }
 
-    // Create IOSurfaces using the 2D format matching ANE tensor layout.
-    // channels = ane_shape[1], spatial = ane_shape[3].
-    int in_c = static_cast<int>(impl_->ane_in_shape[1]);
-    int in_s = static_cast<int>(impl_->ane_in_shape[3]);
-    int out_c = static_cast<int>(impl_->ane_out_shape[1]);
-    int out_s = static_cast<int>(impl_->ane_out_shape[3]);
-    IOSurfaceRef in_surface = ane_create_surface(in_c, in_s);
-    IOSurfaceRef out_surface = ane_create_surface(out_c, out_s);
-    if (!in_surface || !out_surface) {
-        if (in_surface)
-            CFRelease(in_surface);
-        if (out_surface)
-            CFRelease(out_surface);
-        throw MemoryError::allocation_failed(impl_->surface_bytes);
-    }
+    // Use pre-allocated IOSurfaces (no allocation on hot path)
+    IOSurfaceRef in_surface = impl_->in_surface;
+    IOSurfaceRef out_surface = impl_->out_surface;
 
-    // Write input tensor to IOSurface
+    // Write input tensor to IOSurface (FP32→FP16 + transpose)
     write_tensor_to_surface(in_surface, input, impl_->ane_in_shape);
 
     // Evaluate on ANE
     int rc = ane_eval(impl_->handle, in_surface, out_surface);
     if (rc != 0) {
-        CFRelease(in_surface);
-        CFRelease(out_surface);
         throw RuntimeError("ANE evaluation failed");
     }
 
-    // Read output tensor from IOSurface
-    Tensor result = read_tensor_from_surface(out_surface, impl_->ane_out_shape,
-                                              impl_->output_shape);
-
-    CFRelease(in_surface);
-    CFRelease(out_surface);
-
-    return result;
+    // Read output tensor from IOSurface (FP16→FP32 + transpose)
+    return read_tensor_from_surface(out_surface, impl_->ane_out_shape,
+                                     impl_->output_shape);
 }
 
 ANEPlanInfo ANECompiledModel::plan_info() const {

@@ -56,6 +56,14 @@ class Conv2d : public Module {
 
     Tensor forward(const Tensor &input) const override;
 
+    const Tensor &weight() const { return weight_; }
+    const Tensor &bias() const { return bias_; }
+    const std::array<int, 2> &stride() const { return stride_; }
+    const std::array<int, 2> &padding() const { return padding_; }
+    const std::array<int, 2> &dilation() const { return dilation_; }
+    int groups() const { return groups_; }
+    bool has_bias() const { return has_bias_; }
+
   private:
     Tensor weight_;
     Tensor bias_;

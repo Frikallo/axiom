@@ -95,6 +95,38 @@ class MILGenerator {
                               const std::string &name);
 
     // ================================================================
+    // Conv2d (native convolution on ANE)
+    // ================================================================
+
+    // weight: [out_ch, in_ch/groups, kH, kW], bias: [out_ch] or nullptr
+    // Input must be 4D: [1, in_ch, H, W]
+    std::string add_conv2d(const std::string &input_var, const Tensor &weight,
+                           const Tensor *bias, std::array<int, 2> stride,
+                           std::array<int, 2> padding,
+                           std::array<int, 2> dilation, int groups,
+                           const std::string &name);
+
+    // ================================================================
+    // Multi-Head Attention (fused QKV + SDPA, non-causal)
+    // ================================================================
+
+    // Fused attention: QKV projections → reshape → Q@K^T → scale →
+    // softmax → @V → reshape → output projection.
+    // Input: [1, d_model, 1, seq_len] (ANE layout)
+    // Returns: [1, d_model, 1, seq_len]
+    std::string add_multihead_attention(const std::string &input_var,
+                                         const Tensor &q_weight,
+                                         const Tensor &k_weight,
+                                         const Tensor &v_weight,
+                                         const Tensor &o_weight,
+                                         const Tensor *q_bias,
+                                         const Tensor *k_bias,
+                                         const Tensor *v_bias,
+                                         const Tensor *o_bias,
+                                         int num_heads,
+                                         const std::string &name);
+
+    // ================================================================
     // Matmul (for attention scores, not linear layers)
     // ================================================================
 

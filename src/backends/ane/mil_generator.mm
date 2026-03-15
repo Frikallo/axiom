@@ -587,6 +587,153 @@ std::string MILGenerator::add_matmul(const std::string &a,
     return out;
 }
 
+// ============================================================================
+// Conv2d (native convolution)
+// ============================================================================
+
+std::string MILGenerator::add_conv2d(const std::string &input_var,
+                                      const Tensor &weight,
+                                      const Tensor *bias,
+                                      std::array<int, 2> stride,
+                                      std::array<int, 2> padding,
+                                      std::array<int, 2> dilation, int groups,
+                                      const std::string &name) {
+    auto &in_shape = shape_of(input_var);
+
+    // Weight: [out_ch, in_ch/groups, kH, kW]
+    auto &ws = weight.shape();
+    int64_t out_ch = static_cast<int64_t>(ws[0]);
+    int64_t kH = static_cast<int64_t>(ws[2]);
+    int64_t kW = static_cast<int64_t>(ws[3]);
+    std::vector<int64_t> w_shape = {static_cast<int64_t>(ws[0]),
+                                     static_cast<int64_t>(ws[1]),
+                                     static_cast<int64_t>(ws[2]),
+                                     static_cast<int64_t>(ws[3])};
+
+    // Compute output spatial dims
+    int64_t H_out = (in_shape[2] + 2 * padding[0] - dilation[0] * (kH - 1) - 1) /
+                        stride[0] + 1;
+    int64_t W_out = (in_shape[3] + 2 * padding[1] - dilation[1] * (kW - 1) - 1) /
+                        stride[1] + 1;
+    std::vector<int64_t> out_shape = {in_shape[0], out_ch, H_out, W_out};
+
+    // Emit conv constants with actual stride/padding values
+    std::string st_name = next_var("cst");
+    emit_int_tensor_const(st_name, {stride[0], stride[1]});
+    std::string pd_name = next_var("cpd");
+    emit_int_tensor_const(pd_name, {padding[0], padding[1], padding[0], padding[1]});
+    std::string dl_name = next_var("cdl");
+    emit_int_tensor_const(dl_name, {dilation[0], dilation[1]});
+    std::string gr_name = next_var("cgr");
+    emit_int_const(gr_name, groups);
+    // Use "custom" pad type when padding is non-zero, "valid" otherwise
+    bool has_padding = (padding[0] != 0 || padding[1] != 0);
+    std::string pt_name = next_var("cpt");
+    body_ += "        string " + pt_name + " = const()[name=string(\"" +
+             pt_name + "\"), val=string(\"" +
+             (has_padding ? "custom" : "valid") + "\")];\n";
+
+    // Pack weight
+    std::string w_name = name + "_w";
+    pack_weight(weight, w_shape, w_name);
+    body_ += "        " + mil_type(w_shape) + " " + w_name +
+             " = const()[name=string(\"" + w_name + "\"), val=" +
+             mil_type(w_shape) + "(BLOBFILE(path=string(" +
+             "\"@model_path/weights/" + w_name +
+             ".bin\"), offset=uint64(64)))];\n";
+
+    std::string out_var = next_var("cv");
+
+    if (bias) {
+        std::string b_name = name + "_b";
+        pack_weight(*bias, {out_ch}, b_name);
+        body_ += "        tensor<fp16, [" + std::to_string(out_ch) + "]> " +
+                 b_name + " = const()[name=string(\"" + b_name + "\"), val=" +
+                 "tensor<fp16, [" + std::to_string(out_ch) + "]>(BLOBFILE(" +
+                 "path=string(\"@model_path/weights/" + b_name +
+                 ".bin\"), offset=uint64(64)))];\n";
+
+        body_ += "        " + mil_type(out_shape) + " " + out_var +
+                 " = conv(bias=" + b_name + ", dilations=" + dl_name +
+                 ", groups=" + gr_name + ", pad=" + pd_name +
+                 ", pad_type=" + pt_name + ", strides=" + st_name +
+                 ", weight=" + w_name + ", x=" + input_var +
+                 ")[name=string(\"" + name + "\")];\n";
+    } else {
+        body_ += "        " + mil_type(out_shape) + " " + out_var +
+                 " = conv(dilations=" + dl_name + ", groups=" + gr_name +
+                 ", pad=" + pd_name + ", pad_type=" + pt_name +
+                 ", strides=" + st_name + ", weight=" + w_name +
+                 ", x=" + input_var + ")[name=string(\"" + name + "\")];\n";
+    }
+
+    track(out_var, out_shape);
+    return out_var;
+}
+
+// ============================================================================
+// Multi-Head Attention (fused, non-causal)
+// ============================================================================
+
+std::string MILGenerator::add_multihead_attention(
+    const std::string &input_var, const Tensor &q_weight,
+    const Tensor &k_weight, const Tensor &v_weight, const Tensor &o_weight,
+    const Tensor *q_bias, const Tensor *k_bias, const Tensor *v_bias,
+    const Tensor *o_bias, int num_heads, const std::string &name) {
+
+    auto &in_shape = shape_of(input_var);
+    // Input: [1, d_model, 1, seq_len] (ANE layout)
+    int64_t d_model = in_shape[1];
+    int64_t seq_len = in_shape[3];
+    int64_t head_dim = d_model / num_heads;
+
+    // 1. Q, K, V projections (as 1x1 conv)
+    std::string q = add_linear(input_var, q_weight, q_bias, name + "_qp");
+    std::string k = add_linear(input_var, k_weight, k_bias, name + "_kp");
+    std::string v = add_linear(input_var, v_weight, v_bias, name + "_vp");
+
+    // 2. Reshape to multi-head: [1, d_model, 1, seq] → [1, num_heads, head_dim, seq]
+    //    Then transpose to [1, num_heads, seq, head_dim] for matmul
+    std::vector<int64_t> mh_shape = {1, static_cast<int64_t>(num_heads),
+                                      head_dim, seq_len};
+    std::vector<int64_t> mh_t_shape = {1, static_cast<int64_t>(num_heads),
+                                        seq_len, head_dim};
+
+    q = add_reshape(q, mh_shape, name + "_qr");
+    q = add_transpose(q, {0, 1, 3, 2}, name + "_qt");
+
+    k = add_reshape(k, mh_shape, name + "_kr");
+    k = add_transpose(k, {0, 1, 3, 2}, name + "_kt");
+
+    v = add_reshape(v, mh_shape, name + "_vr");
+    v = add_transpose(v, {0, 1, 3, 2}, name + "_vt");
+
+    // 3. Attention scores: Q @ K^T * scale
+    std::string scores = add_matmul(q, k, false, true, name + "_sc");
+
+    // Scale by 1/sqrt(head_dim)
+    float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
+    std::string scale_var = next_var("scl");
+    emit_scalar_const(scale_var, "fp16", scale);
+    scores = add_mul(scores, scale_var, name + "_scs");
+
+    // 4. Softmax (non-causal — no masking)
+    scores = add_softmax(scores, -1, name + "_sm");
+
+    // 5. Attention output: scores @ V
+    std::string attn = add_matmul(scores, v, false, false, name + "_av");
+
+    // 6. Transpose back: [1, num_heads, seq, head_dim] → [1, num_heads, head_dim, seq]
+    attn = add_transpose(attn, {0, 1, 3, 2}, name + "_at");
+
+    // 7. Reshape: [1, num_heads, head_dim, seq] → [1, d_model, 1, seq]
+    std::vector<int64_t> merged_shape = {1, d_model, 1, seq_len};
+    attn = add_reshape(attn, merged_shape, name + "_am");
+
+    // 8. Output projection
+    return add_linear(attn, o_weight, o_bias, name + "_op");
+}
+
 } // namespace ane
 } // namespace backends
 } // namespace axiom
