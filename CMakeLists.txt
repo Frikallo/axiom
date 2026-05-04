@@ -389,10 +389,17 @@ if(APPLE AND AXIOM_HAS_METAL)
     )
 endif()
 
-# Build as shared library on all platforms
-# On Windows, auto-export all symbols to generate .lib import library
+# Library type respects the standard BUILD_SHARED_LIBS variable. Default
+# is SHARED to preserve historical behaviour; downstream consumers that
+# want axiom bundled into a single static archive (e.g. for FFI
+# distribution) set BUILD_SHARED_LIBS=OFF before adding this directory.
+# On Windows, auto-export all symbols to generate .lib import library.
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
-add_library(axiom SHARED ${AXIOM_SOURCES})
+if(DEFINED BUILD_SHARED_LIBS AND NOT BUILD_SHARED_LIBS)
+    add_library(axiom STATIC ${AXIOM_SOURCES})
+else()
+    add_library(axiom SHARED ${AXIOM_SOURCES})
+endif()
 
 # Highway handles SIMD multi-arch internally via runtime dispatch
 
@@ -702,6 +709,13 @@ endif()
 # ============================================================================
 # Installation
 # ============================================================================
+# Whole install ruleset is gated behind AXIOM_INSTALL so downstream
+# consumers that bundle axiom into a larger artifact (e.g. as a static
+# component of a single-archive distribution) can disable it cleanly.
+# Default ON preserves historical behaviour for standalone builds.
+option(AXIOM_INSTALL "Generate install rules for axiom" ON)
+
+if(AXIOM_INSTALL)
 include(GNUInstallDirs)
 
 # Install headers
@@ -775,6 +789,8 @@ if(UNIX)
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
     )
 endif()
+
+endif() # AXIOM_INSTALL
 
 # ============================================================================
 # Configuration Summary
